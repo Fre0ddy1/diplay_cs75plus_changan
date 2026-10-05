@@ -36,7 +36,7 @@ DiPlay 是一个运行在 Android 车机上的 CarPlay 接收端：车机开启�
 
 ## 快速开始（用户）
 
-1. 从 [Releases](https://github.com/raozhihao2014/diplay-Changan/releases) 下载最新 `dica.apk`
+1. 从 [Releases](https://gitee.com/jiuyueji/diplay_changan/releases) 下载最新 `dica.apk`
 2. 安装到车机（车机需允许未知来源安装）
 3. 打开 DiPlay，开启车机热点，iPhone 蓝牙配对后进入 CarPlay
 
