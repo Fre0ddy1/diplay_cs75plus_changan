@@ -1,33 +1,72 @@
-# DiPlay
+# diplay-Changan（DiPlay 长安定制版）
 
-为兼容的比亚迪安卓车机提供有线及无线 CarPlay，采用 DiAuto 风格界面。
+在车机（长安 UNI-V 2022 款）上运行 **无线 CarPlay** 的适配版本。
 
-> 这些项目专注于比亚迪汽车。它们可能在其他品牌上运行，但其他品牌不在支持范围内，也没有增加支持或修复其品牌特定兼容性问题的计划。
+**原作者**：[shihabal3amri/DiPlay](https://github.com/shihabal3amri/DiPlay)（v0.2.11）｜原项目文档站：<https://shihabal3amri.github.io/DiPlay/>
+本仓库基于上述原项目二次开发。
 
-[下载与中文网站](https://shihabal3amri.github.io/DiPlay/zh-Hans/) · [0.2.11 版本](https://github.com/shihabal3amri/DiPlay/releases/tag/v0.2.11) · [完整说明](README.md) · [报告问题](https://github.com/shihabal3amri/DiPlay/issues/new/choose)
+> ⚠️ **仅供尝鲜，不对后续 Bug 负责。**
+> 本项目仅在 **22 款 UNI-V 尊贵版**（飞鱼 OS / Android 9 / 已破解车机）上测试通过。
+> 其他车型可能有用，但请**自行尝试**，使用前请确认你的车机支持并接受相应风险。
 
-## 0.2.11 — 公开预览版
+---
 
-请安装在车机上，而非 iPhone。无需越狱、转接盒、账户或认证服务器。最低支持 Android 9；Wi-Fi Direct 需要 Android 10 或更高版本，也可使用车机内置热点或 USB。有线及无线 CarPlay 核心连接不要求 ADB，可选车辆数据等功能需要已授权的网络 ADB。
+## 本项目实现的功能
 
-### 0.2.11 新增与修正
+**CarPlay 接收端（基础能力，继承自 DiPlay）**：车机开启热点后，iPhone 通过无线方式建立 CarPlay 会话，实现导航、音乐、电话在车机屏幕上运行。
 
-- **Wi-Fi Direct 首选信道**：默认仍为自动，可保存支持的 2.4/5 GHz 信道，在下次连接生效。车机拒绝或使用了其他信道时会报错，请改回自动或换信道。此功能不代表卡顿问题已解决。
-- 在仪表地图上显示可移动的自定义转向卡片，支持大小选择及每次 2% 的位置调整，无需重连。未知转向不会显示猜测的箭头，过期指引会清除。
-- 打开设置的下滑手势可选 2、3 或 4 指，默认仍为 3 指。新增 Android TV/遥控器操作，并保留普通车机触摸、返回及旋钮行为。
-- 在“设置 → 位置 → 高级车辆数据”中可选旧版车机只读字段探测，默认仍使用 DiLink 5.0 路径。只有已确认并接受的字段及读数才用于运行时；修正过期探测结果及电池数据发布的并发问题。
-- 可选自动开启车机已有热点，默认关闭。启用前验证仅针对 DiPlay 自身应用包的权限，保留热点名称与密码。
-- 无线位置及车辆数据由实际 Wi-Fi 链路发送；停车视频等待 SETUP 和事件通道就绪。非 P 挡或无法读取挡位时仍会关闭视频。
-- 歌曲增量更新未提供歌手时保留已有歌手；媒体会话只在歌曲信息或封面变化时重新发布，播放进度及状态继续更新。
-- 修正 Android 9 音频 API 兼容性，释放启动失败的编解码器；重连采用稳定后的屏幕尺寸和正常启动检查。自动信道模式下为精确匹配的 Android 10 P2P 错误提供一次受保护的兼容回退，有线 VPN 仅作用于 DiPlay。
-- 新增有界无线、媒体、昼夜模式及本应用退出诊断，不录制音频、视频或数据包内容，也不自动上传报告。
+**针对长安 UNI-V（飞鱼 OS）的适配与修复**：
 
-旧版车辆数据、电池、轮速及停车视频需要已授权的网络 ADB 和支持的有效读数；仪表及热点等功能取决于车机固件。请参阅[完整版本说明](docs/RELEASE-NOTES-0.2.11.md)及[验证记录](docs/VALIDATION.md)。Qin Plus 连接、Wi-Fi Direct 卡顿、Siri/麦克风质量、iOS 15 连接和部分固件昼夜模式仍需真机复现，未宣称全部修复。
+### 长安专属改造
+- **仪表盘投屏**：新增通用"仪表盘"分区入口，支持**整屏镜像**（整个 CarPlay 界面投到仪表）与**导航流**两种模式；非比亚迪车机默认开启；Display 枚举带通用兜底（任意非默认 display），长安车机可直接使用
+- **无线热点 2.4GHz 放行**：长安热点工作在 2.4GHz，修复原版对频段的强制检查导致的无法启动
+- **热点地址 IPv4 优先**：修复长安 Manual 热点场景下 iPhone 无法发现车机 AirPlay 服务的问题（IPv6 link-local 兜底）
 
-### 请提供新的诊断报告
+### 连接稳定性修复
+- **主动下发 Wi-Fi 配置（0x5703）**：主循环主动推送 + transport 就绪后重发，解决 iPhone 不请求热点配置导致的卡死
+- **Android 9 TCP 半开检测**：原版在 API<29 完全跳过 keepalive 调优（断线后界面永久卡死），本版用 `Os.dup` 实现约 12 秒判死并自动回到连接界面重试
+- **断线自动重连**：iPhone 断开后自动退回连接界面并指数退避重试（上限 30s）；尺寸未知时等待屏幕检测后自动拉起
+- **重连防过期**：restartGeneration 校验，旧的重连回调不会干扰新会话
 
-更新到 **0.2.11** 后复现问题，再打开“**设置 → 诊断 → 保存诊断报告**”。Android 10 及以上保存到 **Downloads/DiPlay**；Android 9 使用文件选择器。检查 `.txt` 内容后附在原有 [GitHub 问题](https://github.com/shihabal3amri/DiPlay/issues)中，并注明车型/车机、安卓及固件、iPhone/iOS、连接模式、复现步骤和大致发生时间。报告由你决定是否分享，请勿公开热点密码。
+### 诊断与适配
+- **无文件选择器诊断导出**：长安车机缺少 DocumentsUI，支持保存到应用目录 / 屏幕直接显示诊断全文 / 分享（自动清理，仅保留最新 8 个报告）
+- 屏幕诊断快照：连接状态、热点后端、iAP2 命令序列、AirPlay TCP 状态一目了然
 
-这是公开预览版，**未经 Apple 认证**。APK 使用从公开 Carlinkit 固件中提取的既有实验性配件身份，并非为 DiPlay 新签发的 MFi 身份；其中的私钥可被提取，未来 iOS 是否继续接受及其公开分发适用性尚未确定。Android 签名密钥和配件身份不进入 Git 或源代码压缩包；普通源代码/CI 构建默认不配置身份。部分车机仍可能卡顿或无法应用图标大小设置。
+## 版本
 
-标准导航小组件需要支持 Android 小组件的启动器；比亚迪内置主页不接受任意小组件。悬浮地图和嵌入地图需要启用“CarPlay 仪表地图”。应用及网站支持英语、简体中文、阿拉伯语、俄语、乌克兰语和西班牙语。源代码、构建说明及许可证随版本提供。
+- 当前版本：**v0.2.11-hud-test**（versionCode 30，debug 签名，包名 `com.shihab.diplay.hudtest`）
+- Release 页提供编译好的 APK（`dica.apk`），可直接覆盖安装
+
+## 快速开始（用户）
+
+1. 从 [Releases](https://gitee.com/jiuyueji/diplay_changan/releases) 下载最新 `dica.apk`
+2. 安装到车机（车机需允许未知来源安装）
+3. 打开 DiPlay，开启车机热点，iPhone 蓝牙配对后进入 CarPlay
+
+> 认证说明：DiPlay 使用本地离线 MFi 认证资产编译（不随源码/APK 分发）。编译与使用仅供个人尝鲜，请勿用于商业用途。
+
+## 构建（开发者）
+
+环境：Android Studio / JDK 21 / Android SDK 37（compileSdk 37）
+
+```bash
+# 1. 准备认证资产（不随仓库分发，自行生成或从原项目获取）
+export DIPLAY_AUTH_ASSETS_DIR=/path/to/diplay-auth-assets   # 内含 offline-mfi/{certificate.p7b, identity.pk8}
+
+# 2. 编译
+./gradlew assembleDebug --no-daemon
+# 产物：mobile/build/outputs/apk/debug/mobile-debug.apk
+```
+
+本地构建需自行提供 `DIPLAY_AUTH_ASSETS_DIR`（含 `offline-mfi/` 目录）；缺失时仅能构建不带认证身份的源码包。
+
+## 致谢与协议
+
+- 原作者：[shihabal3amri/DiPlay](https://github.com/shihabal3amri/DiPlay)（GPL-3.0）——本项目的全部基础能力均源自该开源项目
+- 仪表盘 Display 枚举兜底思路参考 AMap Companion
+- 本仓库遵循 **GPL-3.0**（见 [LICENSE](LICENSE)）
+- 仅供个人尝鲜与研究，禁止用于商业量产
+
+---
+
+> 本项目由 **豆包 AI（Doubao）** 辅助生成与维护。
