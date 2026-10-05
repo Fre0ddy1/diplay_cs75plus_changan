@@ -549,11 +549,11 @@ object AirPlayPersistence {
     /** Fingers for the swipe-down that opens settings; some head units reserve three. */
     fun loadSettingsGestureFingers(context: Context): Int =
         context.getSharedPreferences(PREFS, Context.MODE_PRIVATE)
-            .getInt(KEY_SETTINGS_GESTURE_FINGERS, 3).coerceIn(2, 4)
+            .getInt(KEY_SETTINGS_GESTURE_FINGERS, 3).coerceIn(3, 5)
 
     fun saveSettingsGestureFingers(context: Context, fingers: Int) {
         context.getSharedPreferences(PREFS, Context.MODE_PRIVATE).edit()
-            .putInt(KEY_SETTINGS_GESTURE_FINGERS, fingers.coerceIn(2, 4)).apply()
+            .putInt(KEY_SETTINGS_GESTURE_FINGERS, fingers.coerceIn(3, 5)).apply()
     }
 
     fun loadCenterMapFollowsDashboard(context: Context): Boolean =

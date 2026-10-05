@@ -1576,7 +1576,7 @@ class CarPlayHostActivity : ComponentActivity() {
         val gestureButton = Button(this).apply {
             isAllCaps = false
             setOnClickListener {
-                gestureFingerCount = if (gestureFingerCount >= 4) 2 else gestureFingerCount + 1
+                gestureFingerCount = if (gestureFingerCount >= 5) 3 else gestureFingerCount + 1
                 AirPlayPersistence.saveSettingsGestureFingers(this@CarPlayHostActivity, gestureFingerCount)
                 text = getString(R.string.settings_gesture_fingers, gestureFingerCount)
             }
