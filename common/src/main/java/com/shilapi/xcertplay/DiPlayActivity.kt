@@ -171,6 +171,11 @@ class DiPlayActivity : ComponentActivity() {
         bydVehicleAdvancedExpanded = savedInstanceState?.getBoolean("byd_vehicle_advanced") ?: false
         page = savedInstanceState?.getString("page") ?: intent.getStringExtra("page") ?: "home"
         render()
+        if (savedInstanceState == null && AirPlayPersistence.loadAutoStartCarAmap(this)) {
+            // Cold start with the "auto-start stock Amap" toggle on: bring the car Amap up
+            // (dashboard projection needs it) and hand focus straight back to DiPlay.
+            CarAmapLauncher.launchAndReturn(this)
+        }
         scheduleAutomaticVehicleValidation()
         handleWirelessRecovery()
         onBackPressedDispatcher.addCallback(this, object : OnBackPressedCallback(true) {
@@ -413,6 +418,11 @@ class DiPlayActivity : ComponentActivity() {
                     AirPlayPersistence.loadWirelessHotspotMode(this) == WirelessHotspotMode.MANUAL },
                 permissions = { listOf(CarHotspotSetup.Permission.BOOT_LAUNCH) }) {
                 AirPlayPersistence.saveAutoStartOnBoot(this, it)
+            }
+            toggle(card, getString(R.string.auto_start_car_amap),
+                getString(R.string.auto_start_car_amap_description),
+                AirPlayPersistence.loadAutoStartCarAmap(this)) {
+                AirPlayPersistence.saveAutoStartCarAmap(this, it)
             }
             card.addView(button("${getString(R.string.choose_iphone_prefix)}${DiPlayPreferences.phoneName(this)}", false) { choosePhone() }, matchButton(12, 60))
         }

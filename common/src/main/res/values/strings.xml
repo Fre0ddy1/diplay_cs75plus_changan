@@ -109,6 +109,8 @@
     <string name="audio_routing">Audio routing</string>
     <string name="auto">Auto</string>
     <string name="auto_start_on_boot">Auto-start on boot</string>
+    <string name="auto_start_car_amap">Open stock Amap after launch</string>
+    <string name="auto_start_car_amap_description">After DiPlay starts, launches the head unit\'s built-in Amap (dashboard projection needs it running) and immediately returns to DiPlay. No effect if no car Amap is detected.</string>
     <string name="automatic_cluster_map_setup">Automatic cluster map setup</string>
     <string name="automatic_connection">Automatic connection</string>
     <string name="automatic_map_enabled_open_the_cluster_map_card_or_select">Automatic map enabled. Open the cluster map card or select Map theme.</string>
