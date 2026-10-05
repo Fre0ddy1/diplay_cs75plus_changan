@@ -1,6 +1,9 @@
 # diplay-Changan（DiPlay 长安定制版）
 
-在车机（长安 UNI-V 2022 款）上运行 **无线 CarPlay** 的适配版本，基于开源项目 [DiPlay](https://github.com/shihabal3amri/DiPlay)（v0.2.11）改造而来。
+在车机（长安 UNI-V 2022 款）上运行 **无线 CarPlay** 的适配版本。
+
+**原作者**：[shihabal3amri/DiPlay](https://github.com/shihabal3amri/DiPlay)（v0.2.11）｜原项目文档站：<https://shihabal3amri.github.io/DiPlay/>
+本仓库基于上述原项目二次开发。
 
 > ⚠️ **仅供尝鲜，不对后续 Bug 负责。**
 > 本项目仅在 **22 款 UNI-V 尊贵版**（飞鱼 OS / Android 9 / 已破解车机）上测试通过。
@@ -8,11 +11,11 @@
 
 ---
 
-## 这是什么
+## 本项目实现的功能
 
-DiPlay 是一个运行在 Android 车机上的 CarPlay 接收端：车机开启热点后，iPhone 通过无线方式建立 CarPlay 会话，实现导航、音乐、电话在车机屏幕上运行。
+**CarPlay 接收端（基础能力，继承自 DiPlay）**：车机开启热点后，iPhone 通过无线方式建立 CarPlay 会话，实现导航、音乐、电话在车机屏幕上运行。
 
-本仓库在 DiPlay 0.2.11 基础上针对长安 UNI-V（飞鱼 OS）做了以下适配与修复：
+**针对长安 UNI-V（飞鱼 OS）的适配与修复**：
 
 ### 长安专属改造
 - **仪表盘投屏**：新增通用"仪表盘"分区入口，支持**整屏镜像**（整个 CarPlay 界面投到仪表）与**导航流**两种模式；非比亚迪车机默认开启；Display 枚举带通用兜底（任意非默认 display），长安车机可直接使用
@@ -59,6 +62,11 @@ export DIPLAY_AUTH_ASSETS_DIR=/path/to/diplay-auth-assets   # 内含 offline-mfi
 
 ## 致谢与协议
 
-- 基于 [shihabal3amri/DiPlay](https://github.com/shihabal3amri/DiPlay)（GPL-3.0）二次开发，仪表盘 Display 枚举兜底思路参考 AMap Companion
+- 原作者：[shihabal3amri/DiPlay](https://github.com/shihabal3amri/DiPlay)（GPL-3.0）——本项目的全部基础能力均源自该开源项目
+- 仪表盘 Display 枚举兜底思路参考 AMap Companion
 - 本仓库遵循 **GPL-3.0**（见 [LICENSE](LICENSE)）
 - 仅供个人尝鲜与研究，禁止用于商业量产
+
+---
+
+> 本项目由 **豆包 AI（Doubao）** 辅助生成与维护。
