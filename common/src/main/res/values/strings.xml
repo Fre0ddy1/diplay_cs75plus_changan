@@ -541,7 +541,7 @@
     <string name="center_map_no_permission_screen">This head unit has no settings screen for this permission. Allow it over ADB.</string>
     <string name="launcher_map_sharing">Share the live map with other launchers</string>
     <string name="launcher_map_sharing_description">Launchers that support DiPlay can show the live dashboard map inside their own home screen. Off by default, because any app on the head unit could then ask for the map. See docs/LAUNCHER_INTEGRATION.md.</string>
-    <string name="open_diplay_settings_hint">In CarPlay, swipe down with %1$d fingers to open DiPlay settings.</string>
+    <string name="open_diplay_settings_hint">In CarPlay: swipe left/right with 3 fingers to switch the dashboard view; swipe down with 4 fingers to open DiPlay settings.</string>
     <string name="carplay_controls">CarPlay controls</string>
     <string name="settings_gesture_fingers">Open settings · swipe with %1$d fingers (tap to change)</string>
     <string name="settings_gesture_fingers_label">Open settings · swipe-down fingers</string>
@@ -558,4 +558,8 @@
     <string name="hotspot_control_failed">The car could not start its hotspot. Open the hotspot in car settings.</string>
     <string name="byd_adb_features">BYD features · needs ADB</string>
     <string name="location_reporting_reconnects">Changing this setting reconnects an active CarPlay session.</string>
+    <string name="navigation_volume_keys_focus">Steering-wheel keys adjust guidance volume</string>
+    <string name="navigation_volume_keys_focus_description">While navigation guidance is playing, DiPlay briefly takes audio focus so the head unit routes the volume keys to the guidance channel instead of media. Music is ducked during prompts, like factory CarPlay.</string>
+    <string name="dashboard_detailed_map">Detailed dashboard map</string>
+    <string name="dashboard_detailed_map_description">Declares the whole dashboard panel as safe area so the iPhone renders the detailed follow map on the dashboard, like other CarPlay boxes. Off restores the old centred safe area, which makes Amap show an overview and lets the car-marker sliders move the marker.</string>
 </resources>

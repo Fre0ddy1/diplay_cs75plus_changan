@@ -10,6 +10,7 @@ internal class ThemeModeDiagnostics {
         STOP("stop", true),
         POLL("poll"),
         CALLBACK("configuration-callback"),
+        CARPLAY_MODE("carplay-mode"),
         WINDOW_FOCUS("window-focus"),
         SESSION_ACTIVE("session-active", true),
     }

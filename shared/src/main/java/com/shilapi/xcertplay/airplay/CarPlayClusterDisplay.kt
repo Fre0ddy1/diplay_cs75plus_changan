@@ -55,10 +55,13 @@ object CarPlayClusterDisplay {
     private const val MARKER_MARGIN = 5.0
 
     /**
-     * Stream size in percent of the panel. The cluster scales the stream up, so a smaller stream
-     * gives a larger map: 83 % is clearly larger and still sharp; 50 % was visibly blurry.
+     * Stream size in percent of the panel. On BYD DiLink 5.0 the cluster scales the stream up,
+     * so 83 % looked larger and still sharp. Changan Feiyu OS (UNI-V) does not scale the stream
+     * the same way, and 83 % ended up enlarged past the panel edge with the picture cropped.
+     * Full panel size keeps the whole picture visible there; the scale stays adjustable in
+     * settings for head units that do scale up.
      */
-    const val STREAM_SCALE_PERCENT = 83
+    const val STREAM_SCALE_PERCENT = 100
     val scalePresets = listOf(100, STREAM_SCALE_PERCENT, 67)
 
     private const val WIDTH_PHYSICAL_MM = 292 // a 12.3-inch 8:3 cluster panel; Apple Maps ignores it here
@@ -71,12 +74,17 @@ object CarPlayClusterDisplay {
         horizontalStep: Int = 0,
         verticalStep: Int = 0,
         content: Content = Content.MAP,
+        fullSafeArea: Boolean = true,
     ): AirPlayDisplayConfig {
         // Height rounds to a multiple of 8 and width follows it, so the panel's aspect is kept
-        // (83 % of 1920x720 gives exactly 1600x600). The cluster scales the stream to the panel.
+        // (100 % of 1920x720 gives exactly 1920x720). The cluster scales the stream to the panel.
         val scale = scalePercent.coerceIn(25, 100)
         val height = roundTo8(heightPixels * scale / 100.0)
         val width = roundTo8(height * widthPixels.toDouble() / heightPixels)
+        // The whole panel as safe area makes Amap render the detailed follow map on the
+        // dashboard, like other CarPlay boxes. A small centred safe area (old behaviour)
+        // makes it show an overview so the route and marker fit inside it.
+        val safe = if (fullSafeArea) AirPlayInsets() else safeArea(width, height, horizontalStep, verticalStep)
         return AirPlayDisplayConfig(
             widthPixels = width,
             heightPixels = height,
@@ -86,7 +94,7 @@ object CarPlayClusterDisplay {
             primaryInputDevice = 0,
             features = 0,
             initialUrl = content.url,
-            safeArea = safeArea(width, height, horizontalStep, verticalStep),
+            safeArea = safe,
             safeAreaDrawOutside = true,
         )
     }

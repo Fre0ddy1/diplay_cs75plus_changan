@@ -517,7 +517,7 @@
     <string name="turn_card_distance_m">%1$d м</string>
     <string name="turn_card_distance_km">%1$.1f км</string>
     <string name="turn_card_exit">Съезд %1$d</string>
-    <string name="open_diplay_settings_hint">В CarPlay проведите вниз %1$d пальцами, чтобы открыть настройки DiPlay.</string>
+    <string name="open_diplay_settings_hint">В CarPlay: проведите влево/вправо 3 пальцами, чтобы переключить приборную панель; проведите вниз 4 пальцами, чтобы открыть настройки DiPlay.</string>
     <string name="carplay_controls">Управление CarPlay</string>
     <string name="settings_gesture_fingers">Открыть настройки · свайп %1$d пальцами (нажмите для смены)</string>
     <string name="settings_gesture_fingers_label">Открыть настройки · количество пальцев</string>

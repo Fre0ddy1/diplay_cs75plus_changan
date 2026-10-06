@@ -43,12 +43,40 @@ internal class ClusterMapPresentation(
 ) : Presentation(context, display) {
     private var waitingLabel: TextView? = null
     private var turnCardView: ClusterTurnCardView? = null
+    private var genericTextureView: TextureView? = null
+    private val projectionSize: Point = sizeOf(display)
     var outputSurface: Surface? = null
         private set
 
+    /**
+     * Re-applies the saved dashboard crop window to the generic TextureView without
+     * destroying/recreating the window or its decoder surface. Called by the host when the
+     * "dashboard picture adjust" panel closes; a no-op on the DiLink 5.1 layout path.
+     */
+    fun refreshCrop() {
+        val textureView = genericTextureView ?: return
+        val baseW = projectionSize.x
+        val baseH = projectionSize.y
+        val xPct = AirPlayPersistence.loadClusterCropLeftPercent(context)
+        val yPct = AirPlayPersistence.loadClusterCropTopPercent(context)
+        val wPct = AirPlayPersistence.loadClusterCropWidthPercent(context).coerceIn(10, 100)
+        val hPct = AirPlayPersistence.loadClusterCropHeightPercent(context).coerceIn(10, 100)
+        val w = wPct * baseW / 100
+        val h = hPct * baseH / 100
+        val x = minOf(xPct, 100 - wPct) * baseW / 100
+        val y = minOf(yPct, 100 - hPct) * baseH / 100
+        val sx = baseW.toFloat() / w
+        val sy = baseH.toFloat() / h
+        textureView.setTransform(Matrix().apply {
+            setScale(sx, sy)
+            postTranslate(-x * sx, -y * sy)
+        })
+        Log.i(TAG, "generic crop x=$x y=$y w=$w h=$h scale=$sx,$sy on ${baseW}x${baseH}")
+    }
+
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
-        val size = sizeOf(display)
+        val size = projectionSize
         val adaptive = DiLink51ClusterLayout.supported()
         val plan = if (adaptive) DiLink51ClusterLayout.plan(size.x, size.y, theme) else null
         val dark = DiLink51ClusterLayout.dark(context, theme)
@@ -92,24 +120,33 @@ internal class ClusterMapPresentation(
             if (plan.fullMap) root.addView(InstrumentContrastView(context, plan, backdrop), FrameLayout.LayoutParams(-1, -1))
             Log.i(TAG, "layout=$theme viewport=$plan source=${plan.sourceLeft},${plan.sourceTop} dark=$dark")
         } else {
-            // Preserve the original PR renderer for DiLink 5 and unverified firmware.
-            val surfaceView = SurfaceView(context)
-            surfaceView.holder.addCallback(object : SurfaceHolder.Callback {
-                override fun surfaceCreated(holder: SurfaceHolder) {
+            // Generic path (Changan Feiyu OS and other OEMs). A TextureView lets the driver
+            // crop/zoom the stream to the panel via the "dashboard picture adjust" sliders;
+            // SurfaceView cannot apply a transform. The transform reads the saved crop window
+            // and maps it onto the whole panel, so smaller width/height zooms in and left/top
+            // moves the visible window (works for the navigation stream and the whole-screen
+            // mirror alike).
+            val textureView = TextureView(context)
+            genericTextureView = textureView
+            textureView.surfaceTextureListener = object : TextureView.SurfaceTextureListener {
+                override fun onSurfaceTextureAvailable(texture: SurfaceTexture, width: Int, height: Int) {
                     Log.i(TAG, "cluster surface created")
-                    onSurface(holder.surface)
+                    texture.setDefaultBufferSize(size.x, size.y)
+                    refreshCrop()
+                    onSurface(Surface(texture))
                 }
 
-                override fun surfaceChanged(holder: SurfaceHolder, format: Int, width: Int, height: Int) {
-                    Log.i(TAG, "cluster surface ${width}x$height")
-                }
+                override fun onSurfaceTextureSizeChanged(texture: SurfaceTexture, width: Int, height: Int) = refreshCrop()
 
-                override fun surfaceDestroyed(holder: SurfaceHolder) {
+                override fun onSurfaceTextureUpdated(texture: SurfaceTexture) = Unit
+
+                override fun onSurfaceTextureDestroyed(texture: SurfaceTexture): Boolean {
                     Log.i(TAG, "cluster surface destroyed")
                     onSurface(null)
+                    return true
                 }
-            })
-            root.addView(surfaceView, videoParams)
+            }
+            root.addView(textureView, videoParams)
         }
         waitingLabel = TextView(context).apply {
             text = context.getString(R.string.cluster_waiting_for_map)

@@ -1,0 +1,12 @@
+<?xml version="1.0" encoding="utf-8"?>
+<resources>
+    <string name="cluster_crop_adjust">仪表盘画面调整</string>
+    <string name="cluster_crop_title">仪表盘画面调整</string>
+    <string name="cluster_crop_hint">调整仪表盘显示的画面区域：宽度/高度越小，画面放得越大；左偏移/上偏移移动显示窗口。调整后自动应用。</string>
+    <string name="cluster_crop_left">左偏移</string>
+    <string name="cluster_crop_top">上偏移</string>
+    <string name="cluster_crop_width">宽度</string>
+    <string name="cluster_crop_height">高度</string>
+    <string name="cluster_crop_reset">重置</string>
+    <string name="cluster_crop_done">完成</string>
+</resources>

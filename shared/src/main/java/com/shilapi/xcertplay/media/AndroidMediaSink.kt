@@ -140,6 +140,10 @@ class AndroidMediaSink(
     private val onAudioDiagnostic: (String) -> Unit = {},
     /** True while any music ("media") audio stream is running; called from media threads. */
     private val onMediaAudioChanged: (Boolean) -> Unit = {},
+    /** True while any navigation-guidance stream is playing; called from media threads. */
+    private val onNavigationGuidanceChanged: (Boolean) -> Unit = {},
+    /** Take transient audio focus during guidance prompts so head-unit volume keys hit guidance. */
+    private val navigationFocusEnabled: Boolean = true,
 ) : MediaSink {
     private val appContext = context?.applicationContext
     private val audioManager = appContext?.getSystemService(AudioManager::class.java)
@@ -155,6 +159,7 @@ class AndroidMediaSink(
     private val surfaces = ConcurrentHashMap<Int, Surface>()
     private val videoDecoders = ConcurrentHashMap<Int, VideoDecoder>()
     private val mediaAudioTypes = mutableSetOf<AudioStreamId>()
+    private val navigationIds = mutableSetOf<AudioStreamId>()
     private val audioRenderers = ConcurrentHashMap<AudioStreamId, AudioRenderer>()
     private val microphoneUplinks = ConcurrentHashMap<AudioStreamId, MicrophoneUplink>()
     private val audioModeLock = Any()
@@ -268,6 +273,7 @@ class AndroidMediaSink(
     override fun onAudioStarted(id: AudioStreamId, format: AudioFormat, firstSample: Int) {
         audioRenderer(id, format).start()
         if (format.audioType == "media") updateMediaAudio(id, true)
+        updateNavigationAudio(id, format, true)
     }
 
     override fun onAudioRtp(id: AudioStreamId, format: AudioFormat, rtp: ByteArray, sample: Int) {
@@ -277,6 +283,7 @@ class AndroidMediaSink(
     override fun onAudioStopped(id: AudioStreamId) {
         audioRenderers.remove(id)?.close()
         updateMediaAudio(id, false)
+        updateNavigationAudio(id, null, false)
     }
 
     private fun updateMediaAudio(id: AudioStreamId, active: Boolean) {
@@ -286,6 +293,76 @@ class AndroidMediaSink(
             before to mediaAudioTypes.isNotEmpty()
         }
         if (before != after) onMediaAudioChanged(after)
+    }
+
+    private fun isNavigationGuidance(format: AudioFormat): Boolean {
+        val mode = if (advancedAudioChannelMapping) {
+            AudioChannelMappingMode.AUTOMOTIVE_BUS
+        } else {
+            AudioChannelMappingMode.MOBILE_COMPATIBLE
+        }
+        return AudioChannelMapper.map(
+            audioType = format.audioType,
+            payloadType = format.payloadType,
+            mode = mode,
+            navigationStreamType = navigationStreamType,
+        ).channel == AudioChannel.NAVIGATION
+    }
+
+    /** Tracks any playing navigation-guidance stream; edge transitions fire the callback. */
+    private fun updateNavigationAudio(id: AudioStreamId, format: AudioFormat?, active: Boolean) {
+        val (before, after) = synchronized(navigationIds) {
+            val before = navigationIds.isNotEmpty()
+            if (active) {
+                if (format != null && isNavigationGuidance(format)) navigationIds.add(id)
+            } else {
+                navigationIds.remove(id)
+            }
+            before to navigationIds.isNotEmpty()
+        }
+        if (before != after) {
+            if (after) requestNavigationFocus() else abandonNavigationFocus()
+            onNavigationGuidanceChanged(after)
+        }
+    }
+
+    /**
+     * Guidance prompts briefly hold transient (ducking) focus so the head unit treats the
+     * navigation stream as the active volume target. On units that route steering-wheel
+     * keys by audio focus this makes them adjust guidance volume during prompts.
+     */
+    private var navigationFocusRequest: Any? = null
+
+    private fun requestNavigationFocus() {
+        val manager = audioManager ?: return
+        if (!navigationFocusEnabled || Build.VERSION.SDK_INT < Build.VERSION_CODES.O) return
+        if (navigationFocusRequest != null) return
+        // Pure navigation usage, matching how the stock car Amap routes guidance with its
+        // "high-level audio API". A legacy stream type here would reclassify the focus as
+        // a media-like stream, which head units then fail to treat as guidance volume.
+        val attributes = android.media.AudioAttributes.Builder()
+            .setUsage(android.media.AudioAttributes.USAGE_ASSISTANCE_NAVIGATION_GUIDANCE)
+            .setContentType(android.media.AudioAttributes.CONTENT_TYPE_SPEECH)
+            .build()
+        val request = android.media.AudioFocusRequest.Builder(
+            AudioManager.AUDIOFOCUS_GAIN_TRANSIENT_MAY_DUCK,
+        )
+            .setAudioAttributes(attributes)
+            .build()
+        val result = manager.requestAudioFocus(request)
+        if (result == AudioManager.AUDIOFOCUS_REQUEST_GRANTED) {
+            navigationFocusRequest = request
+            Log.i("DiPlay-NavFocus", "navigation focus granted (usage routing)")
+        } else {
+            Log.w("DiPlay-NavFocus", "navigation focus denied result=$result")
+        }
+    }
+
+    private fun abandonNavigationFocus() {
+        val manager = audioManager ?: return
+        if (Build.VERSION.SDK_INT < Build.VERSION_CODES.O) return
+        navigationFocusRequest?.let { manager.abandonAudioFocusRequest(it as android.media.AudioFocusRequest) }
+        navigationFocusRequest = null
     }
 
     override fun onMicrophoneStarted(id: AudioStreamId, config: MicrophoneConfig) {
@@ -359,6 +436,11 @@ class AndroidMediaSink(
         audioRenderers.clear()
         val hadMedia = synchronized(mediaAudioTypes) { mediaAudioTypes.isNotEmpty().also { mediaAudioTypes.clear() } }
         if (hadMedia) onMediaAudioChanged(false)
+        val hadNavigation = synchronized(navigationIds) { navigationIds.isNotEmpty().also { navigationIds.clear() } }
+        if (hadNavigation) {
+            abandonNavigationFocus()
+            onNavigationGuidanceChanged(false)
+        }
         try {
             microphoneUplinks.values.forEach(MicrophoneUplink::close)
         } finally {

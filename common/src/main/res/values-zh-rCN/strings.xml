@@ -541,7 +541,7 @@
     <string name="center_map_no_permission_screen">此车机没有该权限的设置界面，请通过 ADB 允许。</string>
     <string name="launcher_map_sharing">与其他启动器共享实时地图</string>
     <string name="launcher_map_sharing_description">支持 DiPlay 的启动器可以在自己的主屏幕中显示实时仪表盘地图。默认关闭，因为开启后车机上的任何应用都可以请求该地图。详见 docs/LAUNCHER_INTEGRATION.md。</string>
-    <string name="open_diplay_settings_hint">CarPlay 中用 %1$d 指下滑打开 DiPlay 设置。</string>
+    <string name="open_diplay_settings_hint">CarPlay 中三指左右滑动切换仪表盘画面，四指下滑打开 DiPlay 设置。</string>
     <string name="carplay_controls">CarPlay 操作</string>
     <string name="settings_gesture_fingers">打开设置 · %1$d 指下滑（点按切换）</string>
     <string name="settings_gesture_fingers_label">打开设置 · 下滑手指数</string>
@@ -558,4 +558,8 @@
     <string name="hotspot_control_failed">车机热点开启失败，请在车机设置中开启。</string>
     <string name="byd_adb_features">比亚迪功能 · 需要 ADB</string>
     <string name="location_reporting_reconnects">更改此设置会重新连接当前 CarPlay 会话。</string>
+    <string name="navigation_volume_keys_focus">方向盘键调节导航播报音量</string>
+    <string name="navigation_volume_keys_focus_description">导航播报时短暂获取音频焦点，让车机把方向盘音量键路由到导航通道而非媒体。播报期间音乐会自动压低（与原厂 CarPlay 一致）。</string>
+    <string name="dashboard_detailed_map">仪表盘显示详细地图</string>
+    <string name="dashboard_detailed_map_description">把整个仪表盘面板声明为安全区，让 iPhone 在仪表盘上直接渲染详细跟随地图（和其他 CarPlay 盒子一致）。关闭则恢复旧的居中安全区，高德会显示全览路线，此时“车辆标记”滑块可移动车标位置。</string>
 </resources>

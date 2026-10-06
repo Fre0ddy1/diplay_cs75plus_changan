@@ -47,6 +47,8 @@ object AirPlayPersistence {
     private const val KEY_MEDIA_AUDIO_CHANNEL = "media_audio_channel"
     private const val KEY_NAVIGATION_AUDIO_CHANNEL = "navigation_audio_channel"
     private const val KEY_NAVIGATION_STREAM_TYPE = "navigation_stream_type"
+    private const val KEY_CARPLAY_NIGHT_MODE = "carplay_night_mode"
+    private const val KEY_AMBIENT_LUX_THRESHOLD = "ambient_lux_threshold"
     private const val KEY_WIRELESS_ENABLED = "wireless_enabled"
     private const val KEY_WIRELESS_HOTSPOT_MODE = "wireless_hotspot_mode"
     private const val KEY_WIFI_P2P_PREFERRED_CHANNEL = "wifi_p2p_preferred_channel"
@@ -69,6 +71,7 @@ object AirPlayPersistence {
     private const val KEY_CLUSTER_CONTENT = "cluster_content"
     private const val KEY_CLUSTER_MARKER_X = "cluster_marker_horizontal_step"
     private const val KEY_CLUSTER_MARKER_Y = "cluster_marker_vertical_step"
+    private const val KEY_CLUSTER_FULL_SAFE_AREA = "cluster_full_safe_area"
     private const val KEY_CLUSTER_TURN_CARD_OVERLAY_POSITION = "cluster_turn_card_overlay_position"
     private const val KEY_CLUSTER_TURN_CARD_OVERLAY_SIZE = "cluster_turn_card_overlay_size"
     private const val KEY_CLUSTER_TURN_CARD_OVERLAY_X = "cluster_turn_card_overlay_x_percent"
@@ -85,6 +88,7 @@ object AirPlayPersistence {
     private const val KEY_SAFE_AREA_DRAW_OUTSIDE = "safe_area_draw_outside"
     private const val KEY_AUTO_START_ON_BOOT = "auto_start_on_boot"
     private const val KEY_AUTO_START_CAR_AMAP = "auto_start_car_amap"
+    private const val KEY_NAVIGATION_FOCUS_ENABLED = "navigation_focus_enabled"
     private const val KEY_LOCATION_REPORTING_ENABLED = "location_reporting_enabled"
     private const val KEY_MFI_TARGET = "mfi_target"
     private const val KEY_MFI_I2C_PATH = "mfi_i2c_path"
@@ -95,7 +99,7 @@ object AirPlayPersistence {
 
     const val DEFAULT_MANUFACTURER = "DiPlay"
     const val DEFAULT_MODEL = "DiPlay"
-    const val DEFAULT_OEM_LABEL = "BYD"
+    const val DEFAULT_OEM_LABEL = "CA"
     const val DEFAULT_MFI_I2C_PATH = "/dev/i2c-1"
 
     /** Applied by the CarPlay host so overlay position/size updates without reconnecting. */
@@ -198,6 +202,34 @@ object AirPlayPersistence {
             .apply()
     }
 
+    fun loadAmbientDelaySeconds(context: Context): Int =
+        context.getSharedPreferences(PREFS, Context.MODE_PRIVATE)
+            .getInt("ambient_delay_seconds", 2).coerceIn(0, 60)
+
+    fun saveAmbientDelaySeconds(context: Context, seconds: Int) {
+        context.getSharedPreferences(PREFS, Context.MODE_PRIVATE).edit()
+            .putInt("ambient_delay_seconds", seconds.coerceIn(0, 60)).apply()
+    }
+
+    fun loadAmbientLightThreshold(context: Context): AmbientLightThreshold = AmbientLightThreshold.fromStored(
+        context.getSharedPreferences(PREFS, Context.MODE_PRIVATE)
+            .getInt(KEY_AMBIENT_LUX_THRESHOLD, AmbientLightThreshold.DEFAULT_LUX),
+    )
+
+    fun saveAmbientLightThreshold(context: Context, threshold: AmbientLightThreshold) {
+        context.getSharedPreferences(PREFS, Context.MODE_PRIVATE).edit()
+            .putInt(KEY_AMBIENT_LUX_THRESHOLD, threshold.lux).apply()
+    }
+
+    fun loadCarPlayNightMode(context: Context): CarPlayNightMode = CarPlayNightMode.fromKey(
+        context.getSharedPreferences(PREFS, Context.MODE_PRIVATE).getString(KEY_CARPLAY_NIGHT_MODE, null),
+    )
+
+    fun saveCarPlayNightMode(context: Context, mode: CarPlayNightMode) {
+        context.getSharedPreferences(PREFS, Context.MODE_PRIVATE).edit()
+            .putString(KEY_CARPLAY_NIGHT_MODE, mode.key).apply()
+    }
+
     fun loadWirelessEnabled(context: Context): Boolean =
         context.getSharedPreferences(PREFS, Context.MODE_PRIVATE)
             .getBoolean(KEY_WIRELESS_ENABLED, true)
@@ -259,9 +291,7 @@ object AirPlayPersistence {
         val stored = prefs.getString(KEY_WIRELESS_HOTSPOT_MODE, null)
         val mode = WirelessHotspotMode.entries.firstOrNull { it.name == stored }
             ?: WirelessHotspotMode.MANUAL
-        val supported = if (mode == WirelessHotspotMode.LOCAL_ONLY_HOTSPOT ||
-            (Build.VERSION.SDK_INT < Build.VERSION_CODES.Q && mode == WirelessHotspotMode.WIFI_P2P)
-        ) WirelessHotspotMode.MANUAL else mode
+        val supported = if (mode == WirelessHotspotMode.LOCAL_ONLY_HOTSPOT) WirelessHotspotMode.MANUAL else mode
         if (stored != supported.name) saveWirelessHotspotMode(context, supported)
         return supported
     }
@@ -379,6 +409,20 @@ object AirPlayPersistence {
             .apply()
     }
 
+    /**
+     * While navigation guidance plays, briefly take audio focus so head units route the
+     * steering-wheel volume keys to the guidance stream (music is ducked during prompts).
+     */
+    fun loadNavigationFocusEnabled(context: Context): Boolean =
+        context.getSharedPreferences(PREFS, Context.MODE_PRIVATE)
+            .getBoolean(KEY_NAVIGATION_FOCUS_ENABLED, true)
+
+    fun saveNavigationFocusEnabled(context: Context, enabled: Boolean) {
+        context.getSharedPreferences(PREFS, Context.MODE_PRIVATE).edit()
+            .putBoolean(KEY_NAVIGATION_FOCUS_ENABLED, enabled)
+            .apply()
+    }
+
     fun loadLocationReportingEnabled(context: Context): Boolean =
         context.getSharedPreferences(PREFS, Context.MODE_PRIVATE)
             .getBoolean(KEY_LOCATION_REPORTING_ENABLED, false)
@@ -413,11 +457,18 @@ object AirPlayPersistence {
             .apply()
     }
 
-    fun loadOemLabel(context: Context): String =
-        context.getSharedPreferences(PREFS, Context.MODE_PRIVATE)
+    fun loadOemLabel(context: Context): String {
+        val label = context.getSharedPreferences(PREFS, Context.MODE_PRIVATE)
             .getString(KEY_OEM_LABEL, DEFAULT_OEM_LABEL)
             // iOS hides the car icon without a label.
             .orEmpty().ifBlank { DEFAULT_OEM_LABEL }
+        // One-time migration for installs that still carry the upstream default "BYD".
+        if (label == "BYD") {
+            saveOemLabel(context, DEFAULT_OEM_LABEL)
+            return DEFAULT_OEM_LABEL
+        }
+        return label
+    }
 
     fun saveOemLabel(context: Context, oemLabel: String) {
         context.getSharedPreferences(PREFS, Context.MODE_PRIVATE).edit()
@@ -519,6 +570,39 @@ object AirPlayPersistence {
 
     fun saveClusterMirrorMain(context: Context, mainScreen: Boolean) {
         context.getSharedPreferences(PREFS, Context.MODE_PRIVATE).edit().putBoolean(KEY_CLUSTER_MIRROR_MAIN, mainScreen).apply()
+        overlaySettingsListener?.invoke()
+    }
+
+    /**
+     * Dashboard crop: which part of the cluster stream is shown on the instrument panel,
+     * as percent of the panel. Width/height below 100 % zoom the picture in (CENTER_CROP
+     * style); left/top shift the visible window. Used by ClusterMapPresentation's TextureView
+     * transform, so it applies to both the navigation stream and the whole-screen mirror.
+     */
+    private const val KEY_CLUSTER_CROP_LEFT = "cluster_crop_left"
+    private const val KEY_CLUSTER_CROP_TOP = "cluster_crop_top"
+    private const val KEY_CLUSTER_CROP_WIDTH = "cluster_crop_width"
+    private const val KEY_CLUSTER_CROP_HEIGHT = "cluster_crop_height"
+
+    fun loadClusterCropLeftPercent(context: Context): Int =
+        context.getSharedPreferences(PREFS, Context.MODE_PRIVATE).getInt(KEY_CLUSTER_CROP_LEFT, 0).coerceIn(0, 90)
+
+    fun loadClusterCropTopPercent(context: Context): Int =
+        context.getSharedPreferences(PREFS, Context.MODE_PRIVATE).getInt(KEY_CLUSTER_CROP_TOP, 0).coerceIn(0, 90)
+
+    fun loadClusterCropWidthPercent(context: Context): Int =
+        context.getSharedPreferences(PREFS, Context.MODE_PRIVATE).getInt(KEY_CLUSTER_CROP_WIDTH, 100).coerceIn(10, 100)
+
+    fun loadClusterCropHeightPercent(context: Context): Int =
+        context.getSharedPreferences(PREFS, Context.MODE_PRIVATE).getInt(KEY_CLUSTER_CROP_HEIGHT, 100).coerceIn(10, 100)
+
+    fun saveClusterCrop(context: Context, left: Int, top: Int, width: Int, height: Int) {
+        context.getSharedPreferences(PREFS, Context.MODE_PRIVATE).edit()
+            .putInt(KEY_CLUSTER_CROP_LEFT, left.coerceIn(0, 90))
+            .putInt(KEY_CLUSTER_CROP_TOP, top.coerceIn(0, 90))
+            .putInt(KEY_CLUSTER_CROP_WIDTH, width.coerceIn(10, 100))
+            .putInt(KEY_CLUSTER_CROP_HEIGHT, height.coerceIn(10, 100))
+            .apply()
         overlaySettingsListener?.invoke()
     }
 
@@ -656,6 +740,18 @@ object AirPlayPersistence {
     fun saveClusterMarkerVerticalStep(context: Context, step: Int) {
         context.getSharedPreferences(PREFS, Context.MODE_PRIVATE).edit()
             .putInt(KEY_CLUSTER_MARKER_Y, step.coerceIn(CarPlayClusterDisplay.verticalSteps)).apply()
+    }
+
+    /**
+     * Whether the dashboard stream declares the whole panel as safe area. A large safe area
+     * (the old 16/25/35/36 % inset) makes Amap render an overview so the whole route fits;
+     * a full-panel safe area makes it render the detailed follow map, like other CarPlay boxes.
+     */
+    fun loadClusterFullSafeArea(context: Context): Boolean =
+        context.getSharedPreferences(PREFS, Context.MODE_PRIVATE).getBoolean(KEY_CLUSTER_FULL_SAFE_AREA, true)
+
+    fun saveClusterFullSafeArea(context: Context, full: Boolean) {
+        context.getSharedPreferences(PREFS, Context.MODE_PRIVATE).edit().putBoolean(KEY_CLUSTER_FULL_SAFE_AREA, full).apply()
     }
 
     fun loadRightHandDrive(context: Context): Boolean =
