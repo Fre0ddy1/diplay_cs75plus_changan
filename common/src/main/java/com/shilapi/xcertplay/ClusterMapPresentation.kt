@@ -49,9 +49,13 @@ internal class ClusterMapPresentation(
         private set
 
     /**
-     * Re-applies the saved dashboard crop window to the generic TextureView without
+     * Re-applies the saved dashboard target rectangle to the generic TextureView without
      * destroying/recreating the window or its decoder surface. Called by the host when the
      * "dashboard picture adjust" panel closes; a no-op on the DiLink 5.1 layout path.
+     *
+     * The rectangle (left/top/width/height in percent of the panel) is a target frame on the
+     * dashboard: the *whole* stream is scaled to fit inside it, preserving the aspect ratio
+     * and centring it, rather than cropping a zoomed window of the source picture.
      */
     fun refreshCrop() {
         val textureView = genericTextureView ?: return
@@ -65,13 +69,21 @@ internal class ClusterMapPresentation(
         val h = hPct * baseH / 100
         val x = minOf(xPct, 100 - wPct) * baseW / 100
         val y = minOf(yPct, 100 - hPct) * baseH / 100
-        val sx = baseW.toFloat() / w
-        val sy = baseH.toFloat() / h
+        // Fit the complete stream into the target rect, keep its aspect ratio, centre it.
+        val scale = minOf(w.toFloat() / baseW, h.toFloat() / baseH)
+        val drawnW = baseW * scale
+        val drawnH = baseH * scale
+        val offsetX = x + (w - drawnW) / 2f
+        val offsetY = y + (h - drawnH) / 2f
         textureView.setTransform(Matrix().apply {
-            setScale(sx, sy)
-            postTranslate(-x * sx, -y * sy)
+            setScale(scale, scale)
+            postTranslate(offsetX, offsetY)
         })
-        Log.i(TAG, "generic crop x=$x y=$y w=$w h=$h scale=$sx,$sy on ${baseW}x${baseH}")
+        Log.i(
+            TAG,
+            "generic rect x=$x y=$y w=$w h=$h fit=$scale " +
+                "centred=($offsetX,$offsetY) on ${baseW}x${baseH}",
+        )
     }
 
     override fun onCreate(savedInstanceState: Bundle?) {
@@ -133,7 +145,11 @@ internal class ClusterMapPresentation(
                     Log.i(TAG, "cluster surface created")
                     texture.setDefaultBufferSize(size.x, size.y)
                     refreshCrop()
-                    onSurface(Surface(texture))
+                    // Keep outputSurface in sync for the generic path too: swipeClusterMode's
+                    // hot-switch reads p.outputSurface to rebind the sink. Without it the
+                    // mirror->navigation switch never reaches onClusterSurface(force=true) and
+                    // the dashboard keeps showing the old stream.
+                    outputSurface = Surface(texture).also(onSurface)
                 }
 
                 override fun onSurfaceTextureSizeChanged(texture: SurfaceTexture, width: Int, height: Int) = refreshCrop()
@@ -142,6 +158,8 @@ internal class ClusterMapPresentation(
 
                 override fun onSurfaceTextureDestroyed(texture: SurfaceTexture): Boolean {
                     Log.i(TAG, "cluster surface destroyed")
+                    outputSurface?.release()
+                    outputSurface = null
                     onSurface(null)
                     return true
                 }

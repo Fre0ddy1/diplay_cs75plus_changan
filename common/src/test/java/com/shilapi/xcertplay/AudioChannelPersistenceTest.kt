@@ -19,15 +19,16 @@ class AudioChannelPersistenceTest {
         prefs.edit().clear().apply()
     }
 
-    @Test fun freshInstallUsesAutomaticRouting() {
-        assertEquals(0, AirPlayPersistence.loadMediaAudioChannel(context))
-        assertEquals(0, AirPlayPersistence.loadNavigationAudioChannel(context))
+    @Test fun freshInstallUsesFeiyuDefaults() {
+        // Changan Feiyu OS: CarPlay music on channel 12, guidance on channel 10 (stock Amap).
+        assertEquals(12, AirPlayPersistence.loadMediaAudioChannel(context))
+        assertEquals(10, AirPlayPersistence.loadNavigationAudioChannel(context))
     }
 
     @Test fun legacyNavigationChannelIsInheritedWithoutChangingMedia() {
         AirPlayPersistence.saveNavigationStreamType(context, 15)
         assertEquals(15, AirPlayPersistence.loadNavigationAudioChannel(context))
-        assertEquals(0, AirPlayPersistence.loadMediaAudioChannel(context))
+        assertEquals(12, AirPlayPersistence.loadMediaAudioChannel(context))
     }
 
     @Test fun explicitNavigationChannelTakesPrecedenceOverLegacySetting() {
@@ -57,26 +58,26 @@ class AudioChannelPersistenceTest {
         assertEquals(15, AirPlayPersistence.loadNavigationAudioChannel(context))
     }
 
-    @Test fun invalidSavedChannelsUseAutomaticRouting() {
+    @Test fun invalidSavedChannelsUseFeiyuDefaults() {
         for (channel in listOf(-1, 21)) {
             AirPlayPersistence.saveMediaAudioChannel(context, channel)
             AirPlayPersistence.saveNavigationAudioChannel(context, channel)
-            assertEquals(0, AirPlayPersistence.loadMediaAudioChannel(context))
-            assertEquals(0, AirPlayPersistence.loadNavigationAudioChannel(context))
+            assertEquals(12, AirPlayPersistence.loadMediaAudioChannel(context))
+            assertEquals(10, AirPlayPersistence.loadNavigationAudioChannel(context))
         }
     }
 
-    @Test fun invalidStoredChannelsUseAutomaticRouting() {
+    @Test fun invalidStoredChannelsUseFeiyuDefaults() {
         AirPlayPersistence.saveNavigationStreamType(context, 15)
         for (channel in listOf(-1, 21)) {
             prefs.edit().putInt("media_audio_channel", channel).putInt("navigation_audio_channel", channel).apply()
-            assertEquals(0, AirPlayPersistence.loadMediaAudioChannel(context))
-            assertEquals(0, AirPlayPersistence.loadNavigationAudioChannel(context))
+            assertEquals(12, AirPlayPersistence.loadMediaAudioChannel(context))
+            assertEquals(10, AirPlayPersistence.loadNavigationAudioChannel(context))
         }
     }
 
-    @Test fun invalidLegacyChannelUsesAutomaticRouting() {
+    @Test fun invalidLegacyChannelUsesFeiyuDefault() {
         AirPlayPersistence.saveNavigationStreamType(context, 21)
-        assertEquals(0, AirPlayPersistence.loadNavigationAudioChannel(context))
+        assertEquals(10, AirPlayPersistence.loadNavigationAudioChannel(context))
     }
 }

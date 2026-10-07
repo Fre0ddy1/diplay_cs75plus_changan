@@ -332,6 +332,8 @@
     <string name="save_and_reconnect">保存并重新连接</string>
     <string name="save_details">保存详情</string>
     <string name="save_diagnostic_report">保存诊断报告</string>
+    <string name="clear_logs">清除日志</string>
+    <string name="logs_cleared">诊断日志已清除，下次连接将重新记录。</string>
     <string name="show_diagnostics_on_screen">在屏幕上显示诊断</string>
     <string name="diagnostics_on_screen">屏幕诊断</string>
     <string name="generating_report">正在生成报告…</string>
@@ -387,6 +389,11 @@
     <string name="use_software_hevc_decoder">使用 HEVC 软件解码器</string>
     <string name="use_usage_content_type_routing_instead_of_stream_type">使用 usage / content-type 路由代替流类型</string>
     <string name="use_your_last_connection_type_and_selected_iphone">使用上次的连接方式和已选 iPhone。</string>
+    <string name="vpn_consent_launch_failed">VPN 授权窗口未能弹出，请返回连接页重试</string>
+    <string name="usb_detected_switching">检测到 USB 连接，已切换至 USB 模式</string>
+    <string name="connection_failed_retrying">连接失败：%1$s。正在重试…</string>
+    <string name="usb_connection_failed_hint">USB 连接失败：%1$s。请检查数据线与接口，并在 iPhone 上允许“信任”；或切回无线连接。</string>
+    <string name="usb_waiting_for_iphone_hint">尚未通过 USB 检测到 iPhone。请使用数据线连接，并在 iPhone 弹出提示时允许“信任”。</string>
     <string name="vpn_consent_was_denied">VPN 授权被拒绝</string>
     <string name="waiting_for_iphone_over_usb">正在等待 USB 连接的 iPhone</string>
     <string name="waiting_for_mfi_coprocessor">正在等待 MFi 协处理器</string>

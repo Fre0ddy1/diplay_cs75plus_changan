@@ -11,6 +11,8 @@ import org.junit.Test
 import org.junit.runner.RunWith
 import org.robolectric.RobolectricTestRunner
 import org.robolectric.annotation.Config
+import org.robolectric.shadows.ShadowSystemClock
+import java.time.Duration
 
 @RunWith(RobolectricTestRunner::class)
 @Config(sdk = [29], manifest = Config.NONE)
@@ -34,10 +36,22 @@ class CarPlayMediaCallbackTest {
     @Test
     fun hardwarePlayAndPauseKeysToggle() {
         press(KeyEvent.KEYCODE_MEDIA_PLAY)
+        ShadowSystemClock.advanceBy(Duration.ofMillis(300))
         press(KeyEvent.KEYCODE_MEDIA_PAUSE)
+        ShadowSystemClock.advanceBy(Duration.ofMillis(300))
         press(CarPlayMediaButton.KEYCODE_BYD_AUTO_MEDIA_PLAY_PAUSE)
 
         assertEquals(List(3) { CarPlayMediaButton.PLAY_PAUSE }, sent)
+    }
+
+    @Test
+    fun duplicateDeliveryWithinDebounceSendsOnce() {
+        // Some ROMs deliver the same press through both the media-button event and the skip
+        // callback; the debounce must collapse them into a single CarPlay press.
+        callback.onSkipToNext()
+        callback.onMediaButtonEvent(button(KeyEvent(0, 0, KeyEvent.ACTION_DOWN, KeyEvent.KEYCODE_MEDIA_NEXT, 0)))
+
+        assertEquals(listOf(CarPlayMediaButton.NEXT), sent)
     }
 
     @Test

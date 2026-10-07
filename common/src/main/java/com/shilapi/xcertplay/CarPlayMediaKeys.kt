@@ -294,18 +294,34 @@ internal object CarPlayMediaKeys {
  * media controllers (not hardware keys) call [onPlay] and [onPause] with an explicit intent.
  */
 internal class CarPlayMediaCallback(private val send: (index: Int, source: String) -> Unit) : MediaSession.Callback() {
+    // Some head-unit ROMs deliver the same hardware press twice: once through the media-button
+    // event and once through the skip callbacks, so a single steering-wheel press skipped two
+    // tracks. Debounce per index; the debounce is short enough to leave deliberate rapid presses
+    // intact.
+    private val lastSentAt = LongArray(6) { -1L } // indices 1..5 (PLAY..PREVIOUS); -1 = never sent
+    private val debounceMillis = 250L
+
     override fun onMediaButtonEvent(mediaButtonIntent: Intent): Boolean {
         @Suppress("DEPRECATION")
         val event = mediaButtonIntent.getParcelableExtra<KeyEvent>(Intent.EXTRA_KEY_EVENT) ?: return false
         val index = CarPlayMediaButton.forKeyCode(event.keyCode) ?: return super.onMediaButtonEvent(mediaButtonIntent)
         if (event.action == KeyEvent.ACTION_DOWN && event.repeatCount == 0) {
-            send(index, KeyEvent.keyCodeToString(event.keyCode))
+            deliver(index, KeyEvent.keyCodeToString(event.keyCode))
         }
         return true
     }
 
-    override fun onPlay() = send(CarPlayMediaButton.PLAY, "play")
-    override fun onPause() = send(CarPlayMediaButton.PAUSE, "pause")
-    override fun onSkipToNext() = send(CarPlayMediaButton.NEXT, "next")
-    override fun onSkipToPrevious() = send(CarPlayMediaButton.PREVIOUS, "previous")
+    override fun onPlay() = deliver(CarPlayMediaButton.PLAY, "play")
+    override fun onPause() = deliver(CarPlayMediaButton.PAUSE, "pause")
+    override fun onSkipToNext() = deliver(CarPlayMediaButton.NEXT, "next")
+    override fun onSkipToPrevious() = deliver(CarPlayMediaButton.PREVIOUS, "previous")
+
+    private fun deliver(index: Int, source: String) {
+        val now = SystemClock.elapsedRealtime()
+        val slot = if (index in 1..5) index else 0
+        val last = lastSentAt[slot]
+        lastSentAt[slot] = now
+        if (last >= 0 && now - last < debounceMillis) return
+        send(index, source)
+    }
 }

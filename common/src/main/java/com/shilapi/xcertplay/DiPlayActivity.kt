@@ -405,6 +405,7 @@ class DiPlayActivity : ComponentActivity() {
             }.apply { isEnabled = !exportInProgress }
             card.addView(exportButton, matchButton(10, 60))
             card.addView(button(getString(R.string.show_diagnostics_on_screen), false) { showDiagnosticsOnScreen() }, matchButton(10, 60))
+            card.addView(button(getString(R.string.clear_logs), false) { clearDiagnosticLogs() }, matchButton(10, 60))
             card.addView(button(getString(R.string.choose_save_location), false) { chooseReportDestination() }, matchButton(10, 60))
             val destination = if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.Q) getString(R.string.reports_save_to_downloads_diplay) else getString(R.string.reports_save_to_app_dir)
             card.addView(label(destination + getString(R.string.nothing_is_sent_automatically_protocol_payloads_and_creden), 14, MUTED).apply { setPadding(0, dp(12), 0, 0) })
@@ -2159,6 +2160,16 @@ class DiPlayActivity : ComponentActivity() {
                 }
             }
         }, "diplay-export").start()
+    }
+
+    /** Deletes every on-device diagnostic log (diplay.log + previous*.log) so the next
+     *  connection records fresh; an already-running session simply appends to new files. */
+    private fun clearDiagnosticLogs() {
+        runCatching {
+            val dir = File(filesDir, "logs")
+            dir.listFiles()?.filter { it.name.endsWith(".log") }?.forEach { it.delete() }
+        }
+        Toast.makeText(this, getString(R.string.logs_cleared), Toast.LENGTH_SHORT).show()
     }
 
     /** Shows the full diagnostic report directly on the head unit screen, for screenshot capture. */

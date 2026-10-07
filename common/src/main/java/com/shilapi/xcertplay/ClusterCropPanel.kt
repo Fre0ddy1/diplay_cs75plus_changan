@@ -16,7 +16,11 @@ import com.shilapi.xcertplay.host.R
  * shift the visible window; values are percents of the panel. Saved immediately, applied
  * when the panel closes (the host rebuilds the cluster window).
  */
-internal class ClusterCropPanel(context: Context, close: () -> Unit) : LinearLayout(context) {
+internal class ClusterCropPanel(
+    context: Context,
+    private val close: () -> Unit,
+    private val onAdjust: () -> Unit = {},
+) : LinearLayout(context) {
     private val steps = listOf(0, 5, 10, 15, 20, 25, 30, 35, 40, 45, 50, 55, 60, 65, 70, 75, 80, 85, 90)
     private val sizeSteps = listOf(10, 15, 20, 25, 30, 35, 40, 45, 50, 55, 60, 65, 70, 75, 80, 85, 90, 95, 100)
 
@@ -38,12 +42,16 @@ internal class ClusterCropPanel(context: Context, close: () -> Unit) : LinearLay
         addView(SeekBar(context).apply {
             max = values.lastIndex
             progress = values.indexOf(current).coerceIn(values.indices)
-            minHeight = dp(44)
+            // Do NOT set minHeight here: the head-unit ROM strips SeekBar#setMinHeight and
+            // throws NoSuchMethodError; the row LayoutParams already fixes the height.
             setOnSeekBarChangeListener(object : SeekBar.OnSeekBarChangeListener {
                 override fun onProgressChanged(seek: SeekBar?, progress: Int, fromUser: Boolean) {
                     val value = values[progress.coerceIn(values.indices)]
                     label.text = format(value)
-                    if (fromUser) save(value)
+                    if (fromUser) {
+                        save(value)
+                        onAdjust()
+                    }
                 }
                 override fun onStartTrackingTouch(seek: SeekBar?) = Unit
                 override fun onStopTrackingTouch(seek: SeekBar?) = Unit

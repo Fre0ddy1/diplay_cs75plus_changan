@@ -170,7 +170,10 @@ class CarPlayHostActivity : ComponentActivity() {
             awaitingVpnConsent = false
             if (result.resultCode == RESULT_OK) {
                 vpnReady = true
-                maybeStartCarPlay()
+                runCatching { maybeStartCarPlay() }
+                    .onFailure { error ->
+                        appendLog("VPN consent: start failed ${error.javaClass.simpleName}: ${error.message}")
+                    }
             } else {
                 setStatus(getString(R.string.vpn_consent_was_denied))
             }
@@ -396,10 +399,27 @@ class CarPlayHostActivity : ComponentActivity() {
     private var initialClusterMirror: Boolean? = null
     private var gestureStartX = 0f
     private var gestureStartY = 0f
-    // Locks the swipe axis once the first significant movement is seen, so a three-finger
-    // vertical swipe never triggers the horizontal dashboard switch (and never collides
-    // with the four-finger settings swipe). 0 = undecided, 1 = horizontal, 2 = vertical.
-    private var gestureAxis = 0
+    // Press→release trajectory: the action is decided on finger-up from the whole swipe,
+    // so a mid-move axis lock is unnecessary and a down-swipe can never fire the
+    // horizontal dashboard switch. The finger count at press decides which gesture applies.
+    private var gestureStartFingers = 0
+    private var gestureEndX = 0f
+    private var gestureEndY = 0f
+    // Swipe-down-to-open-settings finger count from settings (3/4/5, persistence default 3).
+    private var settingsGestureFingers = 3
+    // Permission/VPN-consent dialogs requested during onCreate are deferred to onResume:
+    // ActivityResultLauncher.launch() before the activity reaches STARTED throws
+    // IllegalStateException, which crashed the wired (USB) startup path on this ROM.
+    private var pendingVpnConsent: Intent? = null
+    private var pendingMicrophonePermission = false
+    private var pendingLocationPermission = false
+    // USB auto-switch debounce: this head unit re-broadcasts USB_DEVICE_ATTACHED while the
+    // cable stays plugged in. Without a quiet window a manual wireless choice is instantly
+    // overridden back to USB; with one, a repeat broadcast within 60s is ignored.
+    private var lastUsbAutoSwitchElapsed = 0L
+    // Failure/waiting toasts are throttled so a retrying session does not spam the screen.
+    private var lastFailureToastElapsed = 0L
+    private var lastUsbWaitToastElapsed = 0L
     private val shuttingDown = AtomicBoolean(false)
     private val mainHandler = Handler(Looper.getMainLooper())
     private val teardownExecutor: ExecutorService = Executors.newSingleThreadExecutor()
@@ -503,6 +523,7 @@ class CarPlayHostActivity : ComponentActivity() {
         }
         if (intent.getBooleanExtra("cluster_crop_controls", false)) {
             intent.removeExtra("cluster_crop_controls")
+            appendLog("Cluster crop: request received")
             openClusterCropPanel()
         }
         applyFullscreenMode()
@@ -527,12 +548,16 @@ class CarPlayHostActivity : ComponentActivity() {
         microphoneAvailable =
             checkSelfPermission(Manifest.permission.RECORD_AUDIO) == PackageManager.PERMISSION_GRANTED
         microphonePermissionResolved = microphoneAvailable
+        appendLog(
+            "Startup: adoptedSession=$reusedBackgroundSession microphone=$microphonePermissionResolved " +
+                "wireless=$wirelessEnabled",
+        )
         if (reusedBackgroundSession) {
             updateDebugOverlays()
         } else if (microphonePermissionResolved) {
             requestStartupPrerequisites()
         } else {
-            microphonePermission.launch(Manifest.permission.RECORD_AUDIO)
+            pendingMicrophonePermission = true
         }
     }
 
@@ -549,6 +574,7 @@ class CarPlayHostActivity : ComponentActivity() {
                 AirPlayPersistence.loadAdvancedAudioChannelMapping(this)
         navigationStreamType = AirPlayPersistence.loadNavigationStreamType(this)
         debugLogsEnabled = AirPlayPersistence.loadDebugLogsEnabled(this)
+        settingsGestureFingers = AirPlayPersistence.loadSettingsGestureFingers(this)
         autoStartOnBoot = AirPlayPersistence.loadAutoStartOnBoot(this)
         manufacturer = AirPlayPersistence.loadManufacturer(this)
         model = AirPlayPersistence.loadModel(this)
@@ -629,14 +655,26 @@ class CarPlayHostActivity : ComponentActivity() {
                 "Cluster crop panel: videoParent=${videoView?.parent?.javaClass?.simpleName ?: "none"} " +
                     "root=${root != null}",
             )
-            if (root == null) return
+            if (root == null) {
+                appendLog("Cluster crop panel: no root to attach to")
+                Toast.makeText(
+                    this,
+                    "仪表盘画面调整面板打开失败（无画面层，详见诊断日志）",
+                    Toast.LENGTH_LONG,
+                ).show()
+                return
+            }
             root.post {
                 runCatching {
                     if (generation != clusterCropPanelGeneration || isFinishing || isDestroyed) {
                         appendLog("Cluster crop panel: skip (generation changed)")
                         return@runCatching
                     }
-                    val panel = ClusterCropPanel(this, ::closeClusterCropPanel)
+                    val panel = ClusterCropPanel(
+                        this,
+                        ::closeClusterCropPanel,
+                        onAdjust = { runCatching { clusterPresentation?.refreshCrop() } },
+                    )
                     // Fixed-size panel: root.width may still be 0 when the panel is opened
                     // right after cold start, which previously collapsed the panel to 1px.
                     val width = dp(360)
@@ -649,6 +687,13 @@ class CarPlayHostActivity : ComponentActivity() {
                     })
                     clusterCropPanel = panel
                     appendLog("Cluster crop panel: shown ${width}x${height}px")
+                }.onFailure { e ->
+                    appendLog("Cluster crop panel: open failed ${e.message ?: e.javaClass.simpleName}")
+                    Toast.makeText(
+                        this,
+                        "仪表盘画面调整面板打开失败，详见诊断日志",
+                        Toast.LENGTH_LONG,
+                    ).show()
                 }
             }
         }
@@ -685,12 +730,8 @@ class CarPlayHostActivity : ComponentActivity() {
     private fun requestLocationPermission() {
         if (locationPermissionAvailable || awaitingLocationPermission) return
         awaitingLocationPermission = true
-        locationPermission.launch(
-            arrayOf(
-                Manifest.permission.ACCESS_FINE_LOCATION,
-                Manifest.permission.ACCESS_COARSE_LOCATION,
-            ),
-        )
+        appendLog("Startup: requesting location permission")
+        pendingLocationPermission = true
     }
 
     private fun hasFineLocationPermission(): Boolean =
@@ -698,13 +739,66 @@ class CarPlayHostActivity : ComponentActivity() {
             PackageManager.PERMISSION_GRANTED
 
     private fun requestVpnConsent() {
-        val consent = CarPlayVpnService.prepare(this)
+        val consent = runCatching { CarPlayVpnService.prepare(this) }
+            .getOrElse { error ->
+                appendLog("Startup: VPN prepare failed ${error.javaClass.simpleName}: ${error.message}")
+                null
+            }
         if (consent == null) {
+            appendLog("Startup: VPN consent already granted, starting wired path")
+            vpnReady = true
+            maybeStartCarPlay()
+        } else if (consent.resolveActivity(packageManager) == null) {
+            // This head-unit ROM has no AOSP VPN consent dialog (com.android.vpndialogs is
+            // absent — launch throws ActivityNotFoundException). There is nothing to show, so
+            // attempt the wired path directly: a slimmed ROM that drops the dialog usually
+            // does not enforce consent either. Any rejection surfaces as AttachResult.Failed.
+            appendLog("Startup: VPN consent dialog unavailable on this ROM, attempting wired path directly")
             vpnReady = true
             maybeStartCarPlay()
         } else {
+            appendLog("Startup: requesting VPN consent")
             awaitingVpnConsent = true
-            vpnConsent.launch(consent)
+            pendingVpnConsent = consent
+            // Launch as soon as the request is registered. This covers the REORDER_TO_FRONT
+            // path where onResume already ran (pending would otherwise sit until the next
+            // resume); the deferred launch is safe because post() executes after onResume.
+            maybeLaunchPendingStartupRequests()
+        }
+    }
+
+    /**
+     * Launches any permission / VPN-consent dialog that a startup path requested before the
+     * activity reached a resumed state. ActivityResultLauncher.launch() while the activity is
+     * still in CREATED throws IllegalStateException on this head-unit ROM; this crashed the
+     * wired (USB) startup path, whose VPN consent had never been granted. onResume guarantees
+     * the lifecycle is STARTED/RESUMED, so all deferred launches happen there.
+     */
+    private fun maybeLaunchPendingStartupRequests() {
+        if (pendingVpnConsent != null) {
+            val consent = pendingVpnConsent!!
+            pendingVpnConsent = null
+            // Post to the next loop: on this head-unit ROM the launcher can still reject a
+            // launch issued directly inside onResume, crashing the wired path. Deferring keeps
+            // the activity fully resumed; any residual failure is logged, not fatal.
+            mainHandler.post {
+                runCatching { vpnConsent.launch(consent) }
+                    .onFailure { error ->
+                        appendLog("Startup: VPN consent launch failed ${error.javaClass.simpleName}: ${error.message}")
+                        setStatus(getString(R.string.vpn_consent_launch_failed))
+                    }
+            }
+        } else if (pendingMicrophonePermission) {
+            pendingMicrophonePermission = false
+            microphonePermission.launch(Manifest.permission.RECORD_AUDIO)
+        } else if (pendingLocationPermission) {
+            pendingLocationPermission = false
+            locationPermission.launch(
+                arrayOf(
+                    Manifest.permission.ACCESS_FINE_LOCATION,
+                    Manifest.permission.ACCESS_COARSE_LOCATION,
+                ),
+            )
         }
     }
 
@@ -755,9 +849,20 @@ class CarPlayHostActivity : ComponentActivity() {
         }
         if (intent.getBooleanExtra("cluster_crop_controls", false)) {
             intent.removeExtra("cluster_crop_controls")
+            appendLog("Cluster crop: request received")
             openClusterCropPanel()
         }
         if (intent.action == "android.hardware.usb.action.USB_DEVICE_ATTACHED" && wirelessEnabled) {
+            val now = SystemClock.elapsedRealtime()
+            if (now - lastUsbAutoSwitchElapsed < 60_000L) {
+                // Duplicate attach broadcast while the cable stays plugged in. Ignoring it
+                // keeps a manual wireless choice from being overridden right back to USB.
+                appendLog("USB attach: ignored within auto-switch debounce window")
+                return
+            }
+            lastUsbAutoSwitchElapsed = now
+            appendLog("USB attach: switching from wireless to USB")
+            Toast.makeText(this, R.string.usb_detected_switching, Toast.LENGTH_SHORT).show()
             shutdown(false, "switching to USB") {
                 AirPlayPersistence.saveWirelessEnabled(this, false)
                 startActivity(Intent(this, CarPlayHostActivity::class.java))
@@ -790,9 +895,13 @@ class CarPlayHostActivity : ComponentActivity() {
             requestLocationPermission()
         }
         wirelessPermissionsReady = !wirelessEnabled || hasRequiredWirelessPermissions()
+        maybeLaunchPendingStartupRequests()
         advancedAudioChannelMapping =
             advancedAudioChannelMappingSupported &&
                 AirPlayPersistence.loadAdvancedAudioChannelMapping(this)
+        // Refresh the persisted gesture-finger preference on every foreground return so a change
+        // made in the DiPlay settings page takes effect immediately, without waiting for a reconnect.
+        settingsGestureFingers = AirPlayPersistence.loadSettingsGestureFingers(this)
         if (DiLink51ClusterLayout.automatic(this) && clusterMonitor == null) {
             clusterMonitor = DiLink51ClusterMonitor(this, ::onClusterActivityState).also { it.start() }
         } else if (!DiLink51ClusterLayout.automatic(this)) {
@@ -806,6 +915,10 @@ class CarPlayHostActivity : ComponentActivity() {
         mainHandler.removeCallbacks(refreshTurnOverlay)
         mainHandler.post(refreshTurnOverlay)
         maybeStartCarPlay()
+        // Fallback sweep: a startup request registered while onResume was already running
+        // (e.g. switching to USB from the connection page) is launched here so a wired
+        // session never waits for the next resume to show its VPN consent dialog.
+        maybeLaunchPendingStartupRequests()
         applyFullscreenMode()
     }
 
@@ -861,6 +974,40 @@ class CarPlayHostActivity : ComponentActivity() {
         } catch (error: RuntimeException) {
             Log.w(ClusterMapPresentation.TAG, "cluster presentation failed", error)
             appendLog("Cluster map: presentation failed ${error.javaClass.simpleName}")
+        }
+    }
+
+    /**
+     * Creates the instrument-cluster window without requiring the "dashboard projection"
+     * setting, so a three-finger swipe can pull the dashboard up even before the first
+     * projection. The window is shown hidden and the already-running main-mirror stream is
+     * bound, so once a swipe sets it visible the dashboard has a picture immediately. The
+     * DiLink 5.1 layout path has its own monitor and is skipped here.
+     */
+    private fun ensureClusterWindowQuiet() {
+        if (clusterPresentation != null) return
+        if (DiLink51ClusterLayout.supported()) return
+        val theme = effectiveClusterTheme()
+        val display = ClusterMapPresentation.findDisplay(this, theme) ?: run {
+            appendLog("Cluster map: no cluster projection display (quiet)")
+            return
+        }
+        val presentation = ClusterMapPresentation(this, display, theme) { surface -> runOnUiThread { onClusterSurface(surface) } }
+        presentation.setOnDismissListener {
+            if (clusterPresentation === presentation) {
+                clusterPresentation = null
+                com.shilapi.xcertplay.hud.BydNavigationOutputs.setClusterMapShown(false)
+            }
+        }
+        try {
+            presentation.show()
+            clusterPresentation = presentation
+            presentation.setStreamActive(clusterStreamActive())
+            presentation.setMapVisible(false)
+            applyClusterTurnOverlay()
+            appendLog("Cluster map: quiet window shown display=${display.displayId}")
+        } catch (error: RuntimeException) {
+            appendLog("Cluster map: quiet window failed ${error.javaClass.simpleName}")
         }
     }
 
@@ -934,11 +1081,19 @@ class CarPlayHostActivity : ComponentActivity() {
         com.shilapi.xcertplay.hud.BydNavigationOutputs.setClusterMapShown(false)
     }
 
-    private fun onClusterSurface(surface: Surface?) {
-        if (clusterSurface === surface) return
+    private fun onClusterSurface(surface: Surface?, force: Boolean = false) {
+        if (!force && clusterSurface === surface) return
         // A direct handoff lets MediaCodec.setOutputSurface preserve its reference frames.
         // Clearing first would destroy the decoder and can leave stream 111 waiting for an IDR.
-        if (!DiLink51ClusterLayout.supported() || surface == null) {
+        if (force) {
+            // Hot mode switch (mirror <-> navigation stream): release the previous binding
+            // first, otherwise the cluster window keeps showing the old decoder output —
+            // e.g. mirror stream 110 still displayed while pos=0 (navigation) was requested.
+            clusterSurface?.let { old ->
+                sink?.clearSurface(SCREEN_TYPE_ALT, old)
+                sink?.setMirrorSurface(SCREEN_TYPE_MAIN, CLUSTER_MAIN_MIRROR, null)
+            }
+        } else if (!DiLink51ClusterLayout.supported() || surface == null) {
             clusterSurface?.let { old ->
                 sink?.clearSurface(SCREEN_TYPE_ALT, old)
                 sink?.setMirrorSurface(SCREEN_TYPE_MAIN, CLUSTER_MAIN_MIRROR, null)
@@ -3466,11 +3621,30 @@ class CarPlayHostActivity : ComponentActivity() {
             val description = status.describe()
             setConnectionStage(description)
             when (status) {
-                is CarPlayStatus.Failed -> if (status.wifiResetRequired) {
-                    wifiRecoveryButton?.visibility = View.VISIBLE
-                } else {
-                    wifiRecoveryButton?.visibility = View.GONE
-                    reconnectAfterLoss(description)
+                is CarPlayStatus.Failed -> {
+                    val now = SystemClock.elapsedRealtime()
+                    if (now - lastFailureToastElapsed > 20_000L) {
+                        lastFailureToastElapsed = now
+                        val hint = if (AirPlayPersistence.loadWirelessEnabled(this)) {
+                            getString(R.string.connection_failed_retrying, description)
+                        } else {
+                            getString(R.string.usb_connection_failed_hint, description)
+                        }
+                        Toast.makeText(this, hint, Toast.LENGTH_LONG).show()
+                    }
+                    if (status.wifiResetRequired) {
+                        wifiRecoveryButton?.visibility = View.VISIBLE
+                    } else {
+                        wifiRecoveryButton?.visibility = View.GONE
+                        reconnectAfterLoss(description)
+                    }
+                }
+                CarPlayStatus.WaitingForIphone -> {
+                    val now = SystemClock.elapsedRealtime()
+                    if (now - lastUsbWaitToastElapsed > 60_000L) {
+                        lastUsbWaitToastElapsed = now
+                        Toast.makeText(this, R.string.usb_waiting_for_iphone_hint, Toast.LENGTH_LONG).show()
+                    }
                 }
                 else -> Unit
             }
@@ -3787,7 +3961,10 @@ class CarPlayHostActivity : ComponentActivity() {
             return
         }
         if (controller == null && adoptBackgroundSession()) return
-        val size = activeDisplaySize ?: return
+        val size = activeDisplaySize ?: run {
+            appendLog("Startup: waiting for display size before CarPlay start")
+            return
+        }
         val transportReady = if (wirelessEnabled) wirelessPermissionsReady else vpnReady
         val locationReady = !locationReportingEnabled || locationPermissionAvailable
         if (
@@ -3800,6 +3977,9 @@ class CarPlayHostActivity : ComponentActivity() {
             pendingDisplaySize != null ||
             controller != null
         ) {
+            if (!transportReady) appendLog("Startup: transport not ready (vpn=$vpnReady wireless=$wirelessEnabled)")
+            if (!locationReady) appendLog("Startup: location not ready")
+            if (!microphonePermissionResolved) appendLog("Startup: microphone not resolved")
             return
         }
         startCarPlay(size)
@@ -3841,6 +4021,12 @@ class CarPlayHostActivity : ComponentActivity() {
     private fun restartCarPlay(reason: String) {
         if (!CarPlayBackgroundSession.isOwner(this) && CarPlayBackgroundSession.hasSession()) return
         if (shuttingDown.get() || menuOpen || handshakeResetInProgress) return
+        // A full restart tears down the CarPlay stack: reset the dashboard swipe state and
+        // dismiss the old cluster window (it was bound to the old sink). The new session's
+        // stream callbacks rebuild a fresh quiet window; without this, three-finger swipes
+        // after a reconnect can be stuck at an old position or target a dead window.
+        clusterSwipePosition = -1
+        if (clusterPresentation != null) dismissClusterPresentation()
         val size = activeDisplaySize
             ?: CarPlayBackgroundSession.snapshot()?.let { DisplaySize(it.width, it.height) }
             ?: run {
@@ -3991,72 +4177,105 @@ class CarPlayHostActivity : ComponentActivity() {
         return super.dispatchTouchEvent(event)
     }
 
+    /**
+     * End-of-gesture decision from the whole press→release trajectory:
+     * - horizontal swipe (dominant X, >= distance, |dy| within slop) → dashboard mode switch
+     * - downward swipe (dominant Y, >= distance, finger count matches the settings choice) → DiPlay settings
+     * Nothing fires mid-move, so a down-swipe can never collide with the horizontal switch.
+     */
+    private fun finishGestureIfNeeded(): Boolean {
+        if (!gestureSequenceActive) return false
+        val dx = gestureEndX - gestureStartX
+        val dy = gestureEndY - gestureStartY
+        val fingers = gestureStartFingers
+        gestureSequenceActive = false
+        gestureTracking = false
+        // Read the persisted preference directly instead of trusting the cached field: any
+        // stale/mismatched cache would silently change which swipe opens the settings page.
+        val requiredFingers = AirPlayPersistence.loadSettingsGestureFingers(this)
+        val distance = dp(THREE_FINGER_SWIPE_DISTANCE_DP)
+        // Direction-dominant thresholds instead of a fixed dp slop: real three-finger swipes
+        // on the head unit often carry a downward drift of 60-100dp, which a 48dp slop
+        // rejected as "no action" (visible in the logs: dx=-775 dy=80 no action). The 2:1
+        // horizontal aspect keeps diagonal gestures inert while accepting slightly slanted
+        // horizontal swipes. The down-swipe only requires vertical dominance (dy >= |dx|),
+        // so a settings pull does not have to be perfectly vertical either; the dead zone
+        // between dy=|dx| and |dx|=2*dy keeps the two gestures clearly separated.
+        if (fingers >= GESTURE_MIN_FINGERS &&
+            Math.abs(dx) >= distance &&
+            Math.abs(dx) >= 2 * Math.abs(dy)
+        ) {
+            appendLog(
+                "Gesture release: horizontal ${if (dx < 0f) "left" else "right"} " +
+                    "dx=$dx dy=$dy fingers=$fingers",
+            )
+            swipeClusterMode(if (dx < 0f) "left" else "right")
+            return true
+        }
+        if (fingers >= requiredFingers &&
+            dy >= distance &&
+            Math.abs(dy) >= Math.abs(dx)
+        ) {
+            appendLog(
+                "Gesture release: down-swipe opens settings dx=$dx dy=$dy " +
+                    "fingers=$fingers required=$requiredFingers",
+            )
+            openSettingsMenu()
+            return true
+        }
+        appendLog(
+            "Gesture release: no action dx=$dx dy=$dy fingers=$fingers " +
+                "required=$requiredFingers min=$GESTURE_MIN_FINGERS",
+        )
+        return false
+    }
+
     private fun dispatchGesture(event: MotionEvent): Boolean {
         when (event.actionMasked) {
             MotionEvent.ACTION_DOWN -> {
                 gestureSequenceActive = false
                 gestureTracking = false
-                gestureAxis = 0
             }
             MotionEvent.ACTION_POINTER_DOWN -> {
                 if (event.pointerCount >= GESTURE_MIN_FINGERS && !gestureSequenceActive) {
                     gestureSequenceActive = true
                     gestureTracking = true
-                    gestureAxis = 0
+                    gestureStartFingers = event.pointerCount
                     gestureStartX = pointerCentroid(event, horizontal = true)
                     gestureStartY = pointerCentroid(event, horizontal = false)
+                    gestureEndX = gestureStartX
+                    gestureEndY = gestureStartY
                     controller?.sendTouch(emptyList())
-                    appendLog("Three-finger swipe tracking started")
+                    appendLog("Gesture tracking started ($gestureStartFingers fingers)")
+                    return true
+                }
+                if (gestureSequenceActive && event.pointerCount > gestureStartFingers) {
+                    // A fourth finger lands after the three-finger threshold started tracking:
+                    // remember the peak count so a 4-finger settings swipe is not judged as 3.
+                    gestureStartFingers = event.pointerCount
+                    appendLog("Gesture tracking peak fingers=$gestureStartFingers")
                     return true
                 }
             }
         }
         if (gestureSequenceActive) {
-            if (!gestureTracking || event.pointerCount < GESTURE_MIN_FINGERS) {
-                if (event.actionMasked == MotionEvent.ACTION_UP ||
-                    event.actionMasked == MotionEvent.ACTION_CANCEL
-                ) {
-                    gestureSequenceActive = false
-                    gestureTracking = false
-                    gestureAxis = 0
-                } else if (event.actionMasked == MotionEvent.ACTION_POINTER_UP) {
-                    gestureTracking = false
-                }
+            if (event.actionMasked == MotionEvent.ACTION_MOVE && gestureTracking &&
+                event.pointerCount >= GESTURE_MIN_FINGERS
+            ) {
+                gestureEndX = pointerCentroid(event, horizontal = true)
+                gestureEndY = pointerCentroid(event, horizontal = false)
                 return true
             }
-            if (event.actionMasked == MotionEvent.ACTION_MOVE) {
-                val deltaX = pointerCentroid(event, horizontal = true) - gestureStartX
-                val deltaY = pointerCentroid(event, horizontal = false) - gestureStartY
-                // Lock the axis on the first significant movement; a three-finger vertical
-                // swipe then does nothing instead of firing the horizontal dashboard switch.
-                if (gestureAxis == 0 &&
-                    (Math.abs(deltaX) + Math.abs(deltaY)) >= dp(GESTURE_AXIS_LOCK_DISTANCE_DP)
-                ) {
-                    gestureAxis = if (Math.abs(deltaX) > Math.abs(deltaY)) 1 else 2
-                }
-                val distance = dp(THREE_FINGER_SWIPE_DISTANCE_DP)
-                if (
-                    gestureAxis == 2 &&
-                    event.pointerCount >= SETTINGS_GESTURE_FINGERS &&
-                    deltaY >= distance
-                ) {
-                    gestureSequenceActive = false
-                    gestureTracking = false
-                    gestureAxis = 0
-                    openSettingsMenu()
-                    return true
-                }
-                if (
-                    gestureAxis == 1 &&
-                    event.pointerCount >= GESTURE_MIN_FINGERS &&
-                    Math.abs(deltaX) >= distance
-                ) {
-                    gestureSequenceActive = false
-                    gestureTracking = false
-                    gestureAxis = 0
-                    swipeClusterMode(if (deltaX < 0f) "left" else "right")
-                    return true
-                }
+            if (event.actionMasked == MotionEvent.ACTION_UP ||
+                event.actionMasked == MotionEvent.ACTION_CANCEL
+            ) {
+                finishGestureIfNeeded()
+                return true
+            }
+            if (event.actionMasked == MotionEvent.ACTION_POINTER_UP) {
+                if (event.pointerCount < GESTURE_MIN_FINGERS) finishGestureIfNeeded()
+                else gestureTracking = false
+                return true
             }
             return true
         }
@@ -4069,65 +4288,47 @@ class CarPlayHostActivity : ComponentActivity() {
             MotionEvent.ACTION_DOWN -> {
                 gestureSequenceActive = false
                 gestureTracking = false
-                gestureAxis = 0
             }
             MotionEvent.ACTION_POINTER_DOWN -> {
                 if (event.pointerCount >= GESTURE_MIN_FINGERS && !gestureSequenceActive) {
                     gestureSequenceActive = true
                     gestureTracking = true
-                    gestureAxis = 0
+                    gestureStartFingers = event.pointerCount
                     gestureStartX = pointerCentroid(event, horizontal = true)
                     gestureStartY = pointerCentroid(event, horizontal = false)
+                    gestureEndX = gestureStartX
+                    gestureEndY = gestureStartY
                     controller?.sendTouch(emptyList())
-                    appendLog("Three-finger swipe tracking started")
+                    appendLog("Gesture tracking started ($gestureStartFingers fingers)")
+                    return true
+                }
+                if (gestureSequenceActive && event.pointerCount > gestureStartFingers) {
+                    // A fourth finger lands after the three-finger threshold started tracking:
+                    // remember the peak count so a 4-finger settings swipe is not judged as 3.
+                    gestureStartFingers = event.pointerCount
+                    appendLog("Gesture tracking peak fingers=$gestureStartFingers")
                     return true
                 }
             }
         }
         if (gestureSequenceActive) {
-            if (!gestureTracking || event.pointerCount < GESTURE_MIN_FINGERS) {
-                if (event.actionMasked == MotionEvent.ACTION_UP ||
-                    event.actionMasked == MotionEvent.ACTION_CANCEL
-                ) {
-                    gestureSequenceActive = false
-                    gestureTracking = false
-                    gestureAxis = 0
-                } else if (event.actionMasked == MotionEvent.ACTION_POINTER_UP) {
-                    gestureTracking = false
-                }
+            if (event.actionMasked == MotionEvent.ACTION_MOVE && gestureTracking &&
+                event.pointerCount >= GESTURE_MIN_FINGERS
+            ) {
+                gestureEndX = pointerCentroid(event, horizontal = true)
+                gestureEndY = pointerCentroid(event, horizontal = false)
                 return true
             }
-            if (event.actionMasked == MotionEvent.ACTION_MOVE) {
-                val deltaX = pointerCentroid(event, horizontal = true) - gestureStartX
-                val deltaY = pointerCentroid(event, horizontal = false) - gestureStartY
-                if (gestureAxis == 0 &&
-                    (Math.abs(deltaX) + Math.abs(deltaY)) >= dp(GESTURE_AXIS_LOCK_DISTANCE_DP)
-                ) {
-                    gestureAxis = if (Math.abs(deltaX) > Math.abs(deltaY)) 1 else 2
-                }
-                val distance = dp(THREE_FINGER_SWIPE_DISTANCE_DP)
-                if (
-                    gestureAxis == 2 &&
-                    event.pointerCount >= SETTINGS_GESTURE_FINGERS &&
-                    deltaY >= distance
-                ) {
-                    gestureSequenceActive = false
-                    gestureTracking = false
-                    gestureAxis = 0
-                    openSettingsMenu()
-                    return true
-                }
-                if (
-                    gestureAxis == 1 &&
-                    event.pointerCount >= GESTURE_MIN_FINGERS &&
-                    Math.abs(deltaX) >= distance
-                ) {
-                    gestureSequenceActive = false
-                    gestureTracking = false
-                    gestureAxis = 0
-                    swipeClusterMode(if (deltaX < 0f) "left" else "right")
-                    return true
-                }
+            if (event.actionMasked == MotionEvent.ACTION_UP ||
+                event.actionMasked == MotionEvent.ACTION_CANCEL
+            ) {
+                finishGestureIfNeeded()
+                return true
+            }
+            if (event.actionMasked == MotionEvent.ACTION_POINTER_UP) {
+                if (event.pointerCount < GESTURE_MIN_FINGERS) finishGestureIfNeeded()
+                else gestureTracking = false
+                return true
             }
             return true
         }
@@ -4141,66 +4342,48 @@ class CarPlayHostActivity : ComponentActivity() {
             MotionEvent.ACTION_DOWN -> {
                 gestureSequenceActive = false
                 gestureTracking = false
-                gestureAxis = 0
             }
             MotionEvent.ACTION_POINTER_DOWN -> {
                 if (event.pointerCount >= GESTURE_MIN_FINGERS && !gestureSequenceActive) {
                     gestureSequenceActive = true
                     gestureTracking = true
-                    gestureAxis = 0
+                    gestureStartFingers = event.pointerCount
                     gestureStartX = pointerCentroid(event, horizontal = true)
                     gestureStartY = pointerCentroid(event, horizontal = false)
+                    gestureEndX = gestureStartX
+                    gestureEndY = gestureStartY
                     controller?.sendTouch(emptyList())
-                    appendLog("Three-finger swipe tracking started")
+                    appendLog("Gesture tracking started ($gestureStartFingers fingers)")
+                    return true
+                }
+                if (gestureSequenceActive && event.pointerCount > gestureStartFingers) {
+                    // A fourth finger lands after the three-finger threshold started tracking:
+                    // remember the peak count so a 4-finger settings swipe is not judged as 3.
+                    gestureStartFingers = event.pointerCount
+                    appendLog("Gesture tracking peak fingers=$gestureStartFingers")
                     return true
                 }
             }
         }
 
         if (gestureSequenceActive) {
-            if (!gestureTracking || event.pointerCount < GESTURE_MIN_FINGERS) {
-                if (event.actionMasked == MotionEvent.ACTION_UP ||
-                    event.actionMasked == MotionEvent.ACTION_CANCEL
-                ) {
-                    gestureSequenceActive = false
-                    gestureTracking = false
-                    gestureAxis = 0
-                } else if (event.actionMasked == MotionEvent.ACTION_POINTER_UP) {
-                    gestureTracking = false
-                }
+            if (event.actionMasked == MotionEvent.ACTION_MOVE && gestureTracking &&
+                event.pointerCount >= GESTURE_MIN_FINGERS
+            ) {
+                gestureEndX = pointerCentroid(event, horizontal = true)
+                gestureEndY = pointerCentroid(event, horizontal = false)
                 return true
             }
-            if (event.actionMasked == MotionEvent.ACTION_MOVE) {
-                val deltaX = pointerCentroid(event, horizontal = true) - gestureStartX
-                val deltaY = pointerCentroid(event, horizontal = false) - gestureStartY
-                if (gestureAxis == 0 &&
-                    (Math.abs(deltaX) + Math.abs(deltaY)) >= dp(GESTURE_AXIS_LOCK_DISTANCE_DP)
-                ) {
-                    gestureAxis = if (Math.abs(deltaX) > Math.abs(deltaY)) 1 else 2
-                }
-                val distance = dp(THREE_FINGER_SWIPE_DISTANCE_DP)
-                if (
-                    gestureAxis == 2 &&
-                    event.pointerCount >= SETTINGS_GESTURE_FINGERS &&
-                    deltaY >= distance
-                ) {
-                    gestureSequenceActive = false
-                    gestureTracking = false
-                    gestureAxis = 0
-                    openSettingsMenu()
-                    return true
-                }
-                if (
-                    gestureAxis == 1 &&
-                    event.pointerCount >= GESTURE_MIN_FINGERS &&
-                    Math.abs(deltaX) >= distance
-                ) {
-                    gestureSequenceActive = false
-                    gestureTracking = false
-                    gestureAxis = 0
-                    swipeClusterMode(if (deltaX < 0f) "left" else "right")
-                    return true
-                }
+            if (event.actionMasked == MotionEvent.ACTION_UP ||
+                event.actionMasked == MotionEvent.ACTION_CANCEL
+            ) {
+                finishGestureIfNeeded()
+                return true
+            }
+            if (event.actionMasked == MotionEvent.ACTION_POINTER_UP) {
+                if (event.pointerCount < GESTURE_MIN_FINGERS) finishGestureIfNeeded()
+                else gestureTracking = false
+                return true
             }
             return true
         }
@@ -4248,36 +4431,83 @@ class CarPlayHostActivity : ComponentActivity() {
      * 111 stay up, so there is no reconnect.
      */
     private fun swipeClusterMode(direction: String) {
-        if (shuttingDown.get() || handshakeResetInProgress) return
+        if (shuttingDown.get() || handshakeResetInProgress) {
+            appendLog(
+                "Cluster swipe $direction: skipped shuttingDown=${shuttingDown.get()} " +
+                    "handshakeReset=$handshakeResetInProgress pos=$clusterSwipePosition",
+            )
+            return
+        }
         if (!AirPlayPersistence.loadClusterMapEnabled(this)) {
             appendLog("Cluster swipe $direction: 仪表盘投屏未启用，无法切换")
             return
         }
         if (initialClusterMirror == null) initialClusterMirror = AirPlayPersistence.loadClusterMirrorMain(this)
+        // Left swipe (right-to-left) is FORWARD: not projected -> whole screen (pos 0) ->
+        // navigation stream only (pos 1) -> boundary. Right swipe is BACK: pos 1 -> pos 0 ->
+        // off (-1) -> boundary, and does nothing before the first projection.
         val nextPos = when (direction) {
-            "left" -> if (clusterSwipePosition >= 1) return else clusterSwipePosition + 1
-            else -> if (clusterSwipePosition <= -1) return else clusterSwipePosition - 1
+            "left" -> when {
+                clusterSwipePosition <= -1 -> 0
+                clusterSwipePosition >= 1 -> return
+                else -> clusterSwipePosition + 1
+            }
+            else -> when {
+                clusterSwipePosition <= -1 -> return
+                else -> clusterSwipePosition - 1
+            }
         }
         clusterSwipePosition = nextPos
-        val mirror = when (nextPos) {
-            -1 -> initialClusterMirror ?: return
-            0 -> false
-            else -> true
+        if (nextPos == -1) {
+            // Back at "not projected": hide the dashboard window (keep it alive so the next
+            // swipe can show it instantly) instead of leaving it visible.
+            clusterPresentation?.setMapVisible(false)
+            appendLog("Cluster swipe $direction: 关闭仪表盘投屏 (pos=-1)")
+            return
         }
-        AirPlayPersistence.saveClusterMirrorMain(this, mirror)
-        appendLog("Cluster swipe $direction: 仪表盘显示${if (mirror) "整机界面" else "导航流"} (pos=$nextPos)")
-        // Neutral feedback: the mode is saved and applies as soon as the cluster window has a
-        // feed (stock Amap running). Do not claim "already active" without a live stream.
-        Toast.makeText(
-            this,
-            "仪表盘已切换为${if (mirror) "整机界面" else "导航流"}（已保存）",
-            Toast.LENGTH_SHORT,
-        ).show()
-        // Hot switch only when the cluster window exists; before projection starts there is
-        // nothing to rebind, the persisted mode applies automatically when the window appears.
+        // pos 0 = whole-screen mirror, pos 1 = navigation stream only.
+        val mirror = nextPos == 0
+        appendLog("Cluster swipe $direction: 请求仪表盘显示${if (mirror) "整机界面" else "导航流"} (pos=$nextPos)")
         if (ClusterMapPresentation.findDisplay(this) != null) {
-            dismissClusterPresentation()
-            ensureClusterPresentation()
+            // Persist the mode only when the dashboard projection is actually available.
+            // Swiping while nothing is projected is just an attempt; saving there would let
+            // a disconnected reconnect + trial swipe silently flip the mode to navigation-only.
+            AirPlayPersistence.saveClusterMirrorMain(this, mirror)
+            // Hot switch: reuse the existing cluster window and rebind the stream to the new
+            // mode. Never dismiss+recreate — dismiss is asynchronous and the recreated window
+            // can be hidden behind the old one or wait for a new IDR frame (black screen).
+            if (clusterPresentation == null) ensureClusterWindowQuiet()
+            clusterPresentation?.let { p ->
+                p.setMapVisible(true)
+                p.outputSurface?.let { s -> onClusterSurface(s, force = true) }
+                p.setStreamActive(clusterStreamActive())
+                if (!mirror && !clusterStreamActive()) {
+                    // Navigation stream (111) has no frames yet: iPhone is not navigating.
+                    // Keep the binding; the window fills in as soon as guidance data arrives.
+                    appendLog("Cluster swipe $direction: 导航流未激活，等待手机端导航数据")
+                    Toast.makeText(
+                        this,
+                        "已切换为导航流，等待手机导航数据…",
+                        Toast.LENGTH_SHORT,
+                    ).show()
+                }
+            }
+            Toast.makeText(
+                this,
+                "仪表盘已切换为${if (mirror) "整机界面" else "导航流"}",
+                Toast.LENGTH_SHORT,
+            ).show()
+        } else {
+            // No projection display at all: the dashboard is not up, so a swipe cannot switch
+            // anything. Do not auto-launch the stock Amap here any more — the user explicitly
+            // reverted that behaviour; the dashboard must be projected first (via the stock
+            // Amap or a previous session) for three-finger swipes to work.
+            appendLog("Cluster swipe $direction: 仪表盘未投屏，无法切换 (pos=$nextPos)")
+            Toast.makeText(
+                this,
+                "仪表盘尚未投屏，请先投屏后使用三指切换",
+                Toast.LENGTH_SHORT,
+            ).show()
         }
     }
 
@@ -4286,6 +4516,9 @@ class CarPlayHostActivity : ComponentActivity() {
             if (shuttingDown.get() || generation != restartGeneration) return@runOnUiThread
             if (active) {
                 activeScreenStreamTypes.add(type)
+                // Stream is up: create the hidden dashboard window so a three-finger swipe
+                // can show it instantly, even before the first projection.
+                if (clusterPresentation == null) ensureClusterWindowQuiet()
             } else {
                 activeScreenStreamTypes.remove(type)
             }
@@ -4458,13 +4691,13 @@ class CarPlayHostActivity : ComponentActivity() {
         const val AUDIO_CAPTURE_DIRECTORY = "audio-captures"
         const val PROTOCOL_TRACE_PREFIX = "TRACE "
         const val GESTURE_MIN_FINGERS = 3
-        /** Fingers required for the swipe-DOWN that opens DiPlay settings; 4 keeps the
-         * three-finger swipe free for dashboard switching and two fingers free for map pinch. */
-        const val SETTINGS_GESTURE_FINGERS = 4
-        /** Movement that locks the swipe axis, before the full swipe distance is reached. */
-        const val GESTURE_AXIS_LOCK_DISTANCE_DP = 24
+        // The swipe-down finger count that opens DiPlay settings is user-configurable in
+        // DiPlay settings (3/4/5, persistence default 3) and is loaded into
+        // settingsGestureFingers; two fingers stay reserved for map pinch-zoom.
         const val THREE_FINGER_SWIPE_DISTANCE_DP = 72
-        const val THREE_FINGER_SWIPE_DIRECTION_RATIO = 1.15f
+        /** Max vertical travel allowed for a three-finger horizontal swipe; a large
+         * vertical swipe (or a steep diagonal) must NOT trigger the dashboard switch. */
+        const val GESTURE_VERTICAL_SLOP_DP = 48
         const val MAX_SETTINGS_MENU_WIDTH_PX = 1200
         val MENU_BACKGROUND = Color.rgb(12, 16, 19)
         val MENU_SECONDARY = Color.rgb(170, 180, 190)
