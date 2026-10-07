@@ -309,7 +309,7 @@
     <string name="right_hand_drive">右舵</string>
     <string name="running">运行中</string>
     <string name="s_0_3x">0.3x</string>
-    <string name="s_1000_ms_most_stable">1000 毫秒 · 更稳定</string>
+    <string name="s_1000_ms_most_stable">1500 毫秒 · 最稳定</string>
     <string name="s_1_0x">1.0x</string>
     <string name="s_1_choose_your_connection">1 · 选择连接方式</string>
     <string name="s_1_connect_a_computer_with_adb_installed_to_the_car_using">1. 用装有 ADB 的电脑，通过现有的 USB 或无线调试连接连接到车机。如有调试授权提示请批准。\n\n2. 在电脑终端中运行此命令：</string>
@@ -320,7 +320,7 @@
     <string name="s_30_fps_lighter_load">30 帧/秒 · 减轻负载</string>
     <string name="s_3_connect">3 · 连接</string>
     <string name="s_3_tap_check_and_enable_below_this_enables_the_cluster_ma">3. 点击下方“检查并启用”。这将启用仪表盘地图和自动主题跟随。正在进行的 CarPlay 会话会重新连接一次，之后即可断开电脑。</string>
-    <string name="s_500_ms">500 毫秒</string>
+    <string name="s_500_ms">1000 毫秒 · 默认（推荐）</string>
     <string name="s_5_ghz">5 GHz</string>
     <string name="s_60_fps_smoother_motion">60 帧/秒 · 更流畅</string>
     <string name="s_60_lightest_load" formatted="false">60% · 最低负载</string>

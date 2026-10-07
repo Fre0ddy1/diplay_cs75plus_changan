@@ -310,7 +310,7 @@
     <string name="right_hand_drive">Right-hand drive</string>
     <string name="running">Running</string>
     <string name="s_0_3x">0.3x</string>
-    <string name="s_1000_ms_most_stable">1000 ms · most stable</string>
+    <string name="s_1000_ms_most_stable">1500 ms · most stable</string>
     <string name="s_1_0x">1.0x</string>
     <string name="s_1_choose_your_connection">1 · Choose your connection</string>
     <string name="s_1_connect_a_computer_with_adb_installed_to_the_car_using">1. Connect a computer with ADB installed to the car using your existing USB or wireless debugging connection. Approve debugging on the car if asked.\n\n2. Run this command in the computer’s terminal:</string>
@@ -321,7 +321,7 @@
     <string name="s_30_fps_lighter_load">30 fps · lighter load</string>
     <string name="s_3_connect">3 · Connect</string>
     <string name="s_3_tap_check_and_enable_below_this_enables_the_cluster_ma">3. Tap Check and enable below. This enables the cluster map and automatic theme following. An active CarPlay session reconnects once. You can then disconnect the computer.</string>
-    <string name="s_500_ms">500 ms</string>
+    <string name="s_500_ms">1000 ms · default (recommended)</string>
     <string name="s_5_ghz">5 GHz</string>
     <string name="s_60_fps_smoother_motion">60 fps · smoother motion</string>
     <string name="s_60_lightest_load" formatted="false">60% · lightest load</string>

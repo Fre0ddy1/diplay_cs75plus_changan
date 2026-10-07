@@ -66,6 +66,7 @@ import com.shilapi.xcertplay.airplay.CarPlayClusterDisplay
 import com.shilapi.xcertplay.airplay.AirPlaySafeArea
 import com.shilapi.xcertplay.airplay.AirPlaySession
 import com.shilapi.xcertplay.airplay.AirPlaySessionListener
+import com.shilapi.xcertplay.airplay.AirPlayContact
 import com.shilapi.xcertplay.airplay.CarPlayMediaEngine
 import com.shilapi.xcertplay.airplay.SafeAreaRect
 import com.shilapi.xcertplay.host.R
@@ -4490,6 +4491,12 @@ class CarPlayHostActivity : ComponentActivity() {
                         "已切换为导航流，等待手机导航数据…",
                         Toast.LENGTH_SHORT,
                     ).show()
+                } else if (!mirror) {
+                    // Amap guidance is active on the console: auto-tap its
+                    // fullscreen/overview toggle so the dashboard shows the detailed follow
+                    // map (which it keeps even after the console leaves Amap). Same behaviour
+                    // as the FengQing box's "navigation stream" mode.
+                    scheduleMainScreenFullscreenToggle()
                 }
             }
             Toast.makeText(
@@ -4509,6 +4516,38 @@ class CarPlayHostActivity : ComponentActivity() {
                 Toast.LENGTH_SHORT,
             ).show()
         }
+    }
+
+    // Normalized position of Amap CarPlay's fullscreen/overview toggle button (top-right of the
+    // console map, 1920x720 coordinates). Tapping it flips the console to overview, which makes
+    // Amap render the detailed follow map on the 111 dashboard stream; the dashboard keeps that
+    // detailed mode even after the console leaves Amap (user-verified). This reproduces the
+    // FengQing box's "navigation stream" behaviour. The position is a best guess: tune the
+    // constants if the tap misses the button.
+    private fun scheduleMainScreenFullscreenToggle() {
+        val x = MAIN_SCREEN_FULLSCREEN_BUTTON_X
+        val y = MAIN_SCREEN_FULLSCREEN_BUTTON_Y
+        appendLog("Scheduling Amap fullscreen toggle: wake tap then button tap at ($x,$y)")
+        mainHandler.postDelayed({
+            if (shuttingDown.get() || handshakeResetInProgress) return@postDelayed
+            // Wake the console UI first: CarPlay overlays auto-hide after a few seconds, and
+            // the fullscreen/overview button only exists while the overlay is up. A light tap
+            // on the map centre brings the overlay back with no side effects.
+            val wake = controller?.sendTouch(listOf(AirPlayContact(id = 0, x = 0.5, y = 0.5, down = true))) ?: false
+            mainHandler.postDelayed({
+                val wakeUp = controller?.sendTouch(listOf(AirPlayContact(id = 0, x = 0.5, y = 0.5, down = false))) ?: false
+                appendLog("Amap fullscreen toggle: wake tap sent down=$wake up=$wakeUp")
+                // Overlay is up now: tap the fullscreen/overview button.
+                mainHandler.postDelayed({
+                    if (shuttingDown.get() || handshakeResetInProgress) return@postDelayed
+                    val down = controller?.sendTouch(listOf(AirPlayContact(id = 0, x = x, y = y, down = true))) ?: false
+                    mainHandler.postDelayed({
+                        val up = controller?.sendTouch(listOf(AirPlayContact(id = 0, x = x, y = y, down = false))) ?: false
+                        appendLog("Amap fullscreen toggle tap sent down=$down up=$up at ($x,$y)")
+                    }, 80L)
+                }, 350L)
+            }, 100L)
+        }, 700L)
     }
 
     private fun onScreenStreamStateChanged(generation: Int, type: Int, active: Boolean) {
@@ -4698,6 +4737,12 @@ class CarPlayHostActivity : ComponentActivity() {
         /** Max vertical travel allowed for a three-finger horizontal swipe; a large
          * vertical swipe (or a steep diagonal) must NOT trigger the dashboard switch. */
         const val GESTURE_VERTICAL_SLOP_DP = 48
+        // Normalized (0..1 of the 1920x720 main screen) position of Amap CarPlay's
+        // fullscreen/overview toggle button, top-right of the console map. Auto-tapped when
+        // the three-finger swipe switches the dashboard to the navigation stream, so Amap
+        // renders the detailed follow map there (FengQing-box behaviour).
+        const val MAIN_SCREEN_FULLSCREEN_BUTTON_X = 0.90
+        const val MAIN_SCREEN_FULLSCREEN_BUTTON_Y = 0.10
         const val MAX_SETTINGS_MENU_WIDTH_PX = 1200
         val MENU_BACKGROUND = Color.rgb(12, 16, 19)
         val MENU_SECONDARY = Color.rgb(170, 180, 190)

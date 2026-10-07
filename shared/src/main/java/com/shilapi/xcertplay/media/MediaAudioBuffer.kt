@@ -6,8 +6,11 @@ package com.shilapi.xcertplay.media
  * outlasts them. Calls, Siri and navigation prompts keep the small low-latency buffer.
  */
 object MediaAudioBuffer {
-    const val DEFAULT_MILLIS = 300
-    val presets = listOf(DEFAULT_MILLIS, 500, 1000)
+    // Wi-Fi Direct on head units shows radio gaps of several hundred ms routinely and ~1.1 s
+    // occasionally (measured maxGapMs=1114 with a 19:40 underrun). 300 ms + 200 ms headroom
+    // was too shallow and rebuffered; 1000 ms + 200 ms outlasts the measured gaps.
+    const val DEFAULT_MILLIS = 1000
+    val presets = listOf(300, DEFAULT_MILLIS, 1500)
 
     private const val HEADROOM_MILLIS = 200 // room above the start level so bursts after a gap fit
     private const val MIN_TRACK_BUFFER_BYTES = 16 * 1024

@@ -305,7 +305,7 @@
     <string name="right_hand_drive">Кермо праворуч</string>
     <string name="running">Працює</string>
     <string name="s_0_3x">0.3x</string>
-    <string name="s_1000_ms_most_stable">1000 мс · найстабільніше</string>
+    <string name="s_1000_ms_most_stable">1500 мс · найстабільніше</string>
     <string name="s_1_0x">1.0x</string>
     <string name="s_1_choose_your_connection">1 · Виберіть спосіб підключення</string>
     <string name="s_1_connect_a_computer_with_adb_installed_to_the_car_using">1. Підключіть до автомобіля комп’ютер з установленим ADB через наявне USB-з’єднання або бездротове налагодження. Якщо автомобіль запитає, дозвольте налагодження.\n\n2. Виконайте цю команду в терміналі комп’ютера:</string>
@@ -316,7 +316,7 @@
     <string name="s_30_fps_lighter_load">30 кадрів/с · менше навантаження</string>
     <string name="s_3_connect">3 · Підключіться</string>
     <string name="s_3_tap_check_and_enable_below_this_enables_the_cluster_ma">3. Натисніть «Перевірити й увімкнути» нижче. Це ввімкне карту на приборці та автоматичне стеження за темою. Активний сеанс CarPlay перепідключиться один раз. Після цього комп’ютер можна відключити.</string>
-    <string name="s_500_ms">500 мс</string>
+    <string name="s_500_ms">1000 мс · типово (рекомендовано)</string>
     <string name="s_5_ghz">5 ГГц</string>
     <string name="s_60_fps_smoother_motion">60 кадрів/с · плавніший рух</string>
     <string name="s_60_lightest_load" formatted="false">60% · найменше навантаження</string>

@@ -297,7 +297,7 @@
     <string name="review_app_permissions">Проверить разрешения приложения</string>
     <string name="right_hand_drive">Праворукий руль</string>
     <string name="running">Работает</string>
-    <string name="s_1000_ms_most_stable">1000 мс · самая стабильная</string>
+    <string name="s_1000_ms_most_stable">1500 мс · самая стабильная</string>
     <string name="s_1_choose_your_connection">1 · Выберите способ подключения</string>
     <string name="s_1_connect_a_computer_with_adb_installed_to_the_car_using">1. Подключите компьютер с установленным ADB к автомобилю по имеющемуся USB или беспроводной отладке. При запросе подтвердите отладку на автомобиле.\n\n2. Выполните эту команду в терминале компьютера:</string>
     <string name="s_1_open_car_hotspot_settings_turn_the_hotspot_on_and_sele">1. Откройте настройки точки доступа автомобиля, включите её и выберите 5 ГГц, если доступно.\n2. Точно скопируйте ниже её имя и пароль.\n3. Оставляйте точку доступа включённой при подключении. DiPlay передаёт данные по Bluetooth; iPhone подключится автоматически.</string>
@@ -306,7 +306,7 @@
     <string name="s_30_fps_lighter_load">30 кадров/с · меньшая нагрузка</string>
     <string name="s_3_connect">3 · Подключитесь</string>
     <string name="s_3_tap_check_and_enable_below_this_enables_the_cluster_ma">3. Нажмите «Проверить и включить» ниже. Это включит карту комбинации и автоматическое следование теме. Активный сеанс CarPlay переподключится один раз. После этого можно отключить компьютер.</string>
-    <string name="s_500_ms">500 мс</string>
+    <string name="s_500_ms">1000 мс · по умолчанию (рекомендуется)</string>
     <string name="s_60_fps_smoother_motion">60 кадров/с · более плавное движение</string>
     <string name="s_60_lightest_load" formatted="false">60% · минимальная нагрузка</string>
     <string name="s_80_lighter_load" formatted="false">80% · меньшая нагрузка</string>

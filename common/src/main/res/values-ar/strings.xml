@@ -297,7 +297,7 @@
     <string name="review_app_permissions">مراجعة أذونات التطبيق</string>
     <string name="right_hand_drive">قيادة يمنى</string>
     <string name="running">قيد التشغيل</string>
-    <string name="s_1000_ms_most_stable">1000 مللي ثانية · الأكثر استقراراً</string>
+    <string name="s_1000_ms_most_stable">1500 مللي ثانية · الأكثر استقراراً</string>
     <string name="s_1_choose_your_connection">1 · اختر اتصالك</string>
     <string name="s_1_connect_a_computer_with_adb_installed_to_the_car_using">1. صِل حاسوباً عليه ADB مثبّت بالسيارة عبر اتصال USB أو التنقيط اللاسلكي الحالي. وافق على التنقيط في السيارة إن طُلب.\n\n2. نفّذ هذا الأمر في طرفية الحاسوب:</string>
     <string name="s_1_open_car_hotspot_settings_turn_the_hotspot_on_and_sele">1. افتح إعدادات نقطة اتصال السيارة، وشغّل نقطة الاتصال واختر 5 GHz إن توفر.\n2. انسخ الاسم وكلمة المرور أدناه كما هما تماماً.\n3. أبقِ نقطة اتصال السيارة مُشغّلة عند الاتصال. يرسل DiPlay البيانات عبر البلوتوث؛ وينضم iPhone تلقائياً.</string>
@@ -306,7 +306,7 @@
     <string name="s_30_fps_lighter_load">30 إطاراً/ث · حمل أخف</string>
     <string name="s_3_connect">3 · اتصل</string>
     <string name="s_3_tap_check_and_enable_below_this_enables_the_cluster_ma">3. اضغط «تحقق وفعّل» أدناه. يفعّل ذلك خريطة المجموعة واتباع السمة تلقائياً. ستعيد جلسة CarPlay النشطة الاتصال مرة واحدة. يمكنك بعد ذلك فصل الحاسوب.</string>
-    <string name="s_500_ms">500 مللي ثانية</string>
+    <string name="s_500_ms">1000 مللي ثانية · الافتراضي (موصى به)</string>
     <string name="s_60_fps_smoother_motion">60 إطاراً/ث · حركة أكثر سلاسة</string>
     <string name="s_60_lightest_load" formatted="false">60% · أخف حمل</string>
     <string name="s_80_lighter_load" formatted="false">80% · حمل أخف</string>
