@@ -4469,53 +4469,82 @@ class CarPlayHostActivity : ComponentActivity() {
         // pos 0 = whole-screen mirror, pos 1 = navigation stream only.
         val mirror = nextPos == 0
         appendLog("Cluster swipe $direction: 请求仪表盘显示${if (mirror) "整机界面" else "导航流"} (pos=$nextPos)")
-        if (ClusterMapPresentation.findDisplay(this) != null) {
-            // Persist the mode only when the dashboard projection is actually available.
-            // Swiping while nothing is projected is just an attempt; saving there would let
-            // a disconnected reconnect + trial swipe silently flip the mode to navigation-only.
-            AirPlayPersistence.saveClusterMirrorMain(this, mirror)
-            // Hot switch: reuse the existing cluster window and rebind the stream to the new
-            // mode. Never dismiss+recreate — dismiss is asynchronous and the recreated window
-            // can be hidden behind the old one or wait for a new IDR frame (black screen).
-            if (clusterPresentation == null) ensureClusterWindowQuiet()
-            clusterPresentation?.let { p ->
-                p.setMapVisible(true)
-                p.outputSurface?.let { s -> onClusterSurface(s, force = true) }
-                p.setStreamActive(clusterStreamActive())
-                if (!mirror && !clusterStreamActive()) {
-                    // Navigation stream (111) has no frames yet: iPhone is not navigating.
-                    // Keep the binding; the window fills in as soon as guidance data arrives.
-                    appendLog("Cluster swipe $direction: 导航流未激活，等待手机端导航数据")
-                    Toast.makeText(
-                        this,
-                        "已切换为导航流，等待手机导航数据…",
-                        Toast.LENGTH_SHORT,
-                    ).show()
-                } else if (!mirror) {
-                    // Amap guidance is active on the console: auto-tap its
-                    // fullscreen/overview toggle so the dashboard shows the detailed follow
-                    // map (which it keeps even after the console leaves Amap). Same behaviour
-                    // as the FengQing box's "navigation stream" mode.
-                    scheduleMainScreenFullscreenToggle()
-                }
-            }
-            Toast.makeText(
-                this,
-                "仪表盘已切换为${if (mirror) "整机界面" else "导航流"}",
-                Toast.LENGTH_SHORT,
-            ).show()
+                if (ClusterMapPresentation.findDisplay(this) != null) {
+            applyClusterMode(mirror, direction)
         } else {
-            // No projection display at all: the dashboard is not up, so a swipe cannot switch
-            // anything. Do not auto-launch the stock Amap here any more — the user explicitly
-            // reverted that behaviour; the dashboard must be projected first (via the stock
-            // Amap or a previous session) for three-finger swipes to work.
-            appendLog("Cluster swipe $direction: 仪表盘未投屏，无法切换 (pos=$nextPos)")
-            Toast.makeText(
-                this,
-                "仪表盘尚未投屏，请先投屏后使用三指切换",
-                Toast.LENGTH_SHORT,
-            ).show()
+            // No projection display: the dashboard projection mode is not active. The stock
+            // Amap (or a previous successful session) used to be the only way to activate it.
+            // Now we try the Chang'an instrument-cluster SDK directly (the same service the
+            // FengQing box talks to): sendNavigateStatus(1) tells the head-unit "navigation
+            // running", which registers the dashboard display - no stock Amap needed.
+            appendLog("Cluster swipe $direction: 仪表盘未投屏，尝试激活仪表投影 (pos=$nextPos)")
+            tryActivateClusterProjection(mirror, direction)
         }
+    }
+
+    // Applies the requested dashboard mode once a projection display is available.
+    private fun applyClusterMode(mirror: Boolean, direction: String) {
+        // Persist the mode only when the dashboard projection is actually available.
+        AirPlayPersistence.saveClusterMirrorMain(this, mirror)
+        // Hot switch: reuse the existing cluster window and rebind the stream to the new
+        // mode. Never dismiss+recreate - dismiss is asynchronous and the recreated window
+        // can be hidden behind the old one or wait for a new IDR frame (black screen).
+        if (clusterPresentation == null) ensureClusterWindowQuiet()
+        clusterPresentation?.let { p ->
+            p.setMapVisible(true)
+            p.outputSurface?.let { s -> onClusterSurface(s, force = true) }
+            p.setStreamActive(clusterStreamActive())
+            if (!mirror && !clusterStreamActive()) {
+                // Navigation stream (111) has no frames yet: iPhone is not navigating.
+                // Keep the binding; the window fills in as soon as guidance data arrives.
+                appendLog("Cluster swipe $direction: 导航流未激活，等待手机端导航数据")
+                Toast.makeText(
+                    this,
+                    "已切换为导航流，等待手机导航数据...",
+                    Toast.LENGTH_SHORT,
+                ).show()
+            } else if (!mirror) {
+                // Amap guidance is active on the console: auto-tap its
+                // fullscreen/overview toggle so the dashboard shows the detailed follow
+                // map (which it keeps even after the console leaves Amap). Same behaviour
+                // as the FengQing box's "navigation stream" mode.
+                scheduleMainScreenFullscreenToggle()
+            }
+        }
+        Toast.makeText(
+            this,
+            "仪表盘已切换为${if (mirror) "整机界面" else "导航流"}",
+            Toast.LENGTH_SHORT,
+        ).show()
+    }
+
+    // Best-effort cold-start activation of the dashboard projection via the Chang'an
+    // instrument-cluster SDK; retries findDisplay a few times in case the display
+    // registers asynchronously.
+    private fun tryActivateClusterProjection(mirror: Boolean, direction: String) {
+        val sdkAvailable = InCallClusterSdk.isAvailable()
+        appendLog(
+            "Cluster activation: InCallClusterSdk available=$sdkAvailable",
+        )
+        if (sdkAvailable) {
+            val sent = InCallClusterSdk.sendNavigateStatus(1)
+            appendLog("Cluster activation: sendNavigateStatus(1) sent=$sent")
+        }
+        // Give the head-unit a moment to register the dashboard display, then retry.
+        mainHandler.postDelayed({
+            if (shuttingDown.get() || handshakeResetInProgress) return@postDelayed
+            if (ClusterMapPresentation.findDisplay(this) != null) {
+                appendLog("Cluster activation: 仪表投影已激活，继续投屏 (mirror=$mirror)")
+                applyClusterMode(mirror, direction)
+            } else {
+                appendLog("Cluster activation: 激活后仍未找到仪表投影 display")
+                Toast.makeText(
+                    this,
+                    "仪表盘尚未投屏，请先投屏后使用三指切换",
+                    Toast.LENGTH_SHORT,
+                ).show()
+            }
+        }, 800L)
     }
 
     // Normalized position of Amap CarPlay's fullscreen/overview toggle button (top-right of the
