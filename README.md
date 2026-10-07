@@ -20,7 +20,7 @@
 >
 > ，使用前请确认你的车机支持并接受相应风险。
 
-
+**系统要求**：APK 支持 Android 7.1+（API 25）；Android 7.1–8.1 支持为新增能力（尚未在实车上验证）。无线支持 Wi-Fi Direct、车机热点或同一局域网 / Existing Wi-Fi。Android 9 的 Wi-Fi Direct 使用依赖固件的旧路径（生成组凭据、频段未经核实）；Android 10+ 会校验协商后的组频段。
 
 ***
 
