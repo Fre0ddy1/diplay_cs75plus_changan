@@ -860,6 +860,17 @@ class CarPlayHostActivity : ComponentActivity() {
                 runCatching { vpnConsent.launch(consent) }
                     .onFailure { error ->
                         appendLog("Startup: VPN consent launch failed ${error.javaClass.simpleName}: ${error.message}")
+                        // The dialog component exists per resolveActivity but its class is missing on
+                        // this ROM (launch throws ActivityNotFoundException). A ROM that drops the
+                        // dialog usually does not enforce consent either, so attempt the wired path
+                        // directly — same fallback as the resolveActivity==null branch. Any rejection
+                        // surfaces as AttachResult.Failed, never a crash.
+                        awaitingVpnConsent = false
+                        vpnReady = true
+                        runCatching { maybeStartCarPlay() }
+                            .onFailure { startError ->
+                                appendLog("Startup: wired fallback start failed ${startError.javaClass.simpleName}: ${startError.message}")
+                            }
                         setStatus(getString(R.string.vpn_consent_launch_failed))
                     }
             }

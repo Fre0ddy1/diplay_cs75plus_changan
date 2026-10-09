@@ -399,7 +399,7 @@
     <string name="use_software_hevc_decoder">Use software HEVC decoder</string>
     <string name="use_usage_content_type_routing_instead_of_stream_type">Use usage / content-type routing instead of stream type</string>
     <string name="use_your_last_connection_type_and_selected_iphone">Use your last connection type and selected iPhone.</string>
-    <string name="vpn_consent_launch_failed">The VPN consent dialog could not be shown; return to the connection page and try again</string>
+    <string name="vpn_consent_launch_failed">The VPN consent dialog is unavailable; attempting a direct wired connection</string>
     <string name="usb_detected_switching">USB device detected; switched to USB connection</string>
     <string name="connection_failed_retrying">Connection failed: %1$s. Retrying…</string>
     <string name="usb_connection_failed_hint">USB connection failed: %1$s. Check the cable, the port, and approve Trust on the iPhone; or switch back to wireless.</string>
