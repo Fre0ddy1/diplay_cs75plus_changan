@@ -34,7 +34,6 @@ internal class BydStandaloneHudOutput private constructor(context: Context) {
 
     fun update(icon: Int, exit: Int, distanceMeters: Int, road: String) =
         session.update(icon, exit, distanceMeters, road)
-    fun showText(text: String) = session.showText(text)
     fun clear() = session.clear()
 
     companion object {
