@@ -230,13 +230,22 @@ internal class BydHudRouteState(
                 id == 0x03 && valueLength >= 1 -> type = data[value].toInt() and 0xff
                 id == 0x04 -> afterRoad = utf8(data, value, valueLength)
                 id == 0x08 && valueLength >= 1 -> drivingSide = data[value].toInt() and 0xff
-                // Best-effort highway exit label (Apple CPManeuver.highwayExitLabel). The iAP2
-                // TLV for it is undocumented, so any short UTF-8 value on an unknown field is
-                // taken as the exit label; the raw trace stays in the log for later calibration.
-                // AMap narration text ("进入 鄞县大道") arrives through these fields too, so
-                // candidates that start with a navigation action word are rejected - otherwise
-                // the exit badge duplicates the road-name card. Numeric labels like "314" pass.
-                exitLabel.isEmpty() && id !in setOf(0x01, 0x03, 0x04, 0x08) &&
+                // Highway exit label (Apple CPManeuver.highwayExitLabel) arrives in 0x5202's
+                // t=0x0005, observed in both encodings on the 2026-10-09 capture: a big-endian
+                // number ("00000143" = exit 323) and an ASCII digit string ("33323300" = "323\0").
+                id == 0x05 && valueLength == 4 -> {
+                    val asText = utf8(data, value, valueLength)
+                    if (asText.isNotEmpty() && asText.all { it.isDigit() }) exitLabel = asText
+                    else {
+                        val num = u32(data, value)
+                        if (num in 1..9999) exitLabel = num.toString()
+                    }
+                }
+                // Best-effort fallback for layouts without t=0x0005: any short UTF-8 value on an
+                // unknown field is taken as the exit label; the raw trace stays in the log for
+                // later calibration. AMap narration text ("进入 鄞县大道") arrives through these
+                // fields too, so candidates that start with a navigation action word are rejected.
+                exitLabel.isEmpty() && id !in setOf(0x01, 0x03, 0x04, 0x05, 0x08) &&
                     valueLength in 1..24 -> {
                     val candidate = utf8(data, value, valueLength)
                     if (candidate.isNotBlank() && !isNavActionText(candidate)) exitLabel = candidate
