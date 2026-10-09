@@ -166,11 +166,6 @@ internal class BydHudRouteState(
         return text
     }
 
-    private fun isNavActionText(raw: String): Boolean {
-        val t = raw.trimStart()
-        return t.isEmpty() || NAV_ACTION_PREFIXES.any { t.startsWith(it) }
-    }
-
     // The road the driver turns onto is what the next instruction is about; fall back to the current one.
     private fun roadFor(maneuver: Maneuver): String = stripNavAction(maneuver.afterRoad).ifEmpty { currentRoad }
 
@@ -226,33 +221,18 @@ internal class BydHudRouteState(
         var type: Int? = null
         var drivingSide = 0
         var afterRoad = ""
-        var exitLabel = ""
+        // Highway exit label is deliberately NOT decoded: the 2026-10-09 capture proved that
+        // 0x5202's t=0x0005 (previously guessed as the label) is actually the distance to the
+        // next manoeuvre (39/50 m, tracking the turn card's distance), and the best-effort
+        // unknown-field guess also picks up distances ("314") or AMap narration text. No
+        // reliable exit-label field exists in the stream Amap sends, so the badge stays hidden.
+        val exitLabel = ""
         forEachTlv(data) { id, value, valueLength ->
             when {
                 id == 0x01 && valueLength >= 2 -> index = u16(data, value)
                 id == 0x03 && valueLength >= 1 -> type = data[value].toInt() and 0xff
                 id == 0x04 -> afterRoad = utf8(data, value, valueLength)
                 id == 0x08 && valueLength >= 1 -> drivingSide = data[value].toInt() and 0xff
-                // Highway exit label (Apple CPManeuver.highwayExitLabel) arrives in 0x5202's
-                // t=0x0005, observed in both encodings on the 2026-10-09 capture: a big-endian
-                // number ("00000143" = exit 323) and an ASCII digit string ("33323300" = "323\0").
-                id == 0x05 && valueLength == 4 -> {
-                    val asText = utf8(data, value, valueLength)
-                    if (asText.isNotEmpty() && asText.all { it.isDigit() }) exitLabel = asText
-                    else {
-                        val num = u32(data, value)
-                        if (num in 1..9999) exitLabel = num.toString()
-                    }
-                }
-                // Best-effort fallback for layouts without t=0x0005: any short UTF-8 value on an
-                // unknown field is taken as the exit label; the raw trace stays in the log for
-                // later calibration. AMap narration text ("进入 鄞县大道") arrives through these
-                // fields too, so candidates that start with a navigation action word are rejected.
-                exitLabel.isEmpty() && id !in setOf(0x01, 0x03, 0x04, 0x05, 0x08) &&
-                    valueLength in 1..24 -> {
-                    val candidate = utf8(data, value, valueLength)
-                    if (candidate.isNotBlank() && !isNavActionText(candidate)) exitLabel = candidate
-                }
             }
         }
         if (index != null && type != null) {
