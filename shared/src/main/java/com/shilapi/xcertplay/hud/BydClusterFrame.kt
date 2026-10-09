@@ -8,6 +8,11 @@ internal data class BydClusterFrame(
     val road: String = "",
     val routeRemainingMeters: Int = -1,
     val routeRemainingSeconds: Int = -1,
+    val arrivalEpochSeconds: Long? = null,
+    /** Road the driver is on now (0x5201 t=0x03), for the road-name card. */
+    val currentRoad: String = "",
+    /** Highway exit label from 0x5202 (best-effort decode). */
+    val exitLabel: String = "",
 ) {
     companion object {
         private const val LEFT = 2
@@ -33,9 +38,10 @@ internal data class BydClusterFrame(
             val road = maneuver.road
             val remainingMeters = maneuver.remainingMeters?.coerceIn(0, Int.MAX_VALUE.toLong())?.toInt() ?: -1
             val remainingSeconds = maneuver.remainingSeconds?.coerceIn(0, Int.MAX_VALUE.toLong())?.toInt() ?: -1
+            val arrivalEpoch = maneuver.arrivalEpochSeconds
             if (type in 28..46) {
                 val icon = if (leftHandTraffic) ROUNDABOUT_ENTER_CLOCKWISE else ROUNDABOUT_ENTER
-                return BydClusterFrame(icon, type - 27, distance, road, remainingMeters, remainingSeconds)
+                return BydClusterFrame(icon, type - 27, distance, road, remainingMeters, remainingSeconds, arrivalEpoch, maneuver.currentRoad, maneuver.exitLabel)
             }
             val icon = when (type) {
                 1, 20 -> LEFT
@@ -51,7 +57,7 @@ internal data class BydClusterFrame(
                 3, 5, 8, 9, 11, 51 -> STRAIGHT
                 else -> 0 // Unknown/no maneuver must not become a false straight arrow.
             }
-            return BydClusterFrame(icon, 0, distance, road, remainingMeters, remainingSeconds)
+            return BydClusterFrame(icon, 0, distance, road, remainingMeters, remainingSeconds, arrivalEpoch, maneuver.currentRoad, maneuver.exitLabel)
         }
     }
 }

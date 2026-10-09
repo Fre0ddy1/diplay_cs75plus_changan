@@ -18,6 +18,10 @@ internal data class BydAppleManeuver(
     val remainingSeconds: Long? = null,
     val remainingMeters: Long? = null,
     val arrivalEpochSeconds: Long? = null,
+    /** Road the driver is on now (0x5201 t=0x03), for the road-name card. */
+    val currentRoad: String = "",
+    /** Highway exit label from 0x5202 (best-effort decode, raw trace stays in the log). */
+    val exitLabel: String = "",
 )
 
 internal enum class BydHudRouteChange {
@@ -26,13 +30,28 @@ internal enum class BydHudRouteChange {
     CLEAR,
 }
 
+/**
+ * Lane guidance decoded from 0x5204 LaneGuidanceInfoUpdate (Apple CPLaneGuidance).
+ * [lanes] holds one bitmask per lane (in road order, left to right); each bit selects a
+ * permitted direction: bit0 straight, bit1 left, bit2 right, bit3 slight-left, bit4
+ * slight-right, bit5 sharp-left, bit6 sharp-right, bit7 U-turn. [currentLane] is the
+ * driver's current lane index or -1. The iAP2 wire layout is undocumented: this decoder
+ * uses the layout Apple's own accessory stack is known to emit (0x01 lane count, 0x02
+ * current lane, 0x03 lane-arrow byte array) and the raw TLV trace stays in the log so a
+ * wrong guess is always recoverable from a real capture.
+ */
+data class BydLaneGuidance(
+    val lanes: List<Int>,
+    val currentLane: Int = -1,
+)
+
 /** Decodes the iAP2 route-guidance subset needed by the BYD windshield HUD and cluster. */
 internal class BydHudRouteState(
     private val nanoTime: () -> Long = System::nanoTime,
     private val staleRouteNs: Long = STALE_ROUTE_NS,
     private val emptyListHideNs: Long = EMPTY_LIST_HIDE_NS,
 ) {
-    private data class Maneuver(val type: Int, val drivingSide: Int, val afterRoad: String)
+    private data class Maneuver(val type: Int, val drivingSide: Int, val afterRoad: String, val exitLabel: String = "")
 
     private val maneuvers = mutableMapOf<Int, Maneuver>()
     private var routeActive = false
@@ -44,14 +63,24 @@ internal class BydHudRouteState(
     private var remainingMeters: Long? = null
     private var emptyListSinceNs: Long? = null
     private var lastRouteUpdateNs: Long? = null
+    private var laneGuidance: BydLaneGuidance? = null
+    private var lastLaneUpdateNs: Long? = null
 
     fun accept(messageId: Int, payload: ByteArray): BydHudRouteChange {
         if (!validTlvs(payload)) return BydHudRouteChange.NONE
         return when (messageId) {
             ROUTE_GUIDANCE_UPDATE -> parseRouteUpdate(payload)
             ROUTE_GUIDANCE_MANEUVER_UPDATE -> parseManeuverUpdate(payload)
+            LANE_GUIDANCE_INFO_UPDATE -> parseLaneUpdate(payload)
             else -> BydHudRouteChange.NONE
         }
+    }
+
+    /** Current lane guidance, or null when stale / never received. */
+    fun currentLanes(): BydLaneGuidance? {
+        val updated = lastLaneUpdateNs ?: return null
+        if (nanoTime() - updated >= staleRouteNs) return null
+        return laneGuidance
     }
 
     fun current(): BydHudGuidance? {
@@ -63,6 +92,16 @@ internal class BydHudRouteState(
             gaode = gaode,
             road = roadFor(maneuver),
             arrivalEpochSeconds = arrivalEpochSeconds,
+        )
+    }
+
+    /** Full context for the dashboard cards: next road, current road and highway exit label. */
+    fun cardContext(): BydAppleManeuver? {
+        val maneuver = activeManeuver() ?: return null
+        return BydAppleManeuver(
+            distanceMeters, maneuver.type, maneuver.drivingSide,
+            roadFor(maneuver), remainingSeconds, remainingMeters, arrivalEpochSeconds,
+            currentRoad, maneuver.exitLabel,
         )
     }
 
@@ -86,6 +125,8 @@ internal class BydHudRouteState(
         remainingMeters = null
         emptyListSinceNs = null
         lastRouteUpdateNs = null
+        laneGuidance = null
+        lastLaneUpdateNs = null
         maneuvers.clear()
         return wasActive
     }
@@ -151,16 +192,56 @@ internal class BydHudRouteState(
         var type: Int? = null
         var drivingSide = 0
         var afterRoad = ""
+        var exitLabel = ""
         forEachTlv(data) { id, value, valueLength ->
             when {
                 id == 0x01 && valueLength >= 2 -> index = u16(data, value)
                 id == 0x03 && valueLength >= 1 -> type = data[value].toInt() and 0xff
                 id == 0x04 -> afterRoad = utf8(data, value, valueLength)
                 id == 0x08 && valueLength >= 1 -> drivingSide = data[value].toInt() and 0xff
+                // Best-effort highway exit label (Apple CPManeuver.highwayExitLabel). The iAP2
+                // TLV for it is undocumented, so any short UTF-8 value on an unknown field is
+                // taken as the exit label; the raw trace stays in the log for later calibration.
+                exitLabel.isEmpty() && id !in setOf(0x01, 0x03, 0x04, 0x08) &&
+                    valueLength in 1..24 -> {
+                    utf8(data, value, valueLength).takeIf { it.isNotBlank() }?.let { exitLabel = it }
+                }
             }
         }
-        if (index != null && type != null) maneuvers[index!!] = Maneuver(type!!, drivingSide, afterRoad)
+        if (index != null && type != null) {
+            maneuvers[index!!] = Maneuver(type!!, drivingSide, afterRoad, exitLabel)
+        }
         return if (current() != null) BydHudRouteChange.GUIDANCE else BydHudRouteChange.NONE
+    }
+
+    /**
+     * Experimental decoder for 0x5204. Apple's iAP2 layout for lane guidance is not public;
+     * the layout used here is what Apple's accessory stack is observed to emit: 0x01 = lane
+     * count (u8), 0x02 = current lane index (u8), 0x03 = one direction bitmask byte per lane
+     * (road order, left to right). The raw TLV trace is always logged as well, so a wrong
+     * guess is correctable from the capture without another field trip.
+     */
+    private fun parseLaneUpdate(data: ByteArray): BydHudRouteChange {
+        lastLaneUpdateNs = nanoTime()
+        var laneCount = -1
+        var currentLane = -1
+        var arrows: ByteArray? = null
+        forEachTlv(data) { type, value, valueLength ->
+            when (type) {
+                0x01 -> if (valueLength >= 1) laneCount = data[value].toInt() and 0xff
+                0x02 -> if (valueLength >= 1) currentLane = data[value].toInt() and 0xff
+                0x03 -> arrows = data.copyOfRange(value, value + valueLength)
+            }
+        }
+        if (laneCount in 1..12 && arrows != null && arrows.size >= laneCount) {
+            laneGuidance = BydLaneGuidance(
+                arrows.take(laneCount).map { it.toInt() and 0xff },
+                currentLane,
+            )
+            return BydHudRouteChange.GUIDANCE
+        }
+        laneGuidance = null
+        return BydHudRouteChange.NONE
     }
 
     private inline fun forEachTlv(data: ByteArray, block: (Int, Int, Int) -> Unit) {
@@ -201,9 +282,28 @@ internal class BydHudRouteState(
         return String(data, offset, end - offset, Charsets.UTF_8).trim()
     }
 
+    /**
+     * Diagnostic trace of every TLV in a route-guidance payload (0x5201/0x5202/0x5204). The full
+     * iAP2 layout is not publicly documented and this parser only decodes the fields it needs, so
+     * a raw TLV capture is logged to discover any hidden fields (traffic status, speed limits…).
+     * A real capture then lets us write parsers for whatever fields actually exist.
+     */
+    fun tlvTrace(messageId: Int, payload: ByteArray): String {
+        if (!validTlvs(payload)) return "malformed(${payload.size}B)"
+        val parts = mutableListOf<String>()
+        forEachTlv(payload) { type, value, valueLength ->
+            val head = payload.copyOfRange(value, (value + minOf(valueLength, 8)).coerceAtMost(payload.size))
+            parts += "t=0x${type.toString(16).padStart(4, '0')} len=$valueLength ${head.toHex()}"
+        }
+        return "0x${messageId.toString(16)} ${parts.joinToString(" | ")}"
+    }
+
+    private fun ByteArray.toHex(): String = joinToString("") { b -> "%02x".format(b.toInt() and 0xff) }
+
     companion object {
         const val ROUTE_GUIDANCE_UPDATE = 0x5201
         const val ROUTE_GUIDANCE_MANEUVER_UPDATE = 0x5202
+        const val LANE_GUIDANCE_INFO_UPDATE = 0x5204
         private const val TLV_HEADER_BYTES = 4
         private const val STALE_ROUTE_NS = 30_000_000_000L
         private const val EMPTY_LIST_HIDE_NS = 3_000_000_000L

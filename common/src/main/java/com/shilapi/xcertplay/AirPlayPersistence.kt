@@ -25,6 +25,8 @@ object AirPlayPersistence {
     /** 0 uses usage-based routing; 1–20 select stream types supported by the head unit. */
     val AUDIO_CHANNELS = 0..20
     private const val PREFS = "xcertplay_airplay"
+    // UNI-V: the 1920x720 cluster stream is centred on the 1920x1440 dashboard panel.
+    const val DEFAULT_CLUSTER_CARD_CONTENT_TOP = 360
     private const val KEY_IDENT_PRIVATE = "identity_private"
     private const val KEY_IDENT_PUBLIC = "identity_public"
     private const val KEY_PAIRING_ID = "pairing_id"
@@ -76,6 +78,19 @@ object AirPlayPersistence {
     private const val KEY_CLUSTER_TURN_CARD_OVERLAY_SIZE = "cluster_turn_card_overlay_size"
     private const val KEY_CLUSTER_TURN_CARD_OVERLAY_X = "cluster_turn_card_overlay_x_percent"
     private const val KEY_CLUSTER_TURN_CARD_OVERLAY_Y = "cluster_turn_card_overlay_y_percent"
+    private const val KEY_CLUSTER_TURN_CARD_X_PX = "cluster_turn_card_x_px"
+    private const val KEY_CLUSTER_TURN_CARD_VISIBLE = "cluster_turn_card_visible"
+    private const val KEY_CLUSTER_TURN_CARD_Y_PX = "cluster_turn_card_y_px"
+    // Default absolute px for the custom turn card: top-centre of the 1920x720 panel
+    // (x=400 keeps the card centre around 960 for a ~1120px-wide card; y=40 near the top).
+    const val DEFAULT_CLUSTER_TURN_CARD_X_PX = 400
+    const val DEFAULT_CLUSTER_TURN_CARD_Y_PX = 40
+    // The CarPlay cluster stream (1920x720) is centred on the UNI-V dashboard panel
+    // (1920x1440): the stream occupies y = contentTopPx .. contentTopPx+720, and the
+    // dashboard OEM UI (P gear, tach, trip readouts) surrounds it. Card placement must
+    // use that stream region as its base, not the full panel, or cards drift into the
+    // OEM chrome ("flying out"). 360 = (1440-720)/2 for UNI-V; adjustable in settings.
+    private const val KEY_CLUSTER_CARD_CONTENT_TOP = "cluster_card_content_top_px"
     private const val KEY_CENTER_MAP_FOLLOWS_DASHBOARD = "center_map_follows_dashboard"
     private const val KEY_SETTINGS_GESTURE_FINGERS = "settings_gesture_fingers"
     private const val KEY_WIDTH_PHYSICAL_MM = "display_width_physical_mm"
@@ -303,6 +318,20 @@ object AirPlayPersistence {
         context.getSharedPreferences(PREFS, Context.MODE_PRIVATE).edit()
             .putString(KEY_WIRELESS_HOTSPOT_MODE, supported.name)
             .apply()
+    }
+
+    fun loadExistingWifiSsid(context: Context): String =
+        context.getSharedPreferences(PREFS, Context.MODE_PRIVATE)
+            .getString("existing_wifi_ssid", "").orEmpty()
+
+    fun loadExistingWifiPassphrase(context: Context): String =
+        context.getSharedPreferences(PREFS, Context.MODE_PRIVATE)
+            .getString("existing_wifi_passphrase", "").orEmpty()
+
+    fun saveExistingWifiCredentials(context: Context, ssid: String, passphrase: String) {
+        context.getSharedPreferences(PREFS, Context.MODE_PRIVATE).edit()
+            .putString("existing_wifi_ssid", ssid)
+            .putString("existing_wifi_passphrase", passphrase).apply()
     }
 
     fun loadWifiP2pPreferredChannel(context: Context): Int = runCatching {
@@ -563,6 +592,61 @@ object AirPlayPersistence {
     }
 
     /**
+     * "连接后自动投屏": once the CarPlay session becomes active, automatically start the
+     * dashboard projection (no three-finger swipe needed). The content follows the
+     * existing "仪表盘内容" choice (loadClusterMirrorMain: whole-screen mirror or
+     * navigation stream). Defaults to ON.
+     */
+    private const val KEY_AUTO_PROJECT_ON_CONNECT = "auto_project_on_connect"
+
+    fun loadAutoProjectOnConnect(context: Context): Boolean =
+        context.getSharedPreferences(PREFS, Context.MODE_PRIVATE).getBoolean(KEY_AUTO_PROJECT_ON_CONNECT, true)
+
+    fun saveAutoProjectOnConnect(context: Context, enabled: Boolean) {
+        context.getSharedPreferences(PREFS, Context.MODE_PRIVATE).edit().putBoolean(KEY_AUTO_PROJECT_ON_CONNECT, enabled).apply()
+        overlaySettingsListener?.invoke()
+    }
+
+    /**
+     * "自动飞屏" master switch. When checked (default) the app auto-projects to the dashboard
+     * on connect AND may bring up the stock car Amap to feed the cluster. When unchecked NEITHER
+     * happens: no auto projection and no stock-Amap handling at all (manual three-finger swipe
+     * still works — it is driven by the gesture path, not by this switch).
+     */
+    private const val KEY_AUTO_FLY_SCREEN = "auto_fly_screen"
+
+    fun loadAutoFlyScreen(context: Context): Boolean =
+        context.getSharedPreferences(PREFS, Context.MODE_PRIVATE).getBoolean(KEY_AUTO_FLY_SCREEN, true)
+
+    fun saveAutoFlyScreen(context: Context, enabled: Boolean) {
+        context.getSharedPreferences(PREFS, Context.MODE_PRIVATE).edit().putBoolean(KEY_AUTO_FLY_SCREEN, enabled).apply()
+        overlaySettingsListener?.invoke()
+    }
+
+    /**
+     * Left-edge source crop for the whole-screen mirror on the dashboard (fixed pixels of the
+     * stream width, set once by the driver). The CarPlay home dock / left rail occupies the
+     * left of the console picture; cropping it off the mirrored dashboard makes the mirror
+     * match the box style (no left rail). Only applied in whole-screen mirror mode; the
+     * nav-only stream and the manual "dashboard picture adjust" target frame are unaffected.
+     * Default 150px (~7.8% of a 1920-wide stream); the old 14% default cropped too much.
+     */
+    private const val KEY_CLUSTER_MIRROR_LEFT_CROP = "cluster_mirror_left_crop_px"
+
+    fun loadClusterMirrorLeftCropPx(context: Context): Int =
+        context.getSharedPreferences(PREFS, Context.MODE_PRIVATE)
+            .getInt(KEY_CLUSTER_MIRROR_LEFT_CROP, 150).coerceIn(0, 400)
+
+    fun saveClusterMirrorLeftCropPx(context: Context, px: Int) {
+        context.getSharedPreferences(PREFS, Context.MODE_PRIVATE).edit()
+            .putInt(KEY_CLUSTER_MIRROR_LEFT_CROP, px.coerceIn(0, 400)).apply()
+        // Redraw the dashboard TextureView transform immediately (the host's overlay
+        // settings listener re-applies the crop via refreshClusterCrop). No reconnect, so
+        // no "全屏导航已开启" announcement.
+        overlaySettingsListener?.invoke()
+    }
+
+    /**
      * What the instrument cluster window shows: true = mirror of the main CarPlay screen
      * (whole interface, two displays stay in sync); false = the iPhone's navigation
      * cluster stream (SCREEN_TYPE_ALT, guidance only). Defaults to the main-screen mirror.
@@ -713,6 +797,141 @@ object AirPlayPersistence {
                 KEY_CLUSTER_TURN_CARD_OVERLAY_Y,
                 ClusterTurnCardOverlay.snap(percent, ClusterTurnCardOverlay.yPercents),
             ).apply()
+        overlaySettingsListener?.invoke()
+    }
+
+    // ---- Custom turn card: absolute pixel position (top-left corner of the full 1920x720 panel) ----
+
+    private fun loadClusterTurnCardXPx(context: Context): Int =
+        context.getSharedPreferences(PREFS, Context.MODE_PRIVATE)
+            .getInt(KEY_CLUSTER_TURN_CARD_X_PX, DEFAULT_CLUSTER_TURN_CARD_X_PX).coerceIn(0, 1920)
+
+    private fun loadClusterTurnCardYPx(context: Context): Int =
+        context.getSharedPreferences(PREFS, Context.MODE_PRIVATE)
+            .getInt(KEY_CLUSTER_TURN_CARD_Y_PX, DEFAULT_CLUSTER_TURN_CARD_Y_PX).coerceIn(0, 720)
+
+    fun loadClusterTurnCardX(context: Context): Int = loadClusterTurnCardXPx(context)
+
+    fun loadClusterTurnCardY(context: Context): Int = loadClusterTurnCardYPx(context)
+
+    fun saveClusterTurnCardX(context: Context, px: Int) {
+        context.getSharedPreferences(PREFS, Context.MODE_PRIVATE).edit()
+            .putInt(KEY_CLUSTER_TURN_CARD_X_PX, px.coerceIn(0, 1920)).apply()
+        overlaySettingsListener?.invoke()
+    }
+
+    fun saveClusterTurnCardY(context: Context, px: Int) {
+        context.getSharedPreferences(PREFS, Context.MODE_PRIVATE).edit()
+            .putInt(KEY_CLUSTER_TURN_CARD_Y_PX, px.coerceIn(0, 720)).apply()
+        overlaySettingsListener?.invoke()
+    }
+
+    /** Silent overflow corrections (drawn from onDraw) — persist without notifying the listener. */
+    fun saveClusterTurnCardXSilent(context: Context, px: Int) {
+        context.getSharedPreferences(PREFS, Context.MODE_PRIVATE).edit()
+            .putInt(KEY_CLUSTER_TURN_CARD_X_PX, px.coerceIn(0, 1920)).apply()
+    }
+
+    fun saveClusterTurnCardYSilent(context: Context, px: Int) {
+        context.getSharedPreferences(PREFS, Context.MODE_PRIVATE).edit()
+            .putInt(KEY_CLUSTER_TURN_CARD_Y_PX, px.coerceIn(0, 720)).apply()
+    }
+
+    /** Top offset (px) of the cluster stream region on the dashboard panel; cards position against it. */
+    fun loadClusterCardContentTopPx(context: Context): Int =
+        context.getSharedPreferences(PREFS, Context.MODE_PRIVATE)
+            .getInt(KEY_CLUSTER_CARD_CONTENT_TOP, DEFAULT_CLUSTER_CARD_CONTENT_TOP)
+            .coerceIn(0, 720)
+
+    fun saveClusterCardContentTopPx(context: Context, px: Int) {
+        context.getSharedPreferences(PREFS, Context.MODE_PRIVATE).edit()
+            .putInt(KEY_CLUSTER_CARD_CONTENT_TOP, px.coerceIn(0, 720)).apply()
+        overlaySettingsListener?.invoke()
+    }
+
+    /**
+     * Absolute card position: the card's top-left corner relative to the top-left of the
+     * FULL dashboard panel (1920x720 canvas == display, verified on the UNI-V). The user
+     * enters these coordinates directly ("以左上角0,0为原点，手输偏移坐标"). Cards that
+     * auto-resize clamp themselves back inside the panel and persist the corrected value.
+     */
+    private fun clusterCardKey(card: String, axis: String) = "cluster_card_${card}_${axis}_abs"
+
+    private fun clusterCardDefaultX(card: String): Int = when (card) {
+        // Field-tested defaults (UNI-V, full 1920x720 dashboard canvas): the user tuned
+        // lane to the left edge, eta to the right, road to the upper-right, exit to the
+        // left edge below the turn card. The draw-time clamp re-saves the exact
+        // corrected value if a card overflows.
+        "lane" -> 0
+        "eta" -> 1600
+        "road" -> 1400
+        "exit" -> 0
+        else -> 43
+    }
+
+    private fun clusterCardDefaultY(card: String): Int = when (card) {
+        "lane" -> 300
+        "eta" -> 500
+        "road" -> 100
+        "exit" -> 220
+        else -> 43
+    }
+
+    fun loadClusterCardX(context: Context, card: String): Int =
+        context.getSharedPreferences(PREFS, Context.MODE_PRIVATE)
+            .getInt(clusterCardKey(card, "x"), clusterCardDefaultX(card)).coerceIn(0, 1920)
+
+    fun loadClusterCardY(context: Context, card: String): Int =
+        context.getSharedPreferences(PREFS, Context.MODE_PRIVATE)
+            .getInt(clusterCardKey(card, "y"), clusterCardDefaultY(card)).coerceIn(0, 720)
+
+    fun saveClusterCardX(context: Context, card: String, px: Int) {
+        context.getSharedPreferences(PREFS, Context.MODE_PRIVATE).edit()
+            .putInt(clusterCardKey(card, "x"), px.coerceIn(0, 1920)).apply()
+        overlaySettingsListener?.invoke()
+    }
+
+    fun saveClusterCardY(context: Context, card: String, px: Int) {
+        context.getSharedPreferences(PREFS, Context.MODE_PRIVATE).edit()
+            .putInt(clusterCardKey(card, "y"), px.coerceIn(0, 720)).apply()
+        overlaySettingsListener?.invoke()
+    }
+
+    /**
+     * Silent overflow corrections used from onDraw: the card pulled back inside the panel
+     * persists its corrected position WITHOUT notifying the overlay-settings listener, so a
+     * draw-time correction can never cascade into applyClusterTurnOverlay/refreshClusterCrop
+     * during the activation sequence or a live session. The corrected value simply takes
+     * effect on the next draw.
+     */
+    fun saveClusterCardXSilent(context: Context, card: String, px: Int) {
+        context.getSharedPreferences(PREFS, Context.MODE_PRIVATE).edit()
+            .putInt(clusterCardKey(card, "x"), px.coerceIn(0, 1920)).apply()
+    }
+
+    fun saveClusterCardYSilent(context: Context, card: String, px: Int) {
+        context.getSharedPreferences(PREFS, Context.MODE_PRIVATE).edit()
+            .putInt(clusterCardKey(card, "y"), px.coerceIn(0, 720)).apply()
+    }
+
+    /** Per-card show/hide switch; default is visible. Hidden cards are not rendered. */
+    fun loadClusterCardVisible(context: Context, card: String): Boolean =
+        context.getSharedPreferences(PREFS, Context.MODE_PRIVATE)
+            .getBoolean(clusterCardKey(card, "visible"), true)
+
+    fun saveClusterCardVisible(context: Context, card: String, visible: Boolean) {
+        context.getSharedPreferences(PREFS, Context.MODE_PRIVATE).edit()
+            .putBoolean(clusterCardKey(card, "visible"), visible).apply()
+        overlaySettingsListener?.invoke()
+    }
+
+    fun loadClusterTurnCardVisible(context: Context): Boolean =
+        context.getSharedPreferences(PREFS, Context.MODE_PRIVATE)
+            .getBoolean(KEY_CLUSTER_TURN_CARD_VISIBLE, true)
+
+    fun saveClusterTurnCardVisible(context: Context, visible: Boolean) {
+        context.getSharedPreferences(PREFS, Context.MODE_PRIVATE).edit()
+            .putBoolean(KEY_CLUSTER_TURN_CARD_VISIBLE, visible).apply()
         overlaySettingsListener?.invoke()
     }
 

@@ -21,6 +21,8 @@ import android.os.Bundle
 import android.os.Handler
 import android.os.Looper
 import android.provider.Settings
+import android.text.Editable
+import android.text.TextWatcher
 import android.util.Log
 import android.view.Gravity
 import android.view.View
@@ -171,9 +173,12 @@ class DiPlayActivity : ComponentActivity() {
         bydVehicleAdvancedExpanded = savedInstanceState?.getBoolean("byd_vehicle_advanced") ?: false
         page = savedInstanceState?.getString("page") ?: intent.getStringExtra("page") ?: "home"
         render()
-        if (savedInstanceState == null && AirPlayPersistence.loadAutoStartCarAmap(this)) {
+        if (!AirPlayPersistence.loadAutoFlyScreen(this)) {
+            clusterUiLog("自动飞屏未勾选，冷启动跳过车载高德处理")
+        } else if (savedInstanceState == null && AirPlayPersistence.loadAutoStartCarAmap(this)) {
             // Cold start with the "auto-start stock Amap" toggle on: bring the car Amap up
             // (dashboard projection needs it) and hand focus straight back to DiPlay.
+            // Gated by the "自动飞屏" master switch: unchecked => never touch the stock Amap.
             CarAmapLauncher.launchAndReturn(this)
         }
         scheduleAutomaticVehicleValidation()
@@ -278,11 +283,28 @@ class DiPlayActivity : ComponentActivity() {
         }, LinearLayout.LayoutParams(dp(130), dp(56)))
         content.addView(header)
         content.addView(space(24))
-        when (page) {
-            "connection" -> connectionSetup(content)
-            "settings" -> settings(content)
-            "about" -> about(content)
-            else -> home(content)
+        // Never let a single UI bug take down the whole settings/home page (the head-unit has
+        // no logcat, so a crash is otherwise invisible). Render failures show a recoverable
+        // error card and write the stack into the diagnostic log (exported diplay.log).
+        try {
+            when (page) {
+                "connection" -> connectionSetup(content)
+                "settings" -> settings(content)
+                "about" -> about(content)
+                else -> home(content)
+            }
+        } catch (t: Throwable) {
+            Log.e("DiPlay", "render page=$page failed", t)
+            runCatching {
+                val logDir = File(filesDir, "logs"); logDir.mkdirs()
+                val stamp = java.text.SimpleDateFormat("HH:mm:ss", java.util.Locale.US).format(java.util.Date())
+                File(logDir, "diplay.log").appendText(
+                    "\n===== RENDER FAIL page=$page $stamp =====\n" + Log.getStackTraceString(t) + "\n",
+                )
+            }
+            content.addView(label("设置页渲染失败（$page），错误详情已写入诊断日志", 16, Color.rgb(255, 150, 150), true)
+                .apply { setPadding(0, dp(16), 0, dp(8)) })
+            content.addView(label("重启 App 后导出日志即可看到具体错误位置", 14, MUTED))
         }
         setContentView(scroll)
         renderedPage = page
@@ -317,6 +339,7 @@ class DiPlayActivity : ComponentActivity() {
         }
         card.addView(connectButton, matchButton())
         val connectionHint = when (AirPlayPersistence.loadWirelessHotspotMode(this)) {
+            WirelessHotspotMode.EXISTING_WIFI -> getString(R.string.existing_wifi_hint)
             WirelessHotspotMode.MANUAL -> getString(R.string.hotspot_hint_manual)
             WirelessHotspotMode.LOCAL_ONLY_HOTSPOT -> getString(R.string.hotspot_hint_local)
             else -> getString(R.string.hotspot_hint_p2p)
@@ -512,8 +535,17 @@ class DiPlayActivity : ComponentActivity() {
                 if (!BydOutputSettings.navigationAvailable(this)) clusterSongSwitch(card)
             }
         }
-        if (ClusterMapPresentation.findDisplay(this) != null) {
+        // 仪表盘分区始终渲染：即使当前未检测到投影 display（模拟器、未连接车机），也允许
+        // 预先配置裁剪、坐标、车标等；车机上连接后自动生效。全部控件包 runCatching，任一
+        // 控件渲染异常仅隐藏该控件，绝不使设置页闪退。
+        runCatching {
+            val clusterDisplayPresent = ClusterMapPresentation.findDisplay(this) != null
             section(content, getString(R.string.instrument_cluster_section), R.drawable.ic_dp_navigation) { card ->
+                if (!clusterDisplayPresent) {
+                    card.addView(label(getString(R.string.cluster_no_display_hint), 14, MUTED).apply {
+                        setPadding(0, 0, 0, dp(12))
+                    })
+                }
                 toggle(card, getString(R.string.carplay_map_on_instrument_cluster_experimental),
                     getString(R.string.shows_the_iphone_s_cluster_map_on_the_instrument_cluster_c),
                     AirPlayPersistence.loadClusterMapEnabled(this)) {
@@ -532,7 +564,93 @@ class DiPlayActivity : ComponentActivity() {
                 card.addView(button(getString(R.string.cluster_crop_adjust), false) {
                     startActivity(Intent(this, CarPlayHostActivity::class.java)
                         .putExtra("cluster_crop_controls", true).addFlags(Intent.FLAG_ACTIVITY_REORDER_TO_FRONT))
-                }, matchButton(0, 56).apply { bottomMargin = dp(24) })
+                }, matchButton(0, 56))
+                // 整机镜像左侧裁剪：裁掉 CarPlay 主屏左侧栏（dock/工具栏）的固定像素宽度，
+                // 仅整机镜像模式生效。独立于其余校准控件渲染，保证该入口始终可见可调；
+                // 渲染失败写入诊断日志。注意：标题只能加入行容器，不能先 addView 到 card
+                // 再移入行容器（会抛 IllegalStateException: child already has a parent）。
+                runCatching {
+                    val cropTitle = label(getString(R.string.cluster_mirror_left_crop), 16, TEXT, true)
+                    cropTitle.setPadding(0, dp(12), 0, 0)
+                    val cropValue = label(
+                        "${AirPlayPersistence.loadClusterMirrorLeftCropPx(this@DiPlayActivity)} px",
+                        16, ACCENT, true,
+                    )
+                    val cropHead = LinearLayout(this).apply {
+                        orientation = LinearLayout.HORIZONTAL
+                        gravity = Gravity.CENTER_VERTICAL
+                        addView(cropTitle, LinearLayout.LayoutParams(0, -2, 1f))
+                        addView(cropValue)
+                    }
+                    card.addView(cropHead, LinearLayout.LayoutParams(ViewGroup.LayoutParams.MATCH_PARENT, ViewGroup.LayoutParams.WRAP_CONTENT))
+                    val cropSlider = SeekBar(this).apply {
+                        max = 400
+                        progress = AirPlayPersistence.loadClusterMirrorLeftCropPx(this@DiPlayActivity).coerceIn(0, 400)
+                        // Do NOT set minHeight here: the head-unit ROM strips SeekBar#setMinHeight
+                        // and throws NoSuchMethodError, which kills the whole slider row. The row
+                        // LayoutParams below already fix the height.
+                        setOnSeekBarChangeListener(object : SeekBar.OnSeekBarChangeListener {
+                            override fun onProgressChanged(seekBar: SeekBar?, progress: Int, fromUser: Boolean) {
+                                cropValue.text = "$progress px"
+                                if (fromUser) {
+                                    AirPlayPersistence.saveClusterMirrorLeftCropPx(this@DiPlayActivity, progress)
+                                }
+                            }
+
+                            override fun onStartTrackingTouch(seekBar: SeekBar?) {}
+                            override fun onStopTrackingTouch(seekBar: SeekBar?) {
+                                // No reconnect on release: the left-rail crop is applied locally by
+                                // the cluster TextureView transform (refreshCrop), not by the incall
+                                // session, so the saved value takes effect on the next (re)connect /
+                                // auto-project. Reconnecting here re-activates the 111 nav stream,
+                                // which makes the head unit announce "全屏导航已开启" - a voice the
+                                // driver explicitly does not want after adjusting the crop.
+                            }
+                        })
+                    }
+                    card.addView(cropSlider, LinearLayout.LayoutParams(-1, dp(44)))
+                }.onFailure { e ->
+                    clusterUiLog("整机镜像左侧裁剪控件渲染失败: ${e.message ?: e.javaClass.simpleName}")
+                }
+                // "自动飞屏" master switch: unchecked = no auto projection AND no stock-Amap
+                // handling at all (manual three-finger swipe still works).
+                toggle(card, getString(R.string.auto_fly_screen),
+                    getString(R.string.auto_fly_screen_desc),
+                    AirPlayPersistence.loadAutoFlyScreen(this)) {
+                    AirPlayPersistence.saveAutoFlyScreen(this, it)
+                }
+                toggle(card, getString(R.string.auto_project_on_connect),
+                    getString(R.string.auto_project_on_connect_desc),
+                    AirPlayPersistence.loadAutoProjectOnConnect(this)) {
+                    AirPlayPersistence.saveAutoProjectOnConnect(this, it)
+                }
+                // 车辆图标名称（OEM 标签）由 iOS 端按该文字渲染车机图标。
+                // 全部用朴素原生控件，任一渲染异常仅隐藏该控件并把原因写入诊断日志。
+                runCatching {
+                    val oemTitle = label(getString(R.string.oem_label_home), 16, TEXT, true)
+                    oemTitle.setPadding(0, dp(12), 0, 0)
+                    card.addView(oemTitle)
+                    val oemInput = EditText(this).apply {
+                        setText(AirPlayPersistence.loadOemLabel(this@DiPlayActivity))
+                        textSize = 18f
+                        setTextColor(Color.WHITE)
+                        setHintTextColor(TEXT)
+                        backgroundTintList = ColorStateList.valueOf(ACCENT)
+                        minHeight = dp(48)
+                        isSingleLine = true
+                        setPadding(dp(12), 0, dp(12), 0)
+                        addTextChangedListener(object : TextWatcher {
+                            override fun beforeTextChanged(s: CharSequence?, start: Int, count: Int, after: Int) {}
+                            override fun onTextChanged(s: CharSequence?, start: Int, before: Int, count: Int) {}
+                            override fun afterTextChanged(s: Editable?) {
+                                AirPlayPersistence.saveOemLabel(this@DiPlayActivity, s?.toString()?.trim() ?: "")
+                            }
+                        })
+                    }
+                    card.addView(oemInput, LinearLayout.LayoutParams(ViewGroup.LayoutParams.MATCH_PARENT, dp(48)).apply { topMargin = dp(6) })
+                }.onFailure { e ->
+                    clusterUiLog("车辆图标名称控件渲染失败: ${e.message ?: e.javaClass.simpleName}")
+                }
                 // 通用仪表盘控件（原位于“车载导航”分区，仅 BYD 车机可见；长安等车机看不到，
                 // 故移入“仪表盘”分区）。
                 val sizes = CarPlayClusterDisplay.scalePresets
@@ -551,6 +669,41 @@ class DiPlayActivity : ComponentActivity() {
                     render()
                     if (content.url != next.url) reconnectForClusterMap()
                 }
+                // —— 长安仪表盘卡片设置（始终可见）——
+                // 卡片组在 navOnlyCards 模式下无条件显示（只要仪表盘投屏开启），因此这些
+                // 设置不能藏在 customCard 分支里，否则用户换了“仪表盘显示”选择就找不到入口。
+                // 预览与保存分离：滑块只更新预览/暂存（pending），点击 Apply 才写入持久化并
+                // 通过 overlaySettingsListener 立即刷新仪表盘上的真实卡片。
+                val pendingXY = mutableMapOf(
+                    "lane" to Pair(
+                        AirPlayPersistence.loadClusterCardX(this, "lane"),
+                        AirPlayPersistence.loadClusterCardY(this, "lane"),
+                    ),
+                    "eta" to Pair(
+                        AirPlayPersistence.loadClusterCardX(this, "eta"),
+                        AirPlayPersistence.loadClusterCardY(this, "eta"),
+                    ),
+                    "road" to Pair(
+                        AirPlayPersistence.loadClusterCardX(this, "road"),
+                        AirPlayPersistence.loadClusterCardY(this, "road"),
+                    ),
+                    "exit" to Pair(
+                        AirPlayPersistence.loadClusterCardX(this, "exit"),
+                        AirPlayPersistence.loadClusterCardY(this, "exit"),
+                    ),
+                    "turn" to Pair(
+                        AirPlayPersistence.loadClusterTurnCardX(this),
+                        AirPlayPersistence.loadClusterTurnCardY(this),
+                    ),
+                )
+                val positionPreview = CardPositionPreviewView(this).apply {
+                    setTurnOffset(
+                        AirPlayPersistence.loadClusterTurnCardX(this@DiPlayActivity),
+                        AirPlayPersistence.loadClusterTurnCardY(this@DiPlayActivity),
+                    )
+                }
+                card.addView(positionPreview, LinearLayout.LayoutParams(ViewGroup.LayoutParams.MATCH_PARENT, dp(170)).apply { topMargin = dp(10) })
+                card.addView(label(getString(R.string.cluster_card_position_preview), 14, MUTED))
                 if (customCard) {
                     val overlaySizes = CarPlayClusterDisplay.OverlaySize.entries
                     choice(card, getString(R.string.turn_card_overlay_size), listOf(
@@ -560,25 +713,102 @@ class DiPlayActivity : ComponentActivity() {
                     ), overlaySizes.indexOf(AirPlayPersistence.loadClusterTurnCardOverlaySize(this)).coerceAtLeast(0), reconnects = false) {
                         AirPlayPersistence.saveClusterTurnCardOverlaySize(this, overlaySizes[it])
                     }
-                    card.addView(overlaySliderRow(
-                        getString(R.string.turn_card_overlay_horizontal),
-                        ClusterTurnCardOverlay.xPercents,
-                        AirPlayPersistence.loadClusterTurnCardOverlayXPercent(this),
-                    ) { it -> overlayOffsetLabel(it, getString(R.string.marker_left), getString(R.string.marker_right), 50) }
-                        .also { it.onSave = { v -> AirPlayPersistence.saveClusterTurnCardOverlayXPercent(this, v) } })
-                    card.addView(overlaySliderRow(
-                        getString(R.string.turn_card_overlay_vertical),
-                        ClusterTurnCardOverlay.yPercents,
-                        AirPlayPersistence.loadClusterTurnCardOverlayYPercent(this),
-                    ) { it -> overlayOffsetLabel(it, getString(R.string.marker_up), getString(R.string.marker_down), 40) }
-                        .also { it.onSave = { v -> AirPlayPersistence.saveClusterTurnCardOverlayYPercent(this, v) } })
+                    // The custom turn card uses the same absolute pixel coordinates as the
+                    // other four cards: top-left corner of the full 1920x720 dashboard panel.
+                    toggle(card, getString(R.string.turn_card_show),
+                        getString(R.string.cluster_card_show_desc),
+                        AirPlayPersistence.loadClusterTurnCardVisible(this)) { visible ->
+                        AirPlayPersistence.saveClusterTurnCardVisible(this, visible)
+                    }
+                    card.addView(label(getString(R.string.turn_card_overlay_horizontal), 15, TEXT, true))
+                    card.addView(LinearLayout(this@DiPlayActivity).apply {
+                        orientation = LinearLayout.HORIZONTAL
+                        gravity = Gravity.CENTER_VERTICAL
+                        setPadding(0, dp(6), 0, 0)
+                        addView(label(getString(R.string.cluster_card_horizontal), 15, TEXT, true), LinearLayout.LayoutParams(0, -2, 1f))
+                        addView(numberInput(pendingXY["turn"]?.first ?: 0, 1920) { v ->
+                            val y = pendingXY["turn"]?.second ?: 0
+                            pendingXY["turn"] = Pair(v, y)
+                            positionPreview.setTurnOffset(v, y)
+                        }, LinearLayout.LayoutParams(dp(150), dp(48)).apply { leftMargin = dp(8) })
+                    })
+                    card.addView(LinearLayout(this@DiPlayActivity).apply {
+                        orientation = LinearLayout.HORIZONTAL
+                        gravity = Gravity.CENTER_VERTICAL
+                        setPadding(0, dp(6), 0, 0)
+                        addView(label(getString(R.string.cluster_card_vertical), 15, TEXT, true), LinearLayout.LayoutParams(0, -2, 1f))
+                        addView(numberInput(pendingXY["turn"]?.second ?: 0, 720) { v ->
+                            val x = pendingXY["turn"]?.first ?: 0
+                            pendingXY["turn"] = Pair(x, v)
+                            positionPreview.setTurnOffset(x, v)
+                        }, LinearLayout.LayoutParams(dp(150), dp(48)).apply { leftMargin = dp(8) })
+                    })
                     card.addView(button(getString(R.string.reset_turn_card_overlay), false) {
-                        AirPlayPersistence.saveClusterTurnCardOverlayXPercent(this, ClusterTurnCardOverlay.DEFAULT_X_PERCENT)
-                        AirPlayPersistence.saveClusterTurnCardOverlayYPercent(this, ClusterTurnCardOverlay.DEFAULT_Y_PERCENT)
+                        // Reset is an immediate action: persist the defaults right away, then
+                        // re-render so the inputs show the restored values. (A preview-only reset
+                        // would be wiped by render(), which re-initialises pendingXY from disk.)
+                        AirPlayPersistence.saveClusterTurnCardX(this, AirPlayPersistence.DEFAULT_CLUSTER_TURN_CARD_X_PX)
+                        AirPlayPersistence.saveClusterTurnCardY(this, AirPlayPersistence.DEFAULT_CLUSTER_TURN_CARD_Y_PX)
+                        positionPreview.setTurnOffset(AirPlayPersistence.DEFAULT_CLUSTER_TURN_CARD_X_PX, AirPlayPersistence.DEFAULT_CLUSTER_TURN_CARD_Y_PX)
                         render()
                     }, matchButton(10, 56))
                     card.addView(label(getString(R.string.turn_card_overlay_note), 14, MUTED))
                 }
+                card.addView(label(getString(R.string.cluster_card_position_preview_note), 14, MUTED))
+                // Per-card absolute position (x, y), origin = top-left of the full dashboard
+                // panel (1920x720 canvas == display). Direct numeric input (not a slider —
+                // sliders are easy to mis-touch on the head unit). Typing only previews into
+                // pendingXY; Apply & save writes everything and refreshes the live cards.
+                fun addCardOffsetInputs(
+                    title: String,
+                    cardId: String,
+                    onChanged: (String, Int, Int) -> Unit,
+                ) {
+                    toggle(card, getString(R.string.cluster_card_show, title),
+                        getString(R.string.cluster_card_show_desc),
+                        AirPlayPersistence.loadClusterCardVisible(this, cardId)) { visible ->
+                        AirPlayPersistence.saveClusterCardVisible(this, cardId, visible)
+                    }
+                    card.addView(label(title, 16, TEXT, true))
+                    card.addView(LinearLayout(this).apply {
+                        orientation = LinearLayout.HORIZONTAL
+                        gravity = Gravity.CENTER_VERTICAL
+                        setPadding(0, dp(6), 0, 0)
+                        addView(label(getString(R.string.cluster_card_horizontal), 15, TEXT, true), LinearLayout.LayoutParams(0, -2, 1f))
+                        addView(numberInput(pendingXY[cardId]?.first ?: 0, 1920) { v ->
+                            val y = pendingXY[cardId]?.second ?: 0
+                            pendingXY[cardId] = Pair(v, y)
+                            onChanged(cardId, v, y)
+                        }, LinearLayout.LayoutParams(dp(150), dp(48)).apply { leftMargin = dp(8) })
+                    })
+                    card.addView(LinearLayout(this).apply {
+                        orientation = LinearLayout.HORIZONTAL
+                        gravity = Gravity.CENTER_VERTICAL
+                        setPadding(0, dp(6), 0, 0)
+                        addView(label(getString(R.string.cluster_card_vertical), 15, TEXT, true), LinearLayout.LayoutParams(0, -2, 1f))
+                        addView(numberInput(pendingXY[cardId]?.second ?: 0, 720) { v ->
+                            val x = pendingXY[cardId]?.first ?: 0
+                            pendingXY[cardId] = Pair(x, v)
+                            onChanged(cardId, x, v)
+                        }, LinearLayout.LayoutParams(dp(150), dp(48)).apply { leftMargin = dp(8) })
+                    })
+                }
+                addCardOffsetInputs(getString(R.string.cluster_card_lane_title), "lane") { id, x, y -> positionPreview.setOffset(id, x, y) }
+                addCardOffsetInputs(getString(R.string.cluster_card_eta_title), "eta") { id, x, y -> positionPreview.setOffset(id, x, y) }
+                addCardOffsetInputs(getString(R.string.cluster_card_road_title), "road") { id, x, y -> positionPreview.setOffset(id, x, y) }
+                addCardOffsetInputs(getString(R.string.cluster_card_exit_title), "exit") { id, x, y -> positionPreview.setOffset(id, x, y) }
+                card.addView(button(getString(R.string.cluster_card_position_apply), false) {
+                    pendingXY.forEach { (id, pair) ->
+                        if (id == "turn") {
+                            AirPlayPersistence.saveClusterTurnCardX(this, pair.first)
+                            AirPlayPersistence.saveClusterTurnCardY(this, pair.second)
+                        } else {
+                            AirPlayPersistence.saveClusterCardX(this, id, pair.first)
+                            AirPlayPersistence.saveClusterCardY(this, id, pair.second)
+                        }
+                    }
+                    toast(getString(R.string.cluster_card_position_applied))
+                }, matchButton(0, 56))
                 val turnCard = officialCardOnly
                 choice(card, getString(if (turnCard) R.string.turn_card_size else R.string.cluster_map_size),
                     listOf(getString(R.string.cluster_size_standard), getString(R.string.cluster_size_larger), getString(R.string.cluster_size_largest)),
@@ -599,7 +829,8 @@ class DiPlayActivity : ComponentActivity() {
                     AirPlayPersistence.saveClusterMarkerHorizontalStep(this, 0)
                     AirPlayPersistence.saveClusterMarkerVerticalStep(this, 0)
                     render()
-                    reconnectForClusterMap()
+                    // No reconnect: the marker offset is a local overlay transform, applied on
+                    // the next overlay refresh. Reconnecting here only re-announced the voice.
                 }, matchButton(10, 56))
                 toggle(card, getString(R.string.dashboard_detailed_map),
                     getString(R.string.dashboard_detailed_map_description),
@@ -905,11 +1136,12 @@ class DiPlayActivity : ComponentActivity() {
 
     private fun wirelessLinkControls(parent: LinearLayout) {
         val mode = if (pendingCarHotspotSetup) WirelessHotspotMode.MANUAL else AirPlayPersistence.loadWirelessHotspotMode(this)
-        val modes = listOf(WirelessHotspotMode.MANUAL, WirelessHotspotMode.WIFI_P2P)
-        val titles = listOf(getString(R.string.built_in_car_hotspot), getString(R.string.wifi_direct))
+        val modes = listOf(WirelessHotspotMode.MANUAL, WirelessHotspotMode.WIFI_P2P, WirelessHotspotMode.EXISTING_WIFI)
+        val titles = listOf(getString(R.string.built_in_car_hotspot), getString(R.string.wifi_direct), getString(R.string.existing_wifi_title))
         val descriptions = listOf(
             getString(R.string.hotspot_mode_manual_desc),
-            getString(R.string.hotspot_mode_p2p_desc)
+            getString(R.string.hotspot_mode_p2p_desc),
+            getString(R.string.existing_wifi_description)
         )
         val wide = resources.configuration.screenWidthDp >= 850
         val choices = if (wide) row().apply { gravity = Gravity.TOP } else column()
@@ -923,6 +1155,12 @@ class DiPlayActivity : ComponentActivity() {
                 if (candidate == WirelessHotspotMode.MANUAL) {
                     pendingCarHotspotSetup = true
                     render()
+                } else if (candidate == WirelessHotspotMode.EXISTING_WIFI) {
+                    askHotspotCredentials(existingWifi = true) { ssid, password ->
+                        AirPlayPersistence.saveExistingWifiCredentials(this, ssid, password)
+                        pendingCarHotspotSetup = false
+                        applyWirelessLink(candidate)
+                    }
                 } else {
                     pendingCarHotspotSetup = false
                     applyWirelessLink(candidate)
@@ -942,6 +1180,15 @@ class DiPlayActivity : ComponentActivity() {
                 }
             }, matchButton(12, 60))
             parent.addView(label(if (pendingCarHotspotSetup) getString(R.string.finish_setup_save_your_hotspot_details_to_use_this_mode) else if (carHotspotOff()) getString(R.string.hotspot_details_off) else getString(R.string.hotspot_details_saved), 15, if (carHotspotOff()) WARNING else MUTED).apply { setPadding(0, dp(12), 0, 0) })
+        } else if (mode == WirelessHotspotMode.EXISTING_WIFI) {
+            parent.addView(label(getString(R.string.existing_wifi_instructions), 16, MUTED))
+            parent.addView(button(getString(R.string.open_car_wi_fi_settings), false) { openCarClientWifiSettings() }, matchButton(12, 60))
+            parent.addView(button(getString(R.string.existing_wifi_details), false) {
+                askHotspotCredentials(existingWifi = true) { ssid, password ->
+                    AirPlayPersistence.saveExistingWifiCredentials(this, ssid, password)
+                    toast(getString(R.string.saved_for_your_next_connection))
+                }
+            }, matchButton(12, 60))
         } else {
             parent.addView(label(getString(R.string.turn_the_car_s_wi_fi_switch_on_allow_location_nearby_devic), 16, MUTED))
             wifiDirectChannelControl(parent)
@@ -1071,12 +1318,18 @@ class DiPlayActivity : ComponentActivity() {
         AirPlayPersistence.saveManualHotspotChannel(this, 0)
     }
 
-    private fun askHotspotCredentials(done: (String, String) -> Unit) {
+    private fun askHotspotCredentials(existingWifi: Boolean = false, done: (String, String) -> Unit) {
         val fields = column().apply { setPadding(dp(24), dp(12), dp(24), dp(12)) }
-        fields.addView(label(getString(R.string.copy_these_from_the_car_s_hotspot_settings_use_5_ghz_if_av), 16, MUTED))
-        val ssid = EditText(this).apply { hint = getString(R.string.hotspot_name); setText(storedSsid()); setSingleLine() }
+        fields.addView(label(getString(if (existingWifi) R.string.existing_wifi_instructions else R.string.copy_these_from_the_car_s_hotspot_settings_use_5_ghz_if_av), 16, MUTED))
+        val ssid = EditText(this).apply {
+            hint = getString(if (existingWifi) R.string.existing_wifi_ssid else R.string.hotspot_name)
+            setText(if (existingWifi) AirPlayPersistence.loadExistingWifiSsid(this@DiPlayActivity) else storedSsid())
+            setSingleLine()
+        }
         val password = EditText(this).apply {
-            hint = getString(R.string.hotspot_password); setText(storedPassword()); setSingleLine()
+            hint = getString(if (existingWifi) R.string.existing_wifi_password else R.string.hotspot_password)
+            setText(if (existingWifi) AirPlayPersistence.loadExistingWifiPassphrase(this@DiPlayActivity) else storedPassword())
+            setSingleLine()
             inputType = android.text.InputType.TYPE_CLASS_TEXT or android.text.InputType.TYPE_TEXT_VARIATION_PASSWORD
         }
         ssid.imeOptions = android.view.inputmethod.EditorInfo.IME_ACTION_NEXT or android.view.inputmethod.EditorInfo.IME_FLAG_NO_EXTRACT_UI
@@ -1104,7 +1357,7 @@ class DiPlayActivity : ComponentActivity() {
         val error = label("", 14, WARNING)
         error.accessibilityLiveRegion = View.ACCESSIBILITY_LIVE_REGION_POLITE
         fields.addView(error)
-        val dialog = AlertDialog.Builder(this).setTitle(getString(R.string.car_hotspot_details))
+        val dialog = AlertDialog.Builder(this).setTitle(getString(if (existingWifi) R.string.existing_wifi_details else R.string.car_hotspot_details))
             .setView(ScrollView(this).apply { addView(fields) })
             .setPositiveButton(getString(R.string.save_details), null).setNegativeButton(getString(R.string.cancel)) { _, _ -> hideKeyboard() }
             .setNeutralButton(getString(R.string.hide_keyboard), null).create()
@@ -1112,7 +1365,7 @@ class DiPlayActivity : ComponentActivity() {
             dialog.window?.setSoftInputMode(android.view.WindowManager.LayoutParams.SOFT_INPUT_ADJUST_RESIZE)
             dialog.getButton(android.app.AlertDialog.BUTTON_NEUTRAL).setOnClickListener { hideKeyboard() }
             dialog.getButton(AlertDialog.BUTTON_POSITIVE).setOnClickListener {
-                val name = ssid.text.toString().trim()
+                val name = if (existingWifi) ssid.text.toString() else ssid.text.toString().trim()
                 val secret = password.text.toString()
                 val problem = hotspotError(name, secret)
                 if (problem != null) error.text = problem
@@ -1129,44 +1382,69 @@ class DiPlayActivity : ComponentActivity() {
         else -> "$positive ${step * CarPlayClusterDisplay.MARKER_STEP_PERCENT} %"
     }
 
-    /** A 2%-step slider row for overlay placement; every step saves, so the card moves live. */
-    private fun overlaySliderRow(title: String, values: List<Int>, current: Int, describe: (Int) -> String): OverlaySliderRow =
-        OverlaySliderRow(this, title, values, current, describe)
+    /**
+     * A numeric EditText for absolute card coordinates. Typing updates only the preview
+     * (pendingXY); the caller persists on Apply. [initial] is the current value, [max] the
+     * inclusive upper bound (X 1920 / Y 720).
+     */
+    private fun numberInput(initial: Int, max: Int, onChange: (Int) -> Unit): EditText =
+        EditText(this).apply {
+            setText(initial.toString())
+            textSize = 18f
+            setTextColor(Color.WHITE)
+            setHintTextColor(TEXT)
+            backgroundTintList = ColorStateList.valueOf(ACCENT)
+            minHeight = dp(48)
+            isSingleLine = true
+            inputType = android.text.InputType.TYPE_CLASS_NUMBER
+            setPadding(dp(12), 0, dp(12), 0)
+            addTextChangedListener(object : TextWatcher {
+                override fun beforeTextChanged(s: CharSequence?, start: Int, count: Int, after: Int) {}
+                override fun onTextChanged(s: CharSequence?, start: Int, before: Int, count: Int) {}
+                override fun afterTextChanged(s: Editable?) {
+                    val v = s?.toString()?.trim()?.toIntOrNull() ?: return
+                    onChange(v.coerceIn(0, max))
+                }
+            })
+        }
 
-    private inner class OverlaySliderRow(
-        context: android.content.Context,
-        title: String,
-        private val steps: List<Int>,
-        current: Int,
-        private val describe: (Int) -> String,
-    ) : LinearLayout(context) {
-        var onSave: (Int) -> Unit = {}
-        val slider: SeekBar
-
-        init {
-            orientation = VERTICAL
-            val valueView = label(describe(current), 16, ACCENT, true)
-            val head = row().apply { gravity = Gravity.CENTER_VERTICAL; setPadding(0, dp(12), 0, 0) }
-            head.addView(label(title, 16, TEXT, true), LinearLayout.LayoutParams(0, -2, 1f))
-            head.addView(valueView)
-            addView(head)
-            slider = SeekBar(context).apply {
-                max = steps.lastIndex
-                progress = steps.indexOf(current).coerceIn(steps.indices)
-                minHeight = dp(44)
-                setOnSeekBarChangeListener(object : SeekBar.OnSeekBarChangeListener {
-                    override fun onProgressChanged(seekBar: SeekBar?, progress: Int, fromUser: Boolean) {
-                        val value = steps[progress.coerceIn(steps.indices)]
-                        valueView.text = describe(value)
-                        if (fromUser) onSave(value)
-                    }
-                    override fun onStartTrackingTouch(seekBar: SeekBar?) {}
-                    override fun onStopTrackingTouch(seekBar: SeekBar?) {}
-                })
-            }
-            addView(slider, LinearLayout.LayoutParams(-1, dp(44)))
+    /** Appends a diagnostic line to filesDir/logs/diplay.log (same file the car exports). */
+    private fun clusterUiLog(message: String) {
+        android.util.Log.e("DiPlay", message)
+        try {
+            val dir = java.io.File(filesDir, "logs")
+            dir.mkdirs()
+            val stamp = java.text.SimpleDateFormat("yyyy-MM-dd HH:mm:ss.SSS", java.util.Locale.US).format(java.util.Date())
+            java.io.File(dir, "diplay.log").appendText("$stamp  $message\n")
+        } catch (_: Exception) {
         }
     }
+
+    /** Vehicle icon name (OEM label) input row. iOS renders the CarPlay car icon from this
+     *  text, so it is shared with the "OEM 标签" row in the CarPlay settings panel. */
+    private fun vehicleLabelInputRow(title: String): LinearLayout =
+        LinearLayout(this).apply {
+            orientation = LinearLayout.VERTICAL
+            setPadding(0, dp(12), 0, 0)
+            addView(label(title, 16, TEXT, true))
+            addView(EditText(this@DiPlayActivity).apply {
+                setText(AirPlayPersistence.loadOemLabel(this@DiPlayActivity))
+                textSize = 18f
+                setTextColor(Color.WHITE)
+                setHintTextColor(TEXT)
+                backgroundTintList = ColorStateList.valueOf(ACCENT)
+                minHeight = dp(48)
+                isSingleLine = true
+                setPadding(dp(12), 0, dp(12), 0)
+                addTextChangedListener(object : TextWatcher {
+                    override fun beforeTextChanged(s: CharSequence?, start: Int, count: Int, after: Int) {}
+                    override fun onTextChanged(s: CharSequence?, start: Int, before: Int, count: Int) {}
+                    override fun afterTextChanged(s: Editable?) {
+                        AirPlayPersistence.saveOemLabel(this@DiPlayActivity, s?.toString()?.trim() ?: "")
+                    }
+                })
+            }, LinearLayout.LayoutParams(ViewGroup.LayoutParams.MATCH_PARENT, dp(48)).apply { topMargin = dp(6) })
+        }
 
     private fun overlayOffsetLabel(percent: Int, negative: String, positive: String, centre: Int): String {
         val delta = percent - centre
@@ -1176,6 +1454,14 @@ class DiPlayActivity : ComponentActivity() {
             else -> "$positive $delta %"
         }
     }
+
+    /** Pixel-based offset label for the per-card position sliders (range -150..150 px). */
+    private fun cardOffsetLabel(px: Int, negative: String, positive: String): String =
+        when {
+            px == 0 -> getString(R.string.marker_centre_default)
+            px < 0 -> "$negative ${-px} px"
+            else -> "$positive $px px"
+        }
 
     private fun showClusterAccessSetup() {
         val command = "adb shell appops set $packageName GET_USAGE_STATS allow"
@@ -1906,7 +2192,11 @@ class DiPlayActivity : ComponentActivity() {
     // The cluster screen is described at connection time, so a running session reconnects over
     // its current link. The position choices need no call: getString(R.string.apply_and_reconnect) already does it.
     private fun reconnectForClusterMap() {
-        if (CarPlayBackgroundSession.hasSession()) connect(AirPlayPersistence.loadWirelessEnabled(this))
+        // In-place hot restart: keep the projection window and both resident stream surfaces
+        // (110/111), so applying a cluster setting never re-activates stream 111 and the head
+        // unit does not announce "全屏导航已开启". The old path (stop + openProjection) tore
+        // down the host activity, dismissing the window and re-announcing on every change.
+        if (CarPlayBackgroundSession.hasSession()) CarPlayBackgroundSession.restartCarPlay()
     }
 
     private fun onLocationReportingChanged(enabled: Boolean) {

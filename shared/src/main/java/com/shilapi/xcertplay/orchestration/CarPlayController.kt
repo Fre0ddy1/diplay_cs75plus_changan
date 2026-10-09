@@ -43,6 +43,7 @@ import com.shilapi.xcertplay.network.diagnosticSummary
 import com.shilapi.xcertplay.network.CarPlayVpnService
 import com.shilapi.xcertplay.network.LocalOnlyHotspotManager
 import com.shilapi.xcertplay.network.ManualHotspotManager
+import com.shilapi.xcertplay.network.ExistingWifiManager
 import com.shilapi.xcertplay.network.WifiP2pGroupManager
 import com.shilapi.xcertplay.network.WirelessHotspotInfo
 import com.shilapi.xcertplay.network.WirelessHotspotBackend
@@ -1028,6 +1029,7 @@ class CarPlayController(
                     mfi = mfi,
                     listener = wirelessSessionListener(generation),
                     media = media,
+                    additionalBindAddresses = hotspotInfo.hostAddresses.filter { it != hostAddress },
                 )
             ) {
                 CarPlayVpnService.AttachResult.Started -> Unit
@@ -1058,6 +1060,7 @@ class CarPlayController(
                 // or IPv6 while the listener/probe was bound to the AP's IPv4 address.
                 useInterfaceMdns = true,
                 onEvent = { event -> debugLog("wireless bonjour: ${event.diagnosticSummary()}") },
+                additionalAddresses = hotspotInfo.hostAddresses.filter { it != hostAddress },
             )
             bonjour = bonjourClient
             bonjourClient.start()
@@ -1126,6 +1129,7 @@ class CarPlayController(
                 deviceIdentifier = deviceIdentifier,
                 publicKey = identity.publicKeyHex,
                 sourceVersion = airPlayConfig.sourceVersion,
+                accessPointBssid = hotspotInfo.accessPointBssid,
             )
             wirelessRuntimeIdentification = runtimeIdentification
             wirelessAirPlayEndpoint = endpoint
@@ -1838,6 +1842,10 @@ class CarPlayController(
             WirelessHotspotMode.WIFI_P2P -> WifiP2pGroupManager(appContext, ::debugLog,
                 preferredChannel = config.wifiP2pPreferredChannel)
             WirelessHotspotMode.LOCAL_ONLY_HOTSPOT -> LocalOnlyHotspotManager(appContext, ::debugLog)
+            WirelessHotspotMode.EXISTING_WIFI -> ExistingWifiManager(
+                appContext, config.existingWifiSsid, config.existingWifiPassphrase, ::debugLog,
+                onNetworkChanged = { if (!isStaleWirelessRun(generation)) restartWireless() },
+            )
             WirelessHotspotMode.MANUAL -> ManualHotspotManager(
                 context = appContext,
                 ssid = config.manualHotspotSsid
@@ -2328,7 +2336,11 @@ class CarPlayController(
         private const val PERMISSION_POLL_TIMEOUT_MILLIS = 120_000L
         private const val DEVICE_AVAILABILITY_POLL_INTERVAL_MILLIS = 2_000L
         private const val WIRELESS_HANDOFF_TIMEOUT_MILLIS = 45_000L
-        private const val RFCOMM_CONNECT_TIMEOUT_MILLIS = 15_000L
+        // 8 s (was 15 s): on a cold start the head-unit's Bluetooth stack is often not ready
+        // yet and a 15 s block just stalls the whole bring-up before the first retry. Bluetooth
+        // RFCOMM normally connects in well under a second once the peer is responsive, so an
+        // 8 s cap fails fast and the exponential-backoff retry lands on a warmed-up stack.
+        private const val RFCOMM_CONNECT_TIMEOUT_MILLIS = 8_000L
         private const val MAXIMUM_REENUMERATION_ATTEMPTS = 2
         private const val EXECUTOR_CLOSE_TIMEOUT_MILLIS = 2_000L
         private const val ADAPTER_ADDRESS_PLACEHOLDER = "02:00:00:00:00:00"

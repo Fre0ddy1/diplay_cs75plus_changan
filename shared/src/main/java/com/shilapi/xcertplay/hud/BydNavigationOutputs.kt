@@ -14,7 +14,10 @@ object BydNavigationOutputs {
     fun setDiagnosticHold(hold: Boolean) { BydStandaloneHudOutput.syntheticHold = hold }
     @Volatile private var useStandalone = false
     @Volatile private var overlayListener: ((ClusterTurnGuidance?) -> Unit)? = null
+    @Volatile private var laneOverlayListener: ((BydLaneGuidance?) -> Unit)? = null
+    @Volatile var routeTraceListener: ((String) -> Unit)? = null
     private val overlayLock = Any()
+    private var publishedLane: BydLaneGuidance? = null
     private var publishedOverlay: ClusterTurnGuidance? = null
     private val overlayRoute = BydHudRouteState(
         staleRouteNs = 120_000_000_000L,
@@ -64,6 +67,21 @@ object BydNavigationOutputs {
             BydClusterSong.onFrame(frame)
             return
         }
+        // Route-guidance family (0x5201/0x5202/0x5204): forward a raw TLV trace to the host
+        // diagnostics. The full iAP2 layout is undocumented, so the trace lets us discover any
+        // hidden fields (traffic status, speed limits…) from a real capture before writing
+        // parsers for them.
+        if (frame.messageId == BydHudRouteState.ROUTE_GUIDANCE_UPDATE ||
+            frame.messageId == BydHudRouteState.ROUTE_GUIDANCE_MANEUVER_UPDATE ||
+            frame.messageId == BydHudRouteState.LANE_GUIDANCE_INFO_UPDATE
+        ) {
+            val trace = synchronized(overlayLock) { overlayRoute.tlvTrace(frame.messageId, frame.payload) }
+            routeTraceListener?.invoke(trace)
+        }
+        if (frame.messageId == BydHudRouteState.LANE_GUIDANCE_INFO_UPDATE) {
+            updateLaneOverlay(frame)
+            return
+        }
         if (frame.messageId != BydHudRouteState.ROUTE_GUIDANCE_UPDATE &&
             frame.messageId != BydHudRouteState.ROUTE_GUIDANCE_MANEUVER_UPDATE) return
         val owned = frame // Iap2Frame is immutable and defensively copies its payload.
@@ -83,6 +101,34 @@ object BydNavigationOutputs {
         listener?.invoke(next)
     }
 
+    /** Live lane guidance for the dashboard overlay. Called from the iAP2 thread. */
+    fun setLaneOverlayListener(listener: ((BydLaneGuidance?) -> Unit)?) {
+        laneOverlayListener = listener
+        val next = currentLane()
+        synchronized(overlayLock) { publishedLane = next }
+        listener?.invoke(next)
+    }
+
+    private fun updateLaneOverlay(frame: Iap2Frame) {
+        val change = synchronized(overlayLock) { overlayRoute.accept(frame.messageId, frame.payload) }
+        if (change != BydHudRouteChange.NONE) refreshLaneOverlay()
+    }
+
+    /** Called every second while the presentation owner lives, even without incoming frames. */
+    fun refreshLaneOverlay() {
+        val next = synchronized(overlayLock) {
+            val current = currentLane()
+            if (current == publishedLane) return
+            publishedLane = current
+            current
+        }
+        laneOverlayListener?.invoke(next)
+    }
+
+    private fun currentLane(): BydLaneGuidance? = synchronized(overlayLock) {
+        overlayRoute.currentLanes()
+    }
+
     private fun updateOverlay(frame: Iap2Frame) {
         val change = synchronized(overlayLock) { overlayRoute.accept(frame.messageId, frame.payload) }
         if (change != BydHudRouteChange.NONE) refreshTurnOverlay()
@@ -100,7 +146,9 @@ object BydNavigationOutputs {
     }
 
     private fun currentOverlay(): ClusterTurnGuidance? = synchronized(overlayLock) {
-        overlayRoute.currentApple()?.let { ClusterTurnGuidance.from(BydClusterFrame.from(it)) }
+        // cardContext() (not currentApple()) so the exit badge and the road-name card's
+        // secondary "current road" line get their data; currentApple() drops both fields.
+        overlayRoute.cardContext()?.let { ClusterTurnGuidance.from(BydClusterFrame.from(it)) }
     }
 
     /** The dashboard song setting changed; applies at once. */
@@ -111,5 +159,6 @@ object BydNavigationOutputs {
         standalone.clear(); hud.clear(); cluster.clear(); BydClusterSong.end()
         synchronized(overlayLock) { overlayRoute.clear() }
         refreshTurnOverlay()
+        refreshLaneOverlay()
     }
 }

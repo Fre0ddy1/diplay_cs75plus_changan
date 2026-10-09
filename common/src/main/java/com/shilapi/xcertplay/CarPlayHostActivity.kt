@@ -163,6 +163,8 @@ class CarPlayHostActivity : ComponentActivity() {
         manualHotspotBand = manualHotspotBand,
         manualHotspotChannel = manualHotspotChannel,
         manualHotspotSecurity = manualHotspotSecurity,
+        existingWifiSsid = existingWifiSsid,
+        existingWifiPassphrase = existingWifiPassphrase,
         locationReportingEnabled = locationReportingEnabled,
     )
 
@@ -269,6 +271,8 @@ class CarPlayHostActivity : ComponentActivity() {
     private var resolutionPreviewView: TextView? = null
     private var hotspotStatusView: TextView? = null
     private var manualHotspotFields: View? = null
+    private var existingWifiFields: View? = null
+    private var existingWifiErrorView: TextView? = null
     private var manualHotspotErrorView: TextView? = null
     private var iconPreviewView: ImageView? = null
     private var iconStatusView: TextView? = null
@@ -284,15 +288,58 @@ class CarPlayHostActivity : ComponentActivity() {
     private var currentSurfaceTexture: SurfaceTexture? = null
     private var clusterPresentation: ClusterMapPresentation? = null
     private var clusterSurface: Surface? = null
+    // Dual-resident surfaces on the generic (Changan) path: the whole-screen mirror (110) and the
+    // navigation stream (111) are BOTH bound to the incall sink from the first projection and stay
+    // bound; mode switches only flip view visibility (ClusterMapPresentation.setMode). Keeping 111
+    // permanently active stops the head-unit from announcing "全屏导航已开启" on every mode switch
+    // (incall announces on 111 stream (re-)activation; the OEM box keeps the stream resident too).
+    private var mirrorClusterSurface: Surface? = null
+    private var navClusterSurface: Surface? = null
     private var clusterMonitor: DiLink51ClusterMonitor? = null
     private var detectedCluster = ClusterActivityState.Snapshot(null, false)
+    // Auto-project on connect: set when the pending delayed auto-projection was fired for
+    // the current session, so a reconnect/restart does not re-trigger it mid-flight.
+    private var autoProjectTriggered = false
+    private var autoProjectToken = Any()
+    // Auto-project robustness: the first activation sequence is often sent before the stock
+    // Amap is fully up, so the head-unit may ignore it. After firing we verify what is
+    // observable (window bound; for whole-screen mirror also the 110 stream being decoded)
+    // and re-send the open sequence (keeping the window) until confirmed, with a cap.
+    private val autoProjectVerifyDelayMs = 4000L
+    private val autoProjectMaxVerifyAttempts = 3
     // Keep one surface per layer alive, including while its map card is hidden.
     private val clusterLayers = mutableMapOf<Boolean, ClusterMapPresentation>()
     private var clusterTurnGuidance: com.shilapi.xcertplay.hud.ClusterTurnGuidance? = null
+    // Throttle the per-refresh card-state log line: arrival/remaining change every second, so
+    // without a dedupe the diagnostics log would gain ~1 line per second during navigation.
+    private var lastClusterCardsLog: String? = null
+    private var lastClusterCardsLogElapsed = 0L
     private val clusterTurnOverlayListener: (com.shilapi.xcertplay.hud.ClusterTurnGuidance?) -> Unit = { guidance ->
         runOnUiThread {
             clusterTurnGuidance = guidance
             applyClusterTurnOverlay()
+        }
+    }
+    private var clusterLaneGuidance: com.shilapi.xcertplay.hud.BydLaneGuidance? = null
+    private val clusterLaneOverlayListener: (com.shilapi.xcertplay.hud.BydLaneGuidance?) -> Unit = { guidance ->
+        runOnUiThread {
+            clusterLaneGuidance = guidance
+            applyClusterTurnOverlay()
+        }
+    }
+    // Experimental route-guidance TLV trace (0x5201/0x5202/0x5204). The full iAP2 layout is
+    // undocumented; the raw TLV trace goes to the diagnostics log so a real capture can be
+    // decoded later. Throttled to avoid flooding the log when the iPhone pushes frames often.
+    private var lastRouteTrace: String? = null
+    private var lastRouteTraceElapsed = 0L
+    private val routeTraceListener: (String) -> Unit = { trace ->
+        runOnUiThread {
+            val now = SystemClock.elapsedRealtime()
+            if (trace != lastRouteTrace || now - lastRouteTraceElapsed > 5_000L) {
+                lastRouteTrace = trace
+                lastRouteTraceElapsed = now
+                appendLog("Route trace: $trace")
+            }
         }
     }
     // Copies of stream 111 outside the dashboard (centre card, launcher maps) each get their own decoder.
@@ -345,6 +392,8 @@ class CarPlayHostActivity : ComponentActivity() {
     private var wirelessPermissionsReady = false
     private var wirelessHotspotMode = WirelessHotspotMode.WIFI_P2P
     private var manualHotspotSsid = ""
+    private var existingWifiSsid = ""
+    private var existingWifiPassphrase = ""
     private var manualHotspotPassphrase = ""
     private var manualHotspotBand = ManualHotspotBand.AUTO
     private var manualHotspotChannel = 0
@@ -398,6 +447,12 @@ class CarPlayHostActivity : ComponentActivity() {
     // interface mirror. Left swipes advance, right swipes go back, past the ends nothing happens.
     private var clusterSwipePosition = -1
     private var initialClusterMirror: Boolean? = null
+    // True once the UNI-V activation sequence has been sent for this session. The head-unit
+    // exposes a projection display even BEFORE activation (verified on the user's UNI-V: the
+    // cluster Presentation is created on it, but the physical dashboard shows nothing). So the
+    // first left swipe MUST run the activation sequence unconditionally; only afterwards can
+    // swipes hot-switch between mirror/navigation on the activated window.
+    private var clusterActivationAttempted = false
     private var gestureStartX = 0f
     private var gestureStartY = 0f
     // Press→release trajectory: the action is decided on finger-up from the whole swipe,
@@ -516,8 +571,8 @@ class CarPlayHostActivity : ComponentActivity() {
         configureNightMode()
         locationPermissionAvailable = hasFineLocationPermission()
         setContentView(buildContentView())
-        // Panel requests (picture controls / dashboard crop) arrive before the view hierarchy
-        // exists on a cold start, so open them after setContentView, not before.
+        // Panel requests (picture controls / dashboard crop / card position) arrive before the
+        // view hierarchy exists on a cold start, so open them after setContentView, not before.
         if (intent.getBooleanExtra("picture_controls", false)) {
             intent.removeExtra("picture_controls")
             openPicturePanel()
@@ -599,6 +654,8 @@ class CarPlayHostActivity : ComponentActivity() {
         remoteMfiServer = AirPlayPersistence.loadRemoteMfiServer(this)
         remoteMfiToken = AirPlayPersistence.loadRemoteMfiToken(this)
         wirelessHotspotMode = AirPlayPersistence.loadWirelessHotspotMode(this)
+        existingWifiSsid = AirPlayPersistence.loadExistingWifiSsid(this)
+        existingWifiPassphrase = AirPlayPersistence.loadExistingWifiPassphrase(this)
         manualHotspotSsid = AirPlayPersistence.loadManualHotspotSsid(this)
         manualHotspotPassphrase = AirPlayPersistence.loadManualHotspotPassphrase(this)
         manualHotspotBand = AirPlayPersistence.loadManualHotspotBand(this)
@@ -674,7 +731,22 @@ class CarPlayHostActivity : ComponentActivity() {
                     val panel = ClusterCropPanel(
                         this,
                         ::closeClusterCropPanel,
-                        onAdjust = { runCatching { clusterPresentation?.refreshCrop() } },
+                        onAdjust = {
+                            runCatching {
+                                val p = clusterPresentation
+                                if (p != null) {
+                                    appendLog(
+                                        "Cluster crop: adjust -> refreshCrop (mirror=" +
+                                            AirPlayPersistence.loadClusterMirrorMain(this) + ")",
+                                    )
+                                    p.refreshCrop()
+                                } else {
+                                    appendLog("Cluster crop: adjust skipped (no presentation)")
+                                }
+                            }.onFailure { e ->
+                                appendLog("Cluster crop: refreshCrop failed ${e.message ?: e.javaClass.simpleName}")
+                            }
+                        },
                     )
                     // Fixed-size panel: root.width may still be 0 when the panel is opened
                     // right after cold start, which previously collapsed the panel to 1px.
@@ -823,6 +895,8 @@ class CarPlayHostActivity : ComponentActivity() {
         }
 
     private fun requiredWirelessPermissions(): List<String> = when {
+        wirelessHotspotMode == WirelessHotspotMode.EXISTING_WIFI ->
+            if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.S) listOf(Manifest.permission.BLUETOOTH_CONNECT) else emptyList()
         Build.VERSION.SDK_INT >= Build.VERSION_CODES.TIRAMISU -> listOf(
             Manifest.permission.BLUETOOTH_CONNECT,
             Manifest.permission.NEARBY_WIFI_DEVICES,
@@ -842,8 +916,9 @@ class CarPlayHostActivity : ComponentActivity() {
         super.onNewIntent(intent)
         setIntent(intent)
         // Host reused via FLAG_ACTIVITY_REORDER_TO_FRONT: the "picture controls" / dashboard
-        // crop requests from DiPlayActivity arrive through onNewIntent, not onCreate. Without
-        // these branches the panels never open and the user lands straight in CarPlay.
+        // crop / card-position requests from DiPlayActivity arrive through onNewIntent, not
+        // onCreate. Without these branches the panels never open and the user lands straight
+        // in CarPlay.
         if (intent.getBooleanExtra("picture_controls", false)) {
             intent.removeExtra("picture_controls")
             openPicturePanel()
@@ -911,8 +986,23 @@ class CarPlayHostActivity : ComponentActivity() {
         }
         settingsGestureHint?.text = getString(R.string.open_diplay_settings_hint)
         ensureClusterPresentation()
-        AirPlayPersistence.overlaySettingsListener = { runOnUiThread { applyClusterTurnOverlay() } }
+        // Any settings save (card dx/dy, content-top, left-rail crop, dashboard rect…) must
+        // redraw the live dashboard immediately: refresh the card overlays AND re-apply the
+        // TextureView crop transform. The crop must NOT reconnect (re-activating the 111 nav
+        // stream would make the head unit announce "全屏导航已开启", which the driver rejected).
+        AirPlayPersistence.overlaySettingsListener = {
+            runOnUiThread {
+                applyClusterTurnOverlay()
+                // Every nav card re-reads its persisted (x, y) right away, so position
+                // changes are visible on the dashboard immediately after saving.
+                (clusterLayers.values + listOfNotNull(clusterPresentation)).distinct()
+                    .forEach { runCatching { it.refreshCardOverlays() } }
+                refreshClusterCrop()
+            }
+        }
         com.shilapi.xcertplay.hud.BydNavigationOutputs.setTurnOverlayListener(clusterTurnOverlayListener)
+        com.shilapi.xcertplay.hud.BydNavigationOutputs.setLaneOverlayListener(clusterLaneOverlayListener)
+        com.shilapi.xcertplay.hud.BydNavigationOutputs.routeTraceListener = routeTraceListener
         mainHandler.removeCallbacks(refreshTurnOverlay)
         mainHandler.post(refreshTurnOverlay)
         maybeStartCarPlay()
@@ -956,7 +1046,14 @@ class CarPlayHostActivity : ComponentActivity() {
             appendLog("Cluster map: no cluster projection display among ${ClusterMapPresentation.describeDisplays(this)}")
             return
         }
-        val presentation = ClusterMapPresentation(this, display, theme) { surface -> runOnUiThread { onClusterSurface(surface) } }
+        val presentation = ClusterMapPresentation(
+            this,
+            display,
+            theme,
+            { surface -> runOnUiThread { onClusterMirrorSurface(surface) } },
+            { surface -> runOnUiThread { onClusterNavSurface(surface) } },
+            navOnlyCards = true,
+        )
         // The system dismisses a presentation when its display goes away; allow a new one on resume.
         presentation.setOnDismissListener {
             if (clusterPresentation === presentation) {
@@ -967,6 +1064,7 @@ class CarPlayHostActivity : ComponentActivity() {
         try {
             presentation.show()
             clusterPresentation = presentation
+            presentation.setMode(AirPlayPersistence.loadClusterMirrorMain(this))
             updateClusterMapShown()
             presentation.setStreamActive(clusterStreamActive())
             applyClusterTurnOverlay()
@@ -993,7 +1091,14 @@ class CarPlayHostActivity : ComponentActivity() {
             appendLog("Cluster map: no cluster projection display (quiet)")
             return
         }
-        val presentation = ClusterMapPresentation(this, display, theme) { surface -> runOnUiThread { onClusterSurface(surface) } }
+        val presentation = ClusterMapPresentation(
+            this,
+            display,
+            theme,
+            { surface -> runOnUiThread { onClusterMirrorSurface(surface) } },
+            { surface -> runOnUiThread { onClusterNavSurface(surface) } },
+            navOnlyCards = true,
+        )
         presentation.setOnDismissListener {
             if (clusterPresentation === presentation) {
                 clusterPresentation = null
@@ -1003,6 +1108,7 @@ class CarPlayHostActivity : ComponentActivity() {
         try {
             presentation.show()
             clusterPresentation = presentation
+            presentation.setMode(AirPlayPersistence.loadClusterMirrorMain(this))
             presentation.setStreamActive(clusterStreamActive())
             presentation.setMapVisible(false)
             applyClusterTurnOverlay()
@@ -1020,11 +1126,13 @@ class CarPlayHostActivity : ComponentActivity() {
         if (target == null) {
             val display = ClusterMapPresentation.findDisplay(this, theme) ?: return
             lateinit var presentation: ClusterMapPresentation
-            presentation = ClusterMapPresentation(this, display, theme) { surface ->
-                runOnUiThread {
-                    if (clusterPresentation === presentation) onClusterSurface(surface)
-                }
-            }
+            presentation = ClusterMapPresentation(
+                this,
+                display,
+                theme,
+                { surface -> runOnUiThread { if (clusterPresentation === presentation) onClusterSurface(surface) } },
+                { _ -> /* DiLink 5.1 single TextureView: no nav-only surface */ },
+            )
             presentation.setOnDismissListener {
                 if (clusterLayers[fullMap] === presentation) clusterLayers.remove(fullMap)
                 if (clusterPresentation === presentation) clusterPresentation = null
@@ -1044,7 +1152,7 @@ class CarPlayHostActivity : ComponentActivity() {
             }
         }
         clusterPresentation = target
-        target.outputSurface?.let(::onClusterSurface)
+        target.mirrorOutputSurface?.let(::onClusterSurface)
         target.setStreamActive(clusterStreamActive())
         target.setMapVisible(visible)
         applyClusterTurnOverlay()
@@ -1059,13 +1167,47 @@ class CarPlayHostActivity : ComponentActivity() {
     private fun applyClusterTurnOverlay() {
         val overlay = CarPlayClusterDisplay.usesCustomTurnCard(AirPlayPersistence.loadClusterContent(this))
         val presentations = (clusterLayers.values + listOfNotNull(clusterPresentation)).distinct()
+        // Chang'an generic path: the nav-only card group (turn card + ETA card) is driven purely
+        // by the presentation's mode (visible in nav-only, hidden in whole-screen mirror) and is
+        // independent of the "dashboard shows" content setting. DiLink 5.1 keeps the upstream
+        // behavior: turn card follows the content setting, no ETA card.
+        val changanCards = !DiLink51ClusterLayout.supported()
+        val g = clusterTurnGuidance
+        // Dedupe the card-state line: ETA seconds tick every second, so log once per state
+        // change (or at least every 5 s) instead of once per refresh tick.
+        val cardsLog = "Cluster cards: mode=${if (clusterPresentation?.isMirrorMode() == true) "mirror" else "nav-only"} " +
+            "turn=${g != null} road=${g?.road?.isNotEmpty() == true || g?.currentRoad?.isNotEmpty() == true} " +
+            "eta=${g?.arrivalEpochSeconds != null || g?.remainingSeconds != null} " +
+            "exit=${g?.exitLabel?.isNotEmpty() == true} lane=${clusterLaneGuidance != null} " +
+            "contentTop=${AirPlayPersistence.loadClusterCardContentTopPx(this)} " +
+            "turnXY=${AirPlayPersistence.loadClusterTurnCardX(this)}/" +
+            "${AirPlayPersistence.loadClusterTurnCardY(this)} " +
+            "exitTxt=${(g?.exitLabel ?: "").take(14)} roadTxt=${((g?.road ?: g?.currentRoad) ?: "").take(14)}"
+        val nowMs = SystemClock.elapsedRealtime()
+        if (cardsLog != lastClusterCardsLog || nowMs - lastClusterCardsLogElapsed > 5_000L) {
+            lastClusterCardsLog = cardsLog
+            lastClusterCardsLogElapsed = nowMs
+            appendLog(cardsLog)
+        }
         for (presentation in presentations) {
             presentation.setTurnCardOverlay(
-                AirPlayPersistence.loadClusterTurnCardOverlayXPercent(this),
-                AirPlayPersistence.loadClusterTurnCardOverlayYPercent(this),
+                AirPlayPersistence.loadClusterTurnCardX(this),
+                AirPlayPersistence.loadClusterTurnCardY(this),
                 AirPlayPersistence.loadClusterTurnCardOverlaySize(this),
             )
-            presentation.setTurnCardGuidance(if (overlay) clusterTurnGuidance else null)
+            if (changanCards) {
+                presentation.setTurnCardGuidance(clusterTurnGuidance)
+                presentation.setEtaGuidance(clusterTurnGuidance)
+                presentation.setLaneGuidance(clusterLaneGuidance)
+                presentation.setRoadNameGuidance(clusterTurnGuidance)
+                presentation.setExitGuidance(clusterTurnGuidance)
+            } else {
+                presentation.setTurnCardGuidance(if (overlay) clusterTurnGuidance else null)
+                presentation.setEtaGuidance(null)
+                presentation.setLaneGuidance(null)
+                presentation.setRoadNameGuidance(null)
+                presentation.setExitGuidance(null)
+            }
         }
     }
 
@@ -1078,6 +1220,10 @@ class CarPlayHostActivity : ComponentActivity() {
             sink?.setMirrorSurface(SCREEN_TYPE_MAIN, CLUSTER_MAIN_MIRROR, null)
         }
         clusterSurface = null
+        mirrorClusterSurface?.let { sink?.setMirrorSurface(SCREEN_TYPE_MAIN, CLUSTER_MAIN_MIRROR, null) }
+        navClusterSurface?.let { sink?.clearSurface(SCREEN_TYPE_ALT, it) }
+        mirrorClusterSurface = null
+        navClusterSurface = null
         presentations.forEach { runCatching { it.dismiss() } }
         com.shilapi.xcertplay.hud.BydNavigationOutputs.setClusterMapShown(false)
     }
@@ -1111,6 +1257,53 @@ class CarPlayHostActivity : ComponentActivity() {
                 sink?.setSurface(SCREEN_TYPE_ALT, surface)
             }
         }
+    }
+
+    /**
+     * Generic (Changan) path: the mirror TextureView's Surface binds CarPlay stream 110
+     * (whole-screen mirror) to the incall sink and STAYS bound - the mode switch only flips
+     * view visibility (ClusterMapPresentation.setMode), never this binding, so stream 110 is
+     * never re-activated and the head-unit does not announce on it.
+     */
+    private fun onClusterMirrorSurface(surface: Surface?) {
+        if (mirrorClusterSurface === surface) return
+        val old = mirrorClusterSurface
+        mirrorClusterSurface = surface
+        if (surface != null) {
+            sink?.setMirrorSurface(SCREEN_TYPE_MAIN, CLUSTER_MAIN_MIRROR, surface)
+        } else if (old != null) {
+            sink?.setMirrorSurface(SCREEN_TYPE_MAIN, CLUSTER_MAIN_MIRROR, null)
+        }
+    }
+
+    /**
+     * Generic (Changan) path: the nav TextureView's Surface binds CarPlay stream 111
+     * (navigation) to the incall sink and STAYS bound from first projection. Keeping 111
+     * permanently active is what stops the head-unit from announcing "全屏导航已开启" when the
+     * driver swipes into nav-only mode (incall announces on 111 stream (re-)activation events).
+     */
+    private fun onClusterNavSurface(surface: Surface?) {
+        if (navClusterSurface === surface) return
+        val old = navClusterSurface
+        navClusterSurface = surface
+        if (surface != null) {
+            sink?.setSurface(SCREEN_TYPE_ALT, surface)
+        } else if (old != null) {
+            sink?.clearSurface(SCREEN_TYPE_ALT, old)
+        }
+    }
+
+    /**
+     * Re-applies the saved left-rail crop / dashboard-picture-adjust transform to every live
+     * cluster TextureView. Called from the overlay settings listener so a slider change in the
+     * settings page takes effect on the dashboard immediately - without reconnecting (a
+     * reconnect would re-activate the 111 nav stream and make the head unit announce
+     * "全屏导航已开启"). No-op in nav-only mode (the nav stream is always full-screen).
+     */
+    private fun refreshClusterCrop() {
+        if (!AirPlayPersistence.loadClusterMapEnabled(this)) return
+        val presentations = (clusterLayers.values + listOfNotNull(clusterPresentation)).distinct()
+        presentations.forEach { runCatching { it.refreshCrop() } }
     }
 
     private fun clusterDisplayConfig(): AirPlayDisplayConfig? {
@@ -1273,7 +1466,12 @@ class CarPlayHostActivity : ComponentActivity() {
             MapMirrors.setStreamActive(false)
         }
         if (MapMirrors.onChanged === mirrorsChanged) MapMirrors.onChanged = null
-        dismissClusterPresentation()
+        // Do NOT call dismissClusterPresentation() here. On the generic (Chang'an) path both
+        // stream surfaces (110 mirror + 111 nav) stay bound to the incall sink while the cluster
+        // window lives; an explicit dismiss unbinds stream 111, and the next activity's rebuilt
+        // window re-attaches it, which re-activates 111 and makes the head unit announce
+        // "全屏导航已开启" (field report 10-08). The system dismisses the presentation when the
+        // activity is torn down anyway (setOnDismissListener clears the reference).
         mainHandler.removeCallbacks(applyDisplaySize)
         mainHandler.removeCallbacks(expireOldLogLines)
         mainHandler.removeCallbacks(pollConfiguration)
@@ -1284,6 +1482,9 @@ class CarPlayHostActivity : ComponentActivity() {
         }
         currentSurface = null
         currentSurfaceTexture = null
+        // The background session may outlive this activity (system reclaim); drop the hot-restart
+        // delegate so the settings page cannot invoke restartCarPlay() on a destroyed activity.
+        CarPlayBackgroundSession.setRestart(null)
         pictureBinding?.close()
         pictureBinding = null
         sessionLog?.append("Activity destroyed")
@@ -1978,6 +2179,7 @@ class CarPlayHostActivity : ComponentActivity() {
         AirPlayPersistence.saveRemoteMfiServer(this, remoteMfiServer)
         AirPlayPersistence.saveRemoteMfiToken(this, remoteMfiToken)
         AirPlayPersistence.saveWirelessHotspotMode(this, wirelessHotspotMode)
+        AirPlayPersistence.saveExistingWifiCredentials(this, existingWifiSsid, existingWifiPassphrase)
         AirPlayPersistence.saveManualHotspotSsid(this, manualHotspotSsid)
         AirPlayPersistence.saveManualHotspotPassphrase(this, manualHotspotPassphrase)
         AirPlayPersistence.saveManualHotspotBand(this, manualHotspotBand)
@@ -2819,6 +3021,7 @@ class CarPlayHostActivity : ComponentActivity() {
                 add(WirelessHotspotMode.WIFI_P2P to getString(R.string.wi_fi_p2p_5_ghz))
             }
             add(WirelessHotspotMode.MANUAL to getString(R.string.built_in_car_hotspot))
+            add(WirelessHotspotMode.EXISTING_WIFI to getString(R.string.existing_wifi_title))
         }
         var selectedId = View.NO_ID
         for ((mode, label) in modes) {
@@ -2969,11 +3172,29 @@ class CarPlayHostActivity : ComponentActivity() {
         )
         manualHotspotFields = manualFields
         manualHotspotErrorView = error
+        val existingFields = LinearLayout(this).apply {
+            orientation = LinearLayout.VERTICAL
+            addView(menuText(getString(R.string.existing_wifi_instructions), 14f, MENU_SECONDARY))
+            addView(settingsInputRow(getString(R.string.existing_wifi_ssid), existingWifiSsid) {
+                existingWifiSsid = it
+                existingWifiErrorView?.visibility = View.GONE
+            })
+            addView(settingsInputRow(getString(R.string.existing_wifi_password), existingWifiPassphrase, password = true) {
+                existingWifiPassphrase = it
+                existingWifiErrorView?.visibility = View.GONE
+            })
+        }
+        existingWifiErrorView = menuText("", 14f, MENU_DANGER).apply { visibility = View.GONE }
+        existingFields.addView(existingWifiErrorView)
+        section.addView(existingFields)
+        existingWifiFields = existingFields
         updateManualHotspotFields()
         return section
     }
 
     private fun updateManualHotspotFields() {
+        existingWifiFields?.visibility = if (wirelessHotspotMode == WirelessHotspotMode.EXISTING_WIFI) View.VISIBLE else View.GONE
+        existingWifiErrorView?.visibility = View.GONE
         val visible = wirelessHotspotMode == WirelessHotspotMode.MANUAL
         manualHotspotFields?.visibility = if (visible) View.VISIBLE else View.GONE
         if (!visible) manualHotspotErrorView?.visibility = View.GONE
@@ -3000,6 +3221,12 @@ class CarPlayHostActivity : ComponentActivity() {
     }
 
     private fun validateManualHotspotSettings(): Boolean {
+        if (wirelessHotspotMode == WirelessHotspotMode.EXISTING_WIFI) {
+            val error = com.shilapi.xcertplay.orchestration.ManualHotspotValidation.error(existingWifiSsid, existingWifiPassphrase)
+            existingWifiErrorView?.text = error?.let { getString(it.messageResource()) }.orEmpty()
+            existingWifiErrorView?.visibility = if (error == null) View.GONE else View.VISIBLE
+            return error == null
+        }
         if (wirelessHotspotMode != WirelessHotspotMode.MANUAL) return true
         val error = when {
             manualHotspotSsid.isBlank() -> getString(R.string.hotspot_ssid_is_required)
@@ -3028,6 +3255,7 @@ class CarPlayHostActivity : ComponentActivity() {
         WirelessHotspotMode.WIFI_P2P -> getString(R.string.wi_fi_p2p_5_ghz)
         WirelessHotspotMode.LOCAL_ONLY_HOTSPOT -> getString(R.string.localonlyhotspot)
         WirelessHotspotMode.MANUAL -> getString(R.string.manual_hotspot)
+        WirelessHotspotMode.EXISTING_WIFI -> getString(R.string.existing_wifi_title)
     }
 
     private fun menuText(
@@ -3540,10 +3768,159 @@ class CarPlayHostActivity : ComponentActivity() {
         )
 
     private fun maybeAutoStartCarAmap() {
+        // "自动飞屏" master switch: when unchecked, do NOT touch the stock car Amap at all.
+        if (!AirPlayPersistence.loadAutoFlyScreen(this)) {
+            appendLog("Auto fly: 未勾选“自动飞屏”，跳过自动启动车载高德")
+            return
+        }
         if (!AirPlayPersistence.loadAutoStartCarAmap(this)) return
         // Dashboard projection needs the stock Amap running; launch it in the background and
         // hand focus straight back to the CarPlay host. Debounced inside CarAmapLauncher.
         CarAmapLauncher.launchAndReturnTo(this, CarPlayHostActivity::class.java)
+    }
+
+    /**
+     * "连接后自动投屏": fired once per session from onSessionActive. Delays a couple of
+     * seconds so the head-unit's incall service and the projection display are ready, then
+     * projects to the dashboard with the content selected in "仪表盘内容" (loadClusterMirrorMain:
+     * whole-screen mirror or navigation stream). Honours the cluster projection master switch
+     * and never re-fires for the same session; a later three-finger swipe still works normally.
+     */
+    private fun maybeAutoProjectOnConnect() {
+        // "自动飞屏" master switch: when unchecked, no auto projection at all.
+        if (!AirPlayPersistence.loadAutoFlyScreen(this)) {
+            appendLog("Auto fly: 未勾选“自动飞屏”，跳过自动投屏")
+            return
+        }
+        if (!AirPlayPersistence.loadAutoProjectOnConnect(this)) return
+        if (!AirPlayPersistence.loadClusterMapEnabled(this)) {
+            appendLog("Auto project: 仪表盘投屏未启用，跳过自动投屏")
+            return
+        }
+        if (autoProjectTriggered) {
+            appendLog("Auto project: 本会话已自动投屏过，跳过")
+            return
+        }
+        autoProjectTriggered = true
+        val mirror = AirPlayPersistence.loadClusterMirrorMain(this)
+        appendLog("Auto project: 连接成功，5 秒后自动投屏 mirror=$mirror")
+        val token = autoProjectToken
+        mainHandler.postDelayed({
+            if (token != autoProjectToken) return@postDelayed
+            if (shuttingDown.get() || handshakeResetInProgress || isFinishing || isDestroyed) {
+                appendLog("Auto project: 取消（关闭/重连中）")
+                return@postDelayed
+            }
+            if (activeAirPlaySession == null) {
+                appendLog("Auto project: 取消（会话已断开）")
+                return@postDelayed
+            }
+            autoProjectTo(mirror, "auto")
+        }, 5000L)
+    }
+
+    /** Projects now at the given mode (0=whole mirror, 1=nav stream), reusing the swipe path. */
+    private fun autoProjectTo(mirror: Boolean, direction: String) {
+        // Re-check the "自动飞屏" master switch: the 5 s entry delay means the user may have
+        // toggled it off between the session-activation gate and this delayed execution.
+        if (!AirPlayPersistence.loadAutoFlyScreen(this)) {
+            appendLog("Auto project: 自动飞屏已取消勾选，取消自动投屏")
+            return
+        }
+        if (shuttingDown.get() || handshakeResetInProgress) {
+            appendLog("Auto project: skipped shuttingDown=${shuttingDown.get()} handshakeReset=$handshakeResetInProgress")
+            return
+        }
+        if (!AirPlayPersistence.loadClusterMapEnabled(this)) {
+            appendLog("Auto project: 仪表盘投屏未启用")
+            return
+        }
+        if (clusterSwipePosition == (if (mirror) 0 else 1) && clusterActivationAttempted) {
+            // Already in the requested mode this session: nothing to do.
+            appendLog("Auto project: 已在目标模式 mirror=$mirror，跳过")
+            return
+        }
+        clusterSwipePosition = if (mirror) 0 else 1
+        appendLog("Auto project: 请求仪表盘显示${if (mirror) "整机界面" else "导航流"} (pos=$clusterSwipePosition)")
+        if (!clusterActivationAttempted) {
+            // First projection of the session: run the UNI-V activation sequence.
+            appendLog("Auto project: 首次投屏，执行长安激活序列")
+            // Keep the pre-created quiet window: dismissing it tears the nav stream (111) out of
+            // the incall sink and the rebuilt window re-attaches it, which re-activates 111 and
+            // makes the head-unit announce "全屏导航已开启". Keeping the window leaves both 110/111
+            // resident across activation, so the announcement never fires (15:51 behavior).
+            tryActivateClusterProjection(mirror, direction, keepWindow = true)
+            // Robustness: verify afterwards and re-send the open sequence (keeping the window)
+            // until the dashboard is actually running. See scheduleAutoProjectVerify.
+            scheduleAutoProjectVerify(mirror, attempt = 1)
+        } else if (ClusterMapPresentation.findDisplay(this) != null) {
+            applyClusterMode(mirror, direction)
+        } else {
+            appendLog("Auto project: 无仪表投影 display，尝试激活")
+            tryActivateClusterProjection(mirror, direction)
+        }
+    }
+
+    /**
+     * Auto-project robustness check. The physical dashboard is invisible to the app, so we
+     * verify what IS observable: the cluster window being bound, and for whole-screen mirror
+     * also the 110 main stream being decoded. If either is missing we re-send the open
+     * activation sequence (keeping any existing window alive - no dismiss+recreate, no black
+     * flash) up to autoProjectMaxVerifyAttempts times. Nav-only mode cannot be verified by
+     * stream activity (111 only runs while the user is navigating), so a bound window counts
+     * as success there; the picture fills in the moment guidance starts on the iPhone.
+     */
+    private fun scheduleAutoProjectVerify(mirror: Boolean, attempt: Int) {
+        val token = autoProjectToken
+        mainHandler.postDelayed({
+            if (token != autoProjectToken) return@postDelayed
+            if (shuttingDown.get() || handshakeResetInProgress || isFinishing || isDestroyed) {
+                appendLog("Auto project: 激活验证取消（关闭/重连中）")
+                return@postDelayed
+            }
+            // The user may have unchecked "自动飞屏" while the retry chain was pending:
+            // stop re-sending the activation sequence once auto projection is disabled.
+            if (!AirPlayPersistence.loadAutoFlyScreen(this)) {
+                appendLog("Auto project: 激活验证取消（自动飞屏已取消勾选）")
+                return@postDelayed
+            }
+            if (activeAirPlaySession == null) {
+                appendLog("Auto project: 激活验证取消（会话已断开）")
+                return@postDelayed
+            }
+            val windowOk = clusterPresentation != null
+            val mirrorStreamOk = !mirror || activeScreenStreamTypes.contains(SCREEN_TYPE_MAIN)
+            if (windowOk && mirrorStreamOk) {
+                appendLog(
+                    "Auto project: 激活已生效（窗口就绪" +
+                        if (mirror) "，整机镜像流已激活）" else "，等待手机导航数据）",
+                )
+                return@postDelayed
+            }
+            if (attempt > autoProjectMaxVerifyAttempts) {
+                appendLog(
+                    "Auto project: 激活验证 $attempt 次仍未生效，停止重试" +
+                        "（可手动三指滑动重新激活）",
+                )
+                return@postDelayed
+            }
+            appendLog(
+                "Auto project: 激活未确认（窗口=$windowOk" +
+                    if (mirror) "，镜像流=${activeScreenStreamTypes.contains(SCREEN_TYPE_MAIN)}" else "" +
+                    "），重发激活序列（第 $attempt 次）",
+            )
+            // Mark the activation as NOT confirmed: the next manual swipe must re-run the open
+            // sequence (a hot-switch onto a session the head-unit ignored would stay blank).
+            // When verification succeeds the flag stays true (set by finishActivation), so
+            // later manual swipes take the quiet hot-switch path and incall does NOT re-announce
+            // "全屏镜像已开启" on every swipe (the voice is triggered by re-sending the full
+            // open sequence, which re-switches the head-unit's projection source).
+            clusterActivationAttempted = false
+            // Re-send the open sequence while keeping the window; finishActivation re-applies
+            // the mode (and creates the window if it was never bound).
+            tryActivateClusterProjection(mirror, "auto", keepWindow = true)
+            scheduleAutoProjectVerify(mirror, attempt + 1)
+        }, autoProjectVerifyDelayMs)
     }
 
     private fun createSessionListener(controllerGeneration: Int): AirPlaySessionListener =
@@ -3563,6 +3940,7 @@ class CarPlayHostActivity : ComponentActivity() {
                     if (menuOpen) return@runOnUiThread
                     appendLog("AirPlay session active")
                     maybeAutoStartCarAmap()
+                    maybeAutoProjectOnConnect()
                 }
             }
 
@@ -3570,10 +3948,28 @@ class CarPlayHostActivity : ComponentActivity() {
                 runOnUiThread {
                     if (activeAirPlaySession === session) activeAirPlaySession = null
                     CarPlayBackgroundSession.active = false
+                    // A new session is a new connection: allow auto-project to fire again after
+                    // any reconnect. restartCarPlay() also resets these, but some reconnect paths
+                    // early-return before that reset (handshakeReset/menuOpen), which would leave
+                    // autoProjectTriggered=true forever and silently disable auto-project on every
+                    // later reconnect. Resetting here covers all paths unconditionally. The swipe
+                    // position and activation flag are reset too: otherwise a reconnect while the
+                    // old position was 0/1 makes the next auto-project hit the "already in target
+                    // mode" branch and skip re-activation while the old window is dead (observed
+                    // as "reconnect stuck on nav stream only").
+                    autoProjectTriggered = false
+                    autoProjectToken = Any()
+                    clusterSwipePosition = -1
+                    clusterActivationAttempted = false
+                    // Clear the stream set unconditionally too: the "already streaming" check
+                    // (clusterStreamActive) must never inherit types from the ended session. If
+                    // the clear happened only after the menuOpen early-return, a session that
+                    // ended while the settings menu was open would leave stale stream types,
+                    // making a later nav-only projection think 111 was already active.
+                    activeScreenStreamTypes.clear()
                     if (menuOpen || controllerGeneration != restartGeneration) {
                         return@runOnUiThread
                     }
-                    activeScreenStreamTypes.clear()
                     setConnectionStage(getString(R.string.carplay_session_ended_reconnecting))
                     appendLog("AirPlay session ended; reconnecting from scratch")
                     reconnectAfterLoss("AirPlay session ended")
@@ -3582,10 +3978,13 @@ class CarPlayHostActivity : ComponentActivity() {
 
             override fun onTransportError(message: String) {
                 runOnUiThread {
+                    // Clear the stream set unconditionally (same reason as onSessionEnded):
+                    // a transport error while the settings menu is open must not leave stale
+                    // stream types for the next session.
+                    activeScreenStreamTypes.clear()
                     if (menuOpen || controllerGeneration != restartGeneration) {
                         return@runOnUiThread
                     }
-                    activeScreenStreamTypes.clear()
                     setConnectionStage(getString(R.string.transport_error_reconnecting))
                     appendLog("CarPlay transport error: $message; reconnecting from scratch")
                     reconnectAfterLoss("CarPlay transport error: $message")
@@ -3751,12 +4150,19 @@ class CarPlayHostActivity : ComponentActivity() {
         // Same mode decision as attachSurface: a reconnect must keep the dashboard on the
         // user-selected mode. Binding the cluster surface unconditionally to the navigation
         // stream here overwrote the mirror binding and froze the dashboard to nav-only.
-        clusterSurface?.let { surface ->
-            if (AirPlayPersistence.loadClusterMirrorMain(this)) {
-                renderer.setMirrorSurface(SCREEN_TYPE_MAIN, CLUSTER_MAIN_MIRROR, surface)
-            } else {
-                renderer.setSurface(SCREEN_TYPE_ALT, surface)
+        if (DiLink51ClusterLayout.supported()) {
+            clusterSurface?.let { surface ->
+                if (AirPlayPersistence.loadClusterMirrorMain(this)) {
+                    renderer.setMirrorSurface(SCREEN_TYPE_MAIN, CLUSTER_MAIN_MIRROR, surface)
+                } else {
+                    renderer.setSurface(SCREEN_TYPE_ALT, surface)
+                }
             }
+        } else {
+            // Generic path: re-bind BOTH resident surfaces so 110 and 111 stay active in incall
+            // (this is what suppresses the "全屏导航已开启" announcement on mode switches).
+            mirrorClusterSurface?.let { renderer.setMirrorSurface(SCREEN_TYPE_MAIN, CLUSTER_MAIN_MIRROR, it) }
+            navClusterSurface?.let { renderer.setSurface(SCREEN_TYPE_ALT, it) }
         }
         MapMirrors.reapply()
         val media = createMediaEngine(renderer)
@@ -3793,6 +4199,16 @@ class CarPlayHostActivity : ComponentActivity() {
             runOnUiThread {
                 shutdown(terminateProcess = false, reason = "DiPlay disconnect", completion = completion)
                 finish()
+            }
+        }
+        // In-place hot restart for cluster settings changes: keep the projection window and
+        // both resident stream surfaces (110/111), so the head unit never re-announces
+        // "全屏导航已开启" when a setting is applied (restartCarPlay does not dismiss the window).
+        CarPlayBackgroundSession.setRestart {
+            runOnUiThread {
+                if (!shuttingDown.get() && !menuOpen && !handshakeResetInProgress) {
+                    restartCarPlay("Cluster settings changed")
+                }
             }
         }
         try {
@@ -3997,7 +4413,12 @@ class CarPlayHostActivity : ComponentActivity() {
         val delayMillis = if (reason.contains("AirPlay iAP tunnel", ignoreCase = true)) {
             IAP_TUNNEL_RECONNECT_DELAY_MILLIS
         } else {
-            (RECONNECT_DELAY_MILLIS * (1L shl reconnectAttempts.coerceAtMost(4))).coerceAtMost(30_000L)
+            // Cold-start field logs show the iPhone's iAP2 RFCOMM service takes ~15-20 s to
+            // register after power-up: an 8 s connect timeout fails fast, then a short backoff
+            // (2 s, then 4 s, capped at 8 s) retries densely so the session lands on the warmed-up
+            // stack within a couple of seconds of it becoming ready, instead of stalling on a
+            // 16-30 s gap.
+            (RECONNECT_DELAY_MILLIS * (1L shl reconnectAttempts.coerceAtMost(1))).coerceAtMost(8_000L)
         }
         reconnectAttempts += 1
         appendLog("$reason; retrying in ${delayMillis}ms")
@@ -4022,12 +4443,17 @@ class CarPlayHostActivity : ComponentActivity() {
     private fun restartCarPlay(reason: String) {
         if (!CarPlayBackgroundSession.isOwner(this) && CarPlayBackgroundSession.hasSession()) return
         if (shuttingDown.get() || menuOpen || handshakeResetInProgress) return
-        // A full restart tears down the CarPlay stack: reset the dashboard swipe state and
-        // dismiss the old cluster window (it was bound to the old sink). The new session's
-        // stream callbacks rebuild a fresh quiet window; without this, three-finger swipes
-        // after a reconnect can be stuck at an old position or target a dead window.
+        // A full restart tears down the CarPlay stack but MUST keep the cluster projection
+        // window: on the generic (Chang'an) path both stream surfaces (110 mirror + 111 nav)
+        // stay bound to the incall sink while the window lives, and the rebuilt session's
+        // attachSurface() re-binds them to the new decoder. Dismissing the window here would
+        // unbind stream 111; the rebuilt window re-attaches it, which re-activates 111 and
+        // makes the head unit announce "全屏导航已开启" on every reconnect (field report
+        // 10-08). The swipe position and activation flags are still reset below.
         clusterSwipePosition = -1
-        if (clusterPresentation != null) dismissClusterPresentation()
+        clusterActivationAttempted = false
+        autoProjectTriggered = false
+        autoProjectToken = Any()   // cancel any pending auto-project delayed task
         val size = activeDisplaySize
             ?: CarPlayBackgroundSession.snapshot()?.let { DisplaySize(it.width, it.height) }
             ?: run {
@@ -4155,12 +4581,18 @@ class CarPlayHostActivity : ComponentActivity() {
     private fun attachSurface(surface: Surface) {
         sink?.setSurface(SCREEN_TYPE_MAIN, surface)
         if (AirPlayPersistence.loadClusterMapEnabled(this)) {
-            clusterSurface?.let {
-                if (AirPlayPersistence.loadClusterMirrorMain(this)) {
-                    sink?.setMirrorSurface(SCREEN_TYPE_MAIN, CLUSTER_MAIN_MIRROR, it)
-                } else {
-                    sink?.setSurface(SCREEN_TYPE_ALT, it)
+            if (DiLink51ClusterLayout.supported()) {
+                clusterSurface?.let {
+                    if (AirPlayPersistence.loadClusterMirrorMain(this)) {
+                        sink?.setMirrorSurface(SCREEN_TYPE_MAIN, CLUSTER_MAIN_MIRROR, it)
+                    } else {
+                        sink?.setSurface(SCREEN_TYPE_ALT, it)
+                    }
                 }
+            } else {
+                // Generic path: keep both resident surfaces bound (mirror 110 + nav 111).
+                mirrorClusterSurface?.let { sink?.setMirrorSurface(SCREEN_TYPE_MAIN, CLUSTER_MAIN_MIRROR, it) }
+                navClusterSurface?.let { sink?.setSurface(SCREEN_TYPE_ALT, it) }
             }
         } else {
             sink?.setSurface(SCREEN_TYPE_ALT, surface)
@@ -4462,22 +4894,52 @@ class CarPlayHostActivity : ComponentActivity() {
         if (nextPos == -1) {
             // Back at "not projected": hide the dashboard window (keep it alive so the next
             // swipe can show it instantly) instead of leaving it visible.
+            // NOTE: we intentionally do NOT send the InCallClusterBridge.closeProjection()
+            // sequence here. Field testing showed that the close sequence (10116/10117
+            // op/status 2,2 + 0,1 + tx21[1,1]/tx8[3,0]/tx1[1] + tx30) tears down the head-unit's
+            // projection session: every later openProjection() is then ignored by the head-unit
+            // (dashboard stays blank even though our window is up) and the steering-wheel
+            // projection button is also disabled until the head-unit restarts. The UNI-V box
+            // behaves the same way — its RIGHT swipe only stops the presentation window and never
+            // touches the incall session — so repeated left/right swipes keep working. We mirror
+            // that: hide the window, keep the session, and re-run the open sequence on the next
+            // first-left-swipe.
             clusterPresentation?.setMapVisible(false)
             appendLog("Cluster swipe $direction: 关闭仪表盘投屏 (pos=-1)")
+            // Keep clusterActivationAttempted=true: the session, window and decoder surface are
+            // all still alive (we only hid the window), so the next left swipe takes the quiet
+            // hot-switch path (show window + rebind stream). Re-setting this flag made the next
+            // swipe re-run the full open sequence, which makes incall re-switch its projection
+            // source and announce "全屏镜像/导航已开启" every time the driver closes and reopens
+            // the dashboard projection (field report: the voice came and went with close/reopen).
             return
         }
         // pos 0 = whole-screen mirror, pos 1 = navigation stream only.
         val mirror = nextPos == 0
         appendLog("Cluster swipe $direction: 请求仪表盘显示${if (mirror) "整机界面" else "导航流"} (pos=$nextPos)")
-                if (ClusterMapPresentation.findDisplay(this) != null) {
+        if (direction != "auto" && nextPos >= 0) {
+            if (clusterActivationAttempted && ClusterMapPresentation.findDisplay(this) != null) {
+                // Activation was confirmed for this session (window bound AND the verify pass
+                // saw the expected stream): take the quiet hot-switch path. Re-sending the full
+                // open sequence here would make incall re-switch its projection source and
+                // announce "全屏镜像已开启" on every swipe (this was the 12:09 regression - the
+                // always-resend branch). Only the first projection (or an unconfirmed activation,
+                // e.g. the head-unit ignored auto-project) re-runs the sequence.
+                appendLog("Cluster swipe $direction: 已激活，热切换 (pos=$nextPos)")
+                applyClusterMode(mirror, direction)
+            } else {
+                // First projection of the session, or the previous activation was not confirmed
+                // (verify pass failed -> clusterActivationAttempted reset): re-run the open
+                // sequence while keeping the window alive (no dismiss+recreate, no black flash).
+                appendLog("Cluster swipe $direction: 手动投屏，重发激活序列 (pos=$nextPos)")
+                tryActivateClusterProjection(mirror, direction, keepWindow = true)
+            }
+        } else if (ClusterMapPresentation.findDisplay(this) != null) {
             applyClusterMode(mirror, direction)
         } else {
-            // No projection display: the dashboard projection mode is not active. The stock
-            // Amap (or a previous successful session) used to be the only way to activate it.
-            // Now we try the Chang'an instrument-cluster SDK directly (the same service the
-            // FengQing box talks to): sendNavigateStatus(1) tells the head-unit "navigation
-            // running", which registers the dashboard display - no stock Amap needed.
-            appendLog("Cluster swipe $direction: 仪表盘未投屏，尝试激活仪表投影 (pos=$nextPos)")
+            // No projection display at all: the head-unit never registered one. Activate and
+            // retry findDisplay a few times in case it registers asynchronously.
+            appendLog("Cluster swipe $direction: 无仪表投影 display，尝试激活 (pos=$nextPos)")
             tryActivateClusterProjection(mirror, direction)
         }
     }
@@ -4486,13 +4948,30 @@ class CarPlayHostActivity : ComponentActivity() {
     private fun applyClusterMode(mirror: Boolean, direction: String) {
         // Persist the mode only when the dashboard projection is actually available.
         AirPlayPersistence.saveClusterMirrorMain(this, mirror)
-        // Hot switch: reuse the existing cluster window and rebind the stream to the new
-        // mode. Never dismiss+recreate - dismiss is asynchronous and the recreated window
-        // can be hidden behind the old one or wait for a new IDR frame (black screen).
+        if (mirror) {
+            // Whole-screen mirror: nothing to arm - the overview toggle belongs to the
+            // nav-only mode, and tapping it here would flip the console Amap into overview.
+            // NOTE: the previous code sent EXTRA_CROSS_MAP=0 (10019 broadcast) when returning
+            // to whole-screen mirror so the 111 stream would come back detailed. Field feedback:
+            // this 10019 broadcast is exactly what makes the head-unit announce "全屏镜像已开启"
+            // (the incall service announces on projection-source switches), and it does nothing
+            // for the iPhone-side Amap anyway (protocol-level CROSS_MAP is consumed by incall
+            // only, not by iOS Amap). Removed to kill the voice announcement; the nav-only
+            // detail mode is now left to the driver tapping 全览 on the console Amap manually.
+            appendLog("Cluster swipe $direction: 整机镜像（已停用 EXTRA_CROSS_MAP=0 以消除全屏镜像语音提示）")
+        }
+        // Hot switch: reuse the existing cluster window. Generic path: both streams (110 mirror
+        // + 111 nav) are permanently resident in the sink, so the switch only flips view
+        // visibility (no stream re-activation -> no "全屏导航已开启" announcement). DiLink 5.1
+        // single-TextureView path keeps the old rebind-and-switch behaviour.
         if (clusterPresentation == null) ensureClusterWindowQuiet()
         clusterPresentation?.let { p ->
             p.setMapVisible(true)
-            p.outputSurface?.let { s -> onClusterSurface(s, force = true) }
+            if (DiLink51ClusterLayout.supported()) {
+                p.mirrorOutputSurface?.let { s -> onClusterSurface(s, force = true) }
+            } else {
+                p.setMode(mirror)
+            }
             p.setStreamActive(clusterStreamActive())
             if (!mirror && !clusterStreamActive()) {
                 // Navigation stream (111) has no frames yet: iPhone is not navigating.
@@ -4504,11 +4983,9 @@ class CarPlayHostActivity : ComponentActivity() {
                     Toast.LENGTH_SHORT,
                 ).show()
             } else if (!mirror) {
-                // Amap guidance is active on the console: auto-tap its
-                // fullscreen/overview toggle so the dashboard shows the detailed follow
-                // map (which it keeps even after the console leaves Amap). Same behaviour
-                // as the FengQing box's "navigation stream" mode.
-                scheduleMainScreenFullscreenToggle()
+                // Nav-only mode. The automatic overview tap is removed (driver taps 全览 on
+                // the console Amap themselves when they want the detailed follow map).
+                appendLog("Cluster swipe $direction: 已切换为导航流，等待手机导航数据...")
             }
         }
         Toast.makeText(
@@ -4516,26 +4993,90 @@ class CarPlayHostActivity : ComponentActivity() {
             "仪表盘已切换为${if (mirror) "整机界面" else "导航流"}",
             Toast.LENGTH_SHORT,
         ).show()
+        // Re-apply the dashboard transform so the whole-screen mirror left-rail crop
+        // (and the manual target frame) take effect for the newly selected stream.
+        if (!shuttingDown.get()) {
+            val presentation = clusterPresentation
+            if (presentation != null) {
+                // Diagnostics: record the exact crop inputs so a later export can tell whether
+                // the crop was applied with the right values or silently skipped.
+                appendLog(
+                    "Cluster crop applied: mirror=$mirror leftCropPx=" +
+                        AirPlayPersistence.loadClusterMirrorLeftCropPx(this) +
+                        " rect=(" + AirPlayPersistence.loadClusterCropLeftPercent(this) + "," +
+                        AirPlayPersistence.loadClusterCropTopPercent(this) + "," +
+                        AirPlayPersistence.loadClusterCropWidthPercent(this) + "," +
+                        AirPlayPersistence.loadClusterCropHeightPercent(this) + ")",
+                )
+                runCatching { presentation.refreshCrop() }
+            } else {
+                appendLog("Cluster crop skipped: 窗口不存在 (mirror=$mirror)")
+            }
+        }
     }
 
     // Best-effort cold-start activation of the dashboard projection via the Chang'an
-    // instrument-cluster SDK; retries findDisplay a few times in case the display
-    // registers asynchronously.
-    private fun tryActivateClusterProjection(mirror: Boolean, direction: String) {
-        val sdkAvailable = InCallClusterSdk.isAvailable()
-        appendLog(
-            "Cluster activation: InCallClusterSdk available=$sdkAvailable",
-        )
-        if (sdkAvailable) {
-            val sent = InCallClusterSdk.sendNavigateStatus(1)
-            appendLog("Cluster activation: sendNavigateStatus(1) sent=$sent")
+    // instrument-cluster bridge (full UNI-V sequence: bind DoubleInteractiveService +
+    // AUTONAVI 10019/10116/10117 broadcasts + tx21/8/1/2 + CarProperty). Retries
+    // findDisplay a few times in case the display registers asynchronously.
+    private fun tryActivateClusterProjection(mirror: Boolean, direction: String, keepWindow: Boolean = false) {
+        // Drop any window that was created on the pre-activation display: until the head-unit
+        // switches to projection mode that display shows nothing on the physical dashboard, and
+        // keeping the old window would let later hot-swaps reuse it instead of the activated one.
+        // Manual swipes pass keepWindow=true so the window survives (no black flash) while the
+        // activation sequence is re-sent - re-arming an incall session that auto-project may
+        // have fired before the stock Amap was ready.
+        if (!keepWindow && clusterPresentation != null) {
+            appendLog("Cluster activation: 丢弃激活前的旧投影窗口 (recreate after activation)")
+            dismissClusterPresentation()
         }
-        // Give the head-unit a moment to register the dashboard display, then retry.
+        val bridgeAvailable = InCallClusterBridge.isAvailable(this)
+        appendLog(
+            "Cluster activation: bridgeAvailable=$bridgeAvailable",
+        )
+        // Full UNI-V open sequence — the ONLY activation signal. The earlier experiment
+        // that also fired InCallClusterSdk.sendNavigateStatus(1) (tx22 on the same
+        // IDouInteractiveManager binder) was removed: the box sends only the InstrumentBridge
+        // sequence on activation, and two concurrent sequences on one binder can confuse the
+        // head-unit's projection state machine.
+        if (bridgeAvailable) {
+            appendLog("Cluster activation: InCallClusterBridge.openProjection()")
+            InCallClusterBridge.openProjection(this)
+            // NOTE: a previous attempt to suppress the incall "全屏镜像已开启" voice by sending
+            // InCallClusterSdk.sendNavigateStatus(1) (tx22) ~8 s after the open sequence was
+            // REVERTED after field testing: tx22 switches the head-unit out of the whole-screen
+            // mirror projection source into its navigation-projection mode, which loses the
+            // display mapping established by the open sequence — the dashboard goes blank a few
+            // seconds after projection (and after every re-projection), even though our stream
+            // keeps decoding. The old tx22-only activation worked because it was a cold start;
+            // after the open sequence it is a harmful source switch. The voice stays for now;
+            // removing it requires finding the incall announcement toggle rather than a mode
+            // switch.
+        }
+        // The UNI-V open sequence itself takes ~1.5 s (delays 80..7600 ms + source ladder
+        // 250..3500 ms), so wait longer than the previous 800 ms before looking for the display.
+        finishActivation(mirror, direction, attempt = 1)
+    }
+
+    private fun finishActivation(mirror: Boolean, direction: String, attempt: Int) {
         mainHandler.postDelayed({
             if (shuttingDown.get() || handshakeResetInProgress) return@postDelayed
-            if (ClusterMapPresentation.findDisplay(this) != null) {
-                appendLog("Cluster activation: 仪表投影已激活，继续投屏 (mirror=$mirror)")
+            val display = ClusterMapPresentation.findDisplay(this)
+            if (display != null) {
+                clusterActivationAttempted = true
+                // NOTE: the projection display is registered before activation on the UNI-V, so
+                // finding it does NOT prove the head-unit switched to projection mode (the physical
+                // dashboard may still be blank). This log line only means "window bound; activation
+                // sequence was sent". Whether the incall session accepted it is visible only on the
+                // dashboard itself or via the head-unit's own logs.
+                appendLog(
+                    "Cluster activation: 投影窗口已绑定 display=${display.displayId} " +
+                        "(激活序列已发送，incall 是否接受需看仪表盘实际画面) mirror=$mirror",
+                )
                 applyClusterMode(mirror, direction)
+            } else if (attempt < 3) {
+                appendLog("Cluster activation: 激活后未找到仪表投影 display，重试 $attempt")
+                finishActivation(mirror, direction, attempt + 1)
             } else {
                 appendLog("Cluster activation: 激活后仍未找到仪表投影 display")
                 Toast.makeText(
@@ -4544,41 +5085,16 @@ class CarPlayHostActivity : ComponentActivity() {
                     Toast.LENGTH_SHORT,
                 ).show()
             }
-        }, 800L)
+        }, 1600L)
     }
 
-    // Normalized position of Amap CarPlay's fullscreen/overview toggle button (top-right of the
-    // console map, 1920x720 coordinates). Tapping it flips the console to overview, which makes
-    // Amap render the detailed follow map on the 111 dashboard stream; the dashboard keeps that
-    // detailed mode even after the console leaves Amap (user-verified). This reproduces the
-    // FengQing box's "navigation stream" behaviour. The position is a best guess: tune the
-    // constants if the tap misses the button.
-    private fun scheduleMainScreenFullscreenToggle() {
-        val x = MAIN_SCREEN_FULLSCREEN_BUTTON_X
-        val y = MAIN_SCREEN_FULLSCREEN_BUTTON_Y
-        appendLog("Scheduling Amap fullscreen toggle: wake tap then button tap at ($x,$y)")
-        mainHandler.postDelayed({
-            if (shuttingDown.get() || handshakeResetInProgress) return@postDelayed
-            // Wake the console UI first: CarPlay overlays auto-hide after a few seconds, and
-            // the fullscreen/overview button only exists while the overlay is up. A light tap
-            // on the map centre brings the overlay back with no side effects.
-            val wake = controller?.sendTouch(listOf(AirPlayContact(id = 0, x = 0.5, y = 0.5, down = true))) ?: false
-            mainHandler.postDelayed({
-                val wakeUp = controller?.sendTouch(listOf(AirPlayContact(id = 0, x = 0.5, y = 0.5, down = false))) ?: false
-                appendLog("Amap fullscreen toggle: wake tap sent down=$wake up=$wakeUp")
-                // Overlay is up now: tap the fullscreen/overview button.
-                mainHandler.postDelayed({
-                    if (shuttingDown.get() || handshakeResetInProgress) return@postDelayed
-                    val down = controller?.sendTouch(listOf(AirPlayContact(id = 0, x = x, y = y, down = true))) ?: false
-                    mainHandler.postDelayed({
-                        val up = controller?.sendTouch(listOf(AirPlayContact(id = 0, x = x, y = y, down = false))) ?: false
-                        appendLog("Amap fullscreen toggle tap sent down=$down up=$up at ($x,$y)")
-                    }, 80L)
-                }, 350L)
-            }, 100L)
-        }, 700L)
-    }
-
+    // Normalized position of Amap CarPlay's "全览" (overview) toggle button, bottom of the
+    // console map's right-hand button column. Tapping it flips the console to overview, which
+    // makes Amap render the detailed follow map on the 111 dashboard stream; the dashboard
+    // keeps that detailed mode even after the console leaves Amap (user-verified). This
+    // reproduces the UNI-V box's "navigation stream" behaviour.
+    // NOTE: the automatic overview tap is removed together with the "仪表盘显示详细地图"
+    // feature - the driver taps 全览 on the console Amap manually now.
     private fun onScreenStreamStateChanged(generation: Int, type: Int, active: Boolean) {
         runOnUiThread {
             if (shuttingDown.get() || generation != restartGeneration) return@runOnUiThread
@@ -4718,9 +5234,12 @@ class CarPlayHostActivity : ComponentActivity() {
         CarPlayStatus.WaitingForMfi -> getString(R.string.waiting_for_mfi_coprocessor)
         CarPlayStatus.RequestingMfiPermission -> getString(R.string.requesting_mfi_usb_permission)
         CarPlayStatus.MfiReady -> getString(R.string.mfi_authentication_ready)
-        CarPlayStatus.StartingHotspot -> getString(R.string.starting_wireless_hotspot)
+        CarPlayStatus.StartingHotspot -> getString(if (wirelessHotspotMode == WirelessHotspotMode.EXISTING_WIFI)
+            R.string.existing_wifi_attaching else R.string.starting_wireless_hotspot)
         is CarPlayStatus.HotspotReady ->
-            getString(R.string.status_hotspot_ready, backend, ssid, band, if (channel == 0) getString(R.string.auto_value) else channel.toString())
+            if (wirelessHotspotMode == WirelessHotspotMode.EXISTING_WIFI) {
+                getString(R.string.existing_wifi_ready, ssid, band, channel, address)
+            } else getString(R.string.status_hotspot_ready, backend, ssid, band, if (channel == 0) getString(R.string.auto_value) else channel.toString())
         CarPlayStatus.WaitingForPairedIphone -> getString(R.string.waiting_for_paired_iphone)
         CarPlayStatus.ConnectingBluetooth -> getString(R.string.connecting_bluetooth)
         CarPlayStatus.RunningWireless -> getString(R.string.wireless_carplay_control_running)
@@ -4769,9 +5288,7 @@ class CarPlayHostActivity : ComponentActivity() {
         // Normalized (0..1 of the 1920x720 main screen) position of Amap CarPlay's
         // fullscreen/overview toggle button, top-right of the console map. Auto-tapped when
         // the three-finger swipe switches the dashboard to the navigation stream, so Amap
-        // renders the detailed follow map there (FengQing-box behaviour).
-        const val MAIN_SCREEN_FULLSCREEN_BUTTON_X = 0.90
-        const val MAIN_SCREEN_FULLSCREEN_BUTTON_Y = 0.10
+        // renders the detailed follow map there (UNI-V-box behaviour).
         const val MAX_SETTINGS_MENU_WIDTH_PX = 1200
         val MENU_BACKGROUND = Color.rgb(12, 16, 19)
         val MENU_SECONDARY = Color.rgb(170, 180, 190)
@@ -4809,11 +5326,26 @@ internal data class CarPlaySessionDisplay(
 internal object CarPlayBackgroundSession {
     @Volatile var active = false
     private var stopAction: (((() -> Unit)) -> Unit)? = null
+    private var restartAction: (() -> Unit)? = null
     private var stopping = false
     private var owner: Any? = null
     @Synchronized fun isOwner(candidate: Any): Boolean = owner === candidate
     @Synchronized fun hasSession(): Boolean = stopAction != null || stopping
     private val stopWaiters = mutableListOf<() -> Unit>()
+
+    /**
+     * Hot-restarts the running session in place (keeps the cluster projection window alive),
+     * used by the settings page so a cluster settings change re-applies without tearing down
+     * the activity - which would dismiss the window and re-activate stream 111, making the
+     * head unit announce "全屏导航已开启" (field report 10-08).
+     */
+    @Synchronized fun restartCarPlay() {
+        restartAction?.invoke()
+    }
+
+    @Synchronized fun setRestart(action: (() -> Unit)?) {
+        restartAction = action
+    }
 
     fun stop(completion: () -> Unit = {}) {
         val action: (((() -> Unit)) -> Unit)?
@@ -4871,6 +5403,7 @@ internal object CarPlayBackgroundSession {
         if (expected != null && controller !== expected) return
         controller = null
         sink = null
+        restartAction = null
         if (!keepOwner) { stopAction = null; owner = null }
         active = false
         width = 0

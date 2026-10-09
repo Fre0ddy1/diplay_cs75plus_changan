@@ -14,6 +14,12 @@
     <uses-permission android:name="android.permission.SYSTEM_ALERT_WINDOW" />
     <!-- Optional, owner-enabled Usage Access for the verified DiLink 5.1 cluster profile. -->
     <uses-permission android:name="android.permission.PACKAGE_USAGE_STATS" tools:ignore="ProtectedPermissions" />
+    <!-- Chang'an instrument-cluster vendor extension (UNI-V box declares the same): needed
+         for CarPropertyManager.setIntProperty on the UNI-V head-unit. Signature-protected on
+         stock Android; harmless if the ROM rejects it. -->
+    <uses-permission
+        android:name="android.car.permission.CAR_VENDOR_EXTENSION"
+        tools:ignore="ProtectedPermissions" />
     <!-- The centre card also follows whichever launcher is the default home. -->
     <queries>
         <package android:name="com.byd.carsettings" />

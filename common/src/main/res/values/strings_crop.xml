@@ -9,4 +9,12 @@
     <string name="cluster_crop_height">Frame height</string>
     <string name="cluster_crop_reset">重置</string>
     <string name="cluster_crop_done">完成</string>
+    <string name="auto_fly_screen">自动飞屏</string>
+    <string name="auto_fly_screen_desc">勾选后连接成功进入 CarPlay 界面时自动投屏（内容跟随“仪表盘内容”设置），并按“自动启动车载高德”处理车机高德；不勾选则完全不自动投屏、也不处理车载高德，手动三指滑动不受影响。</string>
+    <string name="auto_project_on_connect">连接后自动投屏</string>
+    <string name="auto_project_on_connect_desc">CarPlay 连接成功后自动投屏到仪表盘，无需三指滑动；投屏内容跟随“仪表盘内容”（整机界面/导航流）设置。</string>
+    <string name="oem_label_home">车辆图标名称（OEM 标签）</string>
+    <string name="cluster_mirror_left_crop">整机镜像左侧裁剪</string>
+    <string name="cluster_mirror_left_crop_format">%1$d px</string>
+    <string name="cluster_no_display_hint">未检测到仪表盘投影显示（模拟器或未连接车机时不可见），以下设置仍可预先配置，车机连接后自动生效。</string>
 </resources>

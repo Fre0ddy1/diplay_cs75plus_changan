@@ -72,6 +72,8 @@
 
 * **Wi-Fi Direct 连接**：支持 Android 9 legacy P2P 组（DIRECT-xx）连接方式
 
+* **现有 Wi-Fi / 同局域网连接**：不创建热点，直接复用车机已连接的现有 Wi-Fi（如路由器 / 随身 Wi-Fi）。设置中切换 "现有 Wi-Fi" 模式并填写外部 Wi-Fi 的 SSID 与 WPA2 密码（开放网络可留空）后，车机与 iPhone 保持同一网络即可建立 CarPlay；要求路由为 WPA2 或 WPA2/WPA3 混合模式并关闭客户端隔离
+
 ### 连接稳定性修复
 
 
@@ -98,7 +100,7 @@
 
 
 
-* 当前版本：**v0.2.13-hud-test**（versionName `0.2.13-hud-test`，versionCode 32，debug 签名，包名 `com.shihab.diplay.hudtest`）
+* 当前版本：**v0.2.14-hud-test**（versionName `0.2.14-hud-test`，versionCode 33，debug 签名，包名 `com.shihab.diplay.hudtest`）
 
 * Release 页提供编译好的 APK（`dica.apk`），可直接覆盖安装
 

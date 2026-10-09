@@ -8,6 +8,7 @@ import android.graphics.Paint
 import android.graphics.LinearGradient
 import android.graphics.Shader
 import android.graphics.Matrix
+import android.graphics.Rect
 import android.graphics.SurfaceTexture
 import android.graphics.drawable.ColorDrawable
 import android.view.WindowManager
@@ -26,6 +27,7 @@ import android.widget.FrameLayout
 import android.widget.TextView
 import com.shilapi.xcertplay.airplay.CarPlayClusterDisplay
 import com.shilapi.xcertplay.host.R
+import com.shilapi.xcertplay.hud.BydLaneGuidance
 import com.shilapi.xcertplay.hud.ClusterTurnGuidance
 
 /**
@@ -39,28 +41,74 @@ internal class ClusterMapPresentation(
     context: Context,
     display: Display,
     private val theme: DiLink51ClusterLayout.Theme = DiLink51ClusterLayout.theme(context),
-    private val onSurface: (Surface?) -> Unit,
+    private val onMirrorSurface: (Surface?) -> Unit,
+    private val onNavSurface: (Surface?) -> Unit,
+    private val navOnlyCards: Boolean = false,
 ) : Presentation(context, display) {
     private var waitingLabel: TextView? = null
     private var turnCardView: ClusterTurnCardView? = null
+    private var etaCardView: ClusterEtaCardView? = null
+    private var laneCardView: ClusterLaneGuidanceView? = null
+    private var roadNameCardView: ClusterRoadNameView? = null
+    private var exitBadgeView: ClusterExitBadgeView? = null
     private var genericTextureView: TextureView? = null
+    private var navTextureView: TextureView? = null
     private val projectionSize: Point = sizeOf(display)
-    var outputSurface: Surface? = null
+    var mirrorOutputSurface: Surface? = null
         private set
+    var navOutputSurface: Surface? = null
+        private set
+
+    // Nav-only card group state. When navOnlyCards is true (Chang'an generic path) the turn,
+    // ETA and lane cards are visible ONLY in nav-only mode: whole-screen mirror shows the raw
+    // cropped mirror, no cards. DiLink 5.1 keeps the upstream behavior (turn card follows the
+    // "dashboard shows" content setting, no ETA/lane cards).
+    private var mirrorMode = true
+    private var lastTurnGuidance: ClusterTurnGuidance? = null
+    private var lastEtaGuidance: ClusterTurnGuidance? = null
+    private var lastLaneGuidance: BydLaneGuidance? = null
+    private var lastRoadNameGuidance: ClusterTurnGuidance? = null
+    private var lastExitGuidance: ClusterTurnGuidance? = null
+
+    // Per-frame cost killers: card show/hide switches and the fronted-card set are cached.
+    // applyCardsVisibility runs on every guidance tick (per second); reading SharedPreferences
+    // or calling bringToFront() there would requestLayout/re-read the disk every frame.
+    private var cardVisibleCache: Map<String, Boolean>? = null
+    private var turnCardVisibleCache = true
+    private var frontedCards: List<View> = emptyList()
 
     /**
      * Re-applies the saved dashboard target rectangle to the generic TextureView without
      * destroying/recreating the window or its decoder surface. Called by the host when the
      * "dashboard picture adjust" panel closes; a no-op on the DiLink 5.1 layout path.
      *
-     * The rectangle (left/top/width/height in percent of the panel) is a target frame on the
-     * dashboard: the *whole* stream is scaled to fit inside it, preserving the aspect ratio
-     * and centring it, rather than cropping a zoomed window of the source picture.
+     * Order of operations (driver requirement, 10-08):
+     * 1. CROP the whole-mirror source first: the left rail (CarPlay dock, ~14%) is removed
+     *    from the SOURCE coordinates, so the rail is gone from the picture entirely.
+     * 2. Then APPLY the dashboard picture adjust rect: the cropped picture is scaled
+     *    (aspect-preserving) to FIT inside the target rect, centred on it. Fit - not fill -
+     *    so every slider move shrinks/grows the picture around its centre instead of sliding
+     *    it or cropping its edges (field report 10-08 18:2x: fill made the height slider read
+     *    as "the picture is dragged upward"). The leftover margin shows the backdrop.
      */
     fun refreshCrop() {
         val textureView = genericTextureView ?: return
         val baseW = projectionSize.x
         val baseH = projectionSize.y
+        val mirrorMode = AirPlayPersistence.loadClusterMirrorMain(context)
+        if (!mirrorMode) {
+            // Nav-only stream: full-screen, untouched. No target frame and no left-rail crop
+            // - the driver wants the raw navigation stream edge to edge.
+            textureView.setTransform(Matrix())
+            textureView.invalidate()
+            Log.i(TAG, "nav-only stream: full screen, no crop on ${baseW}x${baseH}")
+            return
+        }
+        // Step 1 - source crop: remove the left rail from the source picture (fixed pixels,
+        // set once by the driver; the old percent-based crop default cropped too much).
+        val cropLeftPx = AirPlayPersistence.loadClusterMirrorLeftCropPx(context)
+        val availW = baseW - cropLeftPx
+        // Step 2 - dashboard picture adjust target rect (percent of the dashboard panel).
         val xPct = AirPlayPersistence.loadClusterCropLeftPercent(context)
         val yPct = AirPlayPersistence.loadClusterCropTopPercent(context)
         val wPct = AirPlayPersistence.loadClusterCropWidthPercent(context).coerceIn(10, 100)
@@ -69,20 +117,53 @@ internal class ClusterMapPresentation(
         val h = hPct * baseH / 100
         val x = minOf(xPct, 100 - wPct) * baseW / 100
         val y = minOf(yPct, 100 - hPct) * baseH / 100
-        // Fit the complete stream into the target rect, keep its aspect ratio, centre it.
-        val scale = minOf(w.toFloat() / baseW, h.toFloat() / baseH)
-        val drawnW = baseW * scale
+        // Pipeline (10-08 field requirements): FIRST crop the left rail out of the SOURCE
+        // picture, THEN fit the remaining picture into the target rect. Fit - not cover - so
+        // every adjustment to the frame is immediately visible: making the frame smaller
+        // visibly shrinks the dashboard picture.
+        //
+        // A single TextureView matrix cannot express both cleanly: the source crop is a shift
+        // of the whole buffer by -cropLeftPx*scale, while centering the cropped picture in the
+        // rect would otherwise let the left rail leak back into the left margin. Two steps:
+        //   1. Matrix maps source (cropLeftPx,0) to the picture's top-left (picLeft,picTop),
+        //      which pushes the rail out of the visible area entirely.
+        //   2. Clip the TextureView's left edge so any rail pixels that would leak into the
+        //      left margin (fit margins) are never drawn - the margin shows the black backdrop
+        //      instead, symmetric with the right margin.
+        // FIT (contain), not cover: scale is the MINIMUM of the two axes so the cropped
+        // picture always fits inside the target rect, aspect-preserving and centred. Cover
+        // (maxOf) kept the scale pinned to the wider axis and only translated the frame when
+        // the height slider moved, which read as "the whole picture is dragged upward"
+        // (field report 10-08 18:2x). With fit, shrinking the frame shrinks the picture
+        // symmetrically around its centre; the leftover margin shows the backdrop.
+        val scale = minOf(w.toFloat() / availW, h.toFloat() / baseH)
+        val drawnW = availW * scale
         val drawnH = baseH * scale
-        val offsetX = x + (w - drawnW) / 2f
-        val offsetY = y + (h - drawnH) / 2f
+        val picLeft = x + (w - drawnW) / 2f
+        val picTop = y + (h - drawnH) / 2f
+        val offsetX = picLeft - cropLeftPx * scale
+        val offsetY = picTop
         textureView.setTransform(Matrix().apply {
             setScale(scale, scale)
             postTranslate(offsetX, offsetY)
         })
+        // Only the left edge needs clipping (the rail). When picLeft <= 0 the buffer's left
+        // edge already maps to a source x >= cropLeftPx, so nothing can leak. Fall back to
+        // baseW/baseH when the view is not laid out yet (width == 0 would clip everything).
+        val clipLeft = if (picLeft > 0f) picLeft.toInt() else 0
+        val clipRight = if (textureView.width > 0) textureView.width else baseW
+        val clipBottom = if (textureView.height > 0) textureView.height else baseH
+        textureView.setClipBounds(Rect(clipLeft, 0, clipRight, clipBottom))
+        // The head-unit TextureView keeps rendering the LAST decoded frame when the stream is
+        // idle; a new transform alone is not re-applied until the next frame arrives (the
+        // driver sees "no change until the console moves"). Force a redraw of the current
+        // buffer with the new matrix now, both this frame and on the next vsync.
+        textureView.invalidate()
+        textureView.postInvalidateOnAnimation()
         Log.i(
             TAG,
-            "generic rect x=$x y=$y w=$w h=$h fit=$scale " +
-                "centred=($offsetX,$offsetY) on ${baseW}x${baseH}",
+            "mirror rect x=$x y=$y w=$w h=$h fit=$scale drawn=${drawnW}x${drawnH} " +
+                "placed=($offsetX,$offsetY) leftCrop=${cropLeftPx}px clipLeft=$clipLeft on ${baseW}x${baseH}",
         )
     }
 
@@ -117,14 +198,14 @@ internal class ClusterMapPresentation(
                 override fun onSurfaceTextureAvailable(texture: SurfaceTexture, width: Int, height: Int) {
                     texture.setDefaultBufferSize(DiLink51ClusterLayout.STREAM_WIDTH, DiLink51ClusterLayout.STREAM_HEIGHT)
                     transform()
-                    outputSurface = Surface(texture).also(onSurface)
+                    mirrorOutputSurface = Surface(texture).also(onMirrorSurface)
                 }
                 override fun onSurfaceTextureSizeChanged(texture: SurfaceTexture, width: Int, height: Int) = transform()
                 override fun onSurfaceTextureUpdated(texture: SurfaceTexture) = Unit
                 override fun onSurfaceTextureDestroyed(texture: SurfaceTexture): Boolean {
-                    onSurface(null)
-                    outputSurface?.release()
-                    outputSurface = null
+                    onMirrorSurface(null)
+                    mirrorOutputSurface?.release()
+                    mirrorOutputSurface = null
                     return true
                 }
             }
@@ -132,24 +213,24 @@ internal class ClusterMapPresentation(
             if (plan.fullMap) root.addView(InstrumentContrastView(context, plan, backdrop), FrameLayout.LayoutParams(-1, -1))
             Log.i(TAG, "layout=$theme viewport=$plan source=${plan.sourceLeft},${plan.sourceTop} dark=$dark")
         } else {
-            // Generic path (Changan Feiyu OS and other OEMs). A TextureView lets the driver
-            // crop/zoom the stream to the panel via the "dashboard picture adjust" sliders;
-            // SurfaceView cannot apply a transform. The transform reads the saved crop window
-            // and maps it onto the whole panel, so smaller width/height zooms in and left/top
-            // moves the visible window (works for the navigation stream and the whole-screen
-            // mirror alike).
-            val textureView = TextureView(context)
-            genericTextureView = textureView
-            textureView.surfaceTextureListener = object : TextureView.SurfaceTextureListener {
+            // Generic path (Changan Feiyu OS and other OEMs). TWO TextureViews keep BOTH CarPlay
+            // streams (110 whole-screen mirror + 111 navigation) permanently bound to the incall
+            // sink from first projection; mode switches only flip view visibility. Keeping the 111
+            // stream continuously active is what stops the head-unit from announcing "全屏导航已开启"
+            // every time the driver swipes from whole-screen mirror to nav-only (incall announces on
+            // 111 stream (re-)activation events; the OEM box keeps the stream resident for the same
+            // reason). A TextureView lets the driver crop/zoom via the "dashboard picture adjust"
+            // sliders; the transform maps the saved crop window onto the whole panel, so smaller
+            // width/height zooms in and left/top moves the visible window. Only the mirror view
+            // carries the crop - the nav view is full-screen untouched.
+            val mirrorTextureView = TextureView(context)
+            genericTextureView = mirrorTextureView
+            mirrorTextureView.surfaceTextureListener = object : TextureView.SurfaceTextureListener {
                 override fun onSurfaceTextureAvailable(texture: SurfaceTexture, width: Int, height: Int) {
-                    Log.i(TAG, "cluster surface created")
+                    Log.i(TAG, "cluster mirror surface created")
                     texture.setDefaultBufferSize(size.x, size.y)
                     refreshCrop()
-                    // Keep outputSurface in sync for the generic path too: swipeClusterMode's
-                    // hot-switch reads p.outputSurface to rebind the sink. Without it the
-                    // mirror->navigation switch never reaches onClusterSurface(force=true) and
-                    // the dashboard keeps showing the old stream.
-                    outputSurface = Surface(texture).also(onSurface)
+                    mirrorOutputSurface = Surface(texture).also(onMirrorSurface)
                 }
 
                 override fun onSurfaceTextureSizeChanged(texture: SurfaceTexture, width: Int, height: Int) = refreshCrop()
@@ -157,14 +238,46 @@ internal class ClusterMapPresentation(
                 override fun onSurfaceTextureUpdated(texture: SurfaceTexture) = Unit
 
                 override fun onSurfaceTextureDestroyed(texture: SurfaceTexture): Boolean {
-                    Log.i(TAG, "cluster surface destroyed")
-                    outputSurface?.release()
-                    outputSurface = null
-                    onSurface(null)
+                    Log.i(TAG, "cluster mirror surface destroyed")
+                    mirrorOutputSurface?.release()
+                    mirrorOutputSurface = null
+                    onMirrorSurface(null)
                     return true
                 }
             }
-            root.addView(textureView, videoParams)
+            root.addView(mirrorTextureView, videoParams)
+            // Second TextureView for stream 111. Kept invisible until nav-only mode is selected;
+            // its Surface is bound to sink.setSurface(SCREEN_TYPE_ALT, ...) as soon as it exists so
+            // the 111 stream stays resident in incall (no re-activation announcement on switches).
+            val navView = TextureView(context)
+            navTextureView = navView
+            navView.visibility = View.GONE
+            navView.surfaceTextureListener = object : TextureView.SurfaceTextureListener {
+                override fun onSurfaceTextureAvailable(texture: SurfaceTexture, width: Int, height: Int) {
+                    Log.i(TAG, "cluster nav surface created")
+                    texture.setDefaultBufferSize(size.x, size.y)
+                    navView.setTransform(Matrix())
+                    navOutputSurface = Surface(texture).also(onNavSurface)
+                    // The TextureViews are created asynchronously, so a setMode() issued while
+                    // they were still null would have been lost (e.g. cold-start auto-project to
+                    // nav-only would show the mirror view). Now both views exist: re-assert the
+                    // persisted mode so the correct view is visible.
+                    setMode(AirPlayPersistence.loadClusterMirrorMain(context))
+                }
+
+                override fun onSurfaceTextureSizeChanged(texture: SurfaceTexture, width: Int, height: Int) = Unit
+
+                override fun onSurfaceTextureUpdated(texture: SurfaceTexture) = Unit
+
+                override fun onSurfaceTextureDestroyed(texture: SurfaceTexture): Boolean {
+                    Log.i(TAG, "cluster nav surface destroyed")
+                    navOutputSurface?.release()
+                    navOutputSurface = null
+                    onNavSurface(null)
+                    return true
+                }
+            }
+            root.addView(navView, videoParams)
         }
         waitingLabel = TextView(context).apply {
             text = context.getString(R.string.cluster_waiting_for_map)
@@ -175,13 +288,40 @@ internal class ClusterMapPresentation(
         root.addView(waitingLabel, FrameLayout.LayoutParams(videoParams))
         turnCardView = ClusterTurnCardView(context).apply { visibility = View.GONE }
         root.addView(turnCardView, FrameLayout.LayoutParams(-1, -1))
+        etaCardView = ClusterEtaCardView(context).apply { visibility = View.GONE }
+        root.addView(etaCardView, FrameLayout.LayoutParams(-1, -1))
+        laneCardView = ClusterLaneGuidanceView(context).apply { visibility = View.GONE }
+        root.addView(laneCardView, FrameLayout.LayoutParams(-1, -1))
+        roadNameCardView = ClusterRoadNameView(context).apply { visibility = View.GONE }
+        root.addView(roadNameCardView, FrameLayout.LayoutParams(-1, -1))
+        exitBadgeView = ClusterExitBadgeView(context).apply { visibility = View.GONE }
+        root.addView(exitBadgeView, FrameLayout.LayoutParams(-1, -1))
         setContentView(root)
+    }
+
+    /**
+     * Selects which resident stream is displayed on the dashboard: whole-screen mirror (110) or
+     * navigation stream only (111). Both decoder surfaces stay bound to the sink - only the view
+     * visibility changes, so the incall service never sees a 111 (re-)activation and does not
+     * announce "全屏导航已开启". On the DiLink 5.1 layout (single TextureView) the mode is a no-op.
+     */
+    fun setMode(mirror: Boolean) {
+        val nav = navTextureView ?: return
+        val mirrorView = genericTextureView ?: return
+        mirrorMode = mirror
+        mirrorView.visibility = if (mirror) View.VISIBLE else View.GONE
+        nav.visibility = if (mirror) View.GONE else View.VISIBLE
+        if (navOnlyCards) applyCardsVisibility()
+        Log.i(TAG, "cluster display mode: ${if (mirror) "mirror(110)" else "nav-only(111)"}")
     }
 
     /** Hides the placeholder once the phone streams the cluster screen. */
     fun setStreamActive(active: Boolean) {
         waitingLabel?.visibility = if (active) View.GONE else View.VISIBLE
     }
+
+    /** Current display mode (true = whole-screen mirror, false = nav-only), for diagnostics. */
+    fun isMirrorMode(): Boolean = mirrorMode
 
     /** Window alpha hides the pixels without destroying the TextureView/decoder surface. */
     fun setMapVisible(visible: Boolean) {
@@ -191,12 +331,119 @@ internal class ClusterMapPresentation(
         }
     }
 
-    fun setTurnCardOverlay(xPercent: Int, yPercent: Int, size: CarPlayClusterDisplay.OverlaySize) {
-        turnCardView?.setLayout(xPercent, yPercent, size)
+    fun setTurnCardOverlay(xPx: Int, yPx: Int, size: CarPlayClusterDisplay.OverlaySize) {
+        turnCardView?.setLayout(xPx, yPx, size)
+    }
+
+    /**
+     * Live refresh of every nav card after a settings change: the turn card re-applies
+     * its layout, the four absolute-position cards just invalidate and re-read the new
+     * (x, y) from persistence in onDraw. Called from the overlay-settings listener so a
+     * saved position change is visible on the dashboard immediately.
+     */
+    fun refreshCardOverlays() {
+        turnCardView?.setLayout(
+            AirPlayPersistence.loadClusterTurnCardX(context),
+            AirPlayPersistence.loadClusterTurnCardY(context),
+            AirPlayPersistence.loadClusterTurnCardOverlaySize(context),
+        )
+        // Drop each card's cached position so the next draw reloads the saved coordinates.
+        etaCardView?.notifyPositionChanged()
+        laneCardView?.notifyPositionChanged()
+        roadNameCardView?.notifyPositionChanged()
+        exitBadgeView?.notifyPositionChanged()
+        // Reload the show/hide switches, then a saved switch change re-applies visibility right away.
+        reloadCardVisibilityCache()
+        if (navOnlyCards) applyCardsVisibility()
     }
 
     fun setTurnCardGuidance(guidance: ClusterTurnGuidance?) {
+        lastTurnGuidance = guidance
         turnCardView?.setGuidance(guidance)
+        if (navOnlyCards) applyCardsVisibility()
+    }
+
+    fun setEtaGuidance(guidance: ClusterTurnGuidance?) {
+        lastEtaGuidance = guidance
+        etaCardView?.setGuidance(guidance)
+        if (navOnlyCards) applyCardsVisibility()
+    }
+
+    fun setLaneGuidance(guidance: BydLaneGuidance?) {
+        lastLaneGuidance = guidance
+        laneCardView?.setLaneGuidance(guidance)
+        if (navOnlyCards) applyCardsVisibility()
+    }
+
+    fun setRoadNameGuidance(guidance: ClusterTurnGuidance?) {
+        lastRoadNameGuidance = guidance
+        roadNameCardView?.setGuidance(guidance)
+        if (navOnlyCards) applyCardsVisibility()
+    }
+
+    fun setExitGuidance(guidance: ClusterTurnGuidance?) {
+        lastExitGuidance = guidance
+        exitBadgeView?.setGuidance(guidance)
+        if (navOnlyCards) applyCardsVisibility()
+    }
+
+    /**
+     * Nav-only card group visibility. Whole-screen mirror shows the raw cropped mirror with
+     * NO cards; nav-only mode shows the turn card and the ETA card whenever their guidance
+     * data is present. DiLink 5.1 (navOnlyCards=false) never reaches this branch.
+     *
+     * Each view's setGuidance() is the authority on its own visibility (turn needs guidance,
+     * ETA needs arrival/remaining, lane needs a non-empty lane list, road needs a road name,
+     * exit needs a label), so here we only hide everything in mirror mode, honour the user's
+     * per-card show/hide switch, and raise the visible cards above the video layer in
+     * nav-only mode. Never force a card VISIBLE here without the same data check - that
+     * would show an empty glass block.
+     */
+    private fun applyCardsVisibility() {
+        if (!navOnlyCards) return
+        if (mirrorMode) {
+            turnCardView?.visibility = View.GONE
+            etaCardView?.visibility = View.GONE
+            laneCardView?.visibility = View.GONE
+            roadNameCardView?.visibility = View.GONE
+            exitBadgeView?.visibility = View.GONE
+            return
+        }
+        fun applyVisible(card: String, turn: Boolean, v: View?) {
+            if (v == null) return
+            // User switch OFF -> never render, even when guidance data is present.
+            // Switch ON -> leave the view's own visibility to its setGuidance() (data-driven),
+            // so a card without data never shows as an empty glass block.
+            // Visibility switches are cached: this runs on every guidance tick (per second)
+            // and must not touch SharedPreferences on the hot path.
+            val shown = if (turn) turnCardVisibleCache
+            else cardVisibleCache?.get(card) ?: true
+            if (!shown) v.visibility = View.GONE
+        }
+        applyVisible("turn", true, turnCardView)
+        applyVisible("eta", false, etaCardView)
+        applyVisible("lane", false, laneCardView)
+        applyVisible("road", false, roadNameCardView)
+        applyVisible("exit", false, exitBadgeView)
+        // bringToFront() triggers a layout pass, so only re-front when the visible set
+        // actually changed — guidance ticks every second and must not requestLayout each time.
+        val visibleNow = listOfNotNull(turnCardView, etaCardView, laneCardView, roadNameCardView, exitBadgeView)
+            .filter { it.visibility == View.VISIBLE }
+        if (visibleNow != frontedCards) {
+            frontedCards = visibleNow
+            visibleNow.forEach { it.bringToFront() }
+        }
+    }
+
+    /** Reload the cached show/hide switches after a settings change. */
+    private fun reloadCardVisibilityCache() {
+        cardVisibleCache = mapOf(
+            "eta" to AirPlayPersistence.loadClusterCardVisible(context, "eta"),
+            "lane" to AirPlayPersistence.loadClusterCardVisible(context, "lane"),
+            "road" to AirPlayPersistence.loadClusterCardVisible(context, "road"),
+            "exit" to AirPlayPersistence.loadClusterCardVisible(context, "exit"),
+        )
+        turnCardVisibleCache = AirPlayPersistence.loadClusterTurnCardVisible(context)
     }
 
     companion object {

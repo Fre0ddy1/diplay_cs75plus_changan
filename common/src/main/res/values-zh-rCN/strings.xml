@@ -1,4 +1,13 @@
 <resources>
+    <string name="existing_wifi_title">现有 Wi-Fi / 同一局域网</string>
+    <string name="existing_wifi_description">使用已有路由器或随身 Wi-Fi。让 iPhone 和车机保持连接同一网络，并通过它上网。</string>
+    <string name="existing_wifi_hint">现有 Wi-Fi · 两台设备保持连接同一 Wi-Fi，蓝牙保持开启，无需开启车机热点。</string>
+    <string name="existing_wifi_instructions">先在系统设置中将车机和 iPhone 连接同一外部 Wi-Fi，再准确填写它的名称和 WPA2 密码；仅开放网络可留空密码。路由器使用 WPA2 或 WPA2/WPA3 混合模式，并关闭客户端隔离。DiPlay 保持此 Wi-Fi 连接，不创建热点。</string>
+    <string name="existing_wifi_details">外部 Wi-Fi 详情</string>
+    <string name="existing_wifi_ssid">外部 Wi-Fi 名称（SSID）</string>
+    <string name="existing_wifi_password">外部 Wi-Fi 密码</string>
+    <string name="existing_wifi_attaching">正在接入现有 Wi-Fi</string>
+    <string name="existing_wifi_ready">现有 Wi-Fi 就绪：%1$s · %2$s · 信道 %3$d · %4$s</string>
     <string name="wifi_direct_channel_title">首选 Wi-Fi Direct 信道</string>
     <string name="wifi_direct_channel_summary">首选信道：%1$s</string>
     <string name="wifi_direct_channel_choice">信道 %1$d · %2$s</string>
@@ -450,11 +459,19 @@
     <string name="turn_card_overlay_medium">中</string>
     <string name="turn_card_overlay_large">大</string>
     <string name="reset_turn_card_overlay">重置自定义转向卡位置</string>
-    <string name="turn_card_overlay_note">此卡由 DiPlay 叠在地图上，可按 2% 步进移动。iOS 玻璃卡无法单独挪动。更改后立即生效。有导航时直行也会显示。</string>
+    <string name="turn_card_overlay_note">此卡由 DiPlay 叠在地图上。在下方 X/Y 输入框键入绝对像素坐标可预览移动，点击「应用并保存」才写入并立即刷新仪表盘。iOS 玻璃卡无法单独挪动。有导航时直行也会显示。</string>
     <string name="turn_card_now">即将转向</string>
     <string name="turn_card_distance_m">%1$d 米</string>
     <string name="turn_card_distance_km">%1$.1f 公里</string>
     <string name="turn_card_exit">出口 %1$d</string>
+    <string name="cluster_eta_arrival">%1$s到达</string>
+    <string name="cluster_eta_on_the_way">正在前往</string>
+    <string name="cluster_eta_sep"> · </string>
+    <string name="cluster_eta_minutes">%1$d分钟</string>
+    <string name="cluster_eta_hours">%1$d小时</string>
+    <string name="cluster_eta_hours_minutes">%1$d小时%2$d分</string>
+    <string name="cluster_eta_km">%1$.1f公里</string>
+    <string name="cluster_eta_m">%1$d米</string>
     <string name="center_map_follows_dashboard">主屏幕地图与仪表盘同步</string>
     <string name="center_map_follows_dashboard_description">开启：主屏幕卡片镜像仪表盘地图。关闭：主屏幕不显示该卡片，仪表盘地图只出现在仪表盘上。不会改变 CarPlay 主屏自己的画面。</string>
     <string name="dashboard_map_only_in_small_and_full_navi">仅在小屏或全屏导航时显示仪表盘地图</string>
@@ -569,4 +586,17 @@
     <string name="navigation_volume_keys_focus_description">导航播报时短暂获取音频焦点，让车机把方向盘音量键路由到导航通道而非媒体。播报期间音乐会自动压低（与原厂 CarPlay 一致）。</string>
     <string name="dashboard_detailed_map">仪表盘显示详细地图</string>
     <string name="dashboard_detailed_map_description">把整个仪表盘面板声明为安全区，让 iPhone 在仪表盘上直接渲染详细跟随地图（和其他 CarPlay 盒子一致）。关闭则恢复旧的居中安全区，高德会显示全览路线，此时“车辆标记”滑块可移动车标位置。</string>
+    <string name="cluster_card_position_preview">卡片位置预览（示意）</string>
+    <string name="cluster_card_position_preview_note">原点为整个仪表盘投屏画面左上角 (0,0)（1920x720），X 向右、Y 向下，坐标即卡片左上角位置（px）。直接在 X/Y 输入框键入数字预览移动，点击“应用并保存”才会写入并立即刷新仪表盘上的卡片；卡片自适应后若越出屏幕会自动收回边界并保存修正坐标。</string>
+    <string name="cluster_card_position_apply">应用并保存</string>
+    <string name="cluster_card_position_applied">卡片位置已保存并生效</string>
+    <string name="cluster_card_lane_title">车道指引卡片</string>
+    <string name="cluster_card_eta_title">到达信息卡片</string>
+    <string name="cluster_card_road_title">道路名称卡片</string>
+    <string name="cluster_card_exit_title">出口徽标</string>
+    <string name="cluster_card_show">显示 %1$s</string>
+    <string name="cluster_card_show_desc">关闭后此卡片不再渲染到仪表盘。</string>
+    <string name="turn_card_show">显示转向卡片</string>
+    <string name="cluster_card_horizontal">X 坐标（0-1920 px，距屏幕左缘）</string>
+    <string name="cluster_card_vertical">Y 坐标（0-720 px，距屏幕顶缘）</string>
 </resources>

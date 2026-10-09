@@ -11,7 +11,6 @@ import android.view.View
 import androidx.core.content.ContextCompat
 import com.shilapi.xcertplay.airplay.CarPlayClusterDisplay
 import com.shilapi.xcertplay.host.R
-import com.shilapi.xcertplay.airplay.ClusterTurnCardOverlay
 import com.shilapi.xcertplay.hud.ClusterTurnGuidance
 
 /**
@@ -24,8 +23,8 @@ import com.shilapi.xcertplay.hud.ClusterTurnGuidance
  */
 internal class ClusterTurnCardView(context: Context) : View(context) {
     private var guidance: ClusterTurnGuidance? = null
-    private var xPercent = ClusterTurnCardOverlay.DEFAULT_X_PERCENT
-    private var yPercent = ClusterTurnCardOverlay.DEFAULT_Y_PERCENT
+    private var xPx = AirPlayPersistence.DEFAULT_CLUSTER_TURN_CARD_X_PX
+    private var yPx = AirPlayPersistence.DEFAULT_CLUSTER_TURN_CARD_Y_PX
     private var size = CarPlayClusterDisplay.OverlaySize.MEDIUM
 
     private val accent = Color.rgb(10, 132, 255)
@@ -49,9 +48,19 @@ internal class ClusterTurnCardView(context: Context) : View(context) {
     private var glyph: Drawable? = null
     private var glyphTag: Int = -1
 
-    fun setLayout(xPercent: Int, yPercent: Int, size: CarPlayClusterDisplay.OverlaySize) {
-        this.xPercent = xPercent
-        this.yPercent = yPercent
+    // Per-frame cost killers: cached text widths — the card is redrawn on every guidance
+    // change and the distance label ticks, but a given string's width is stable, so
+    // measureText only reruns when the string (or its size) actually changed.
+    private var lastDistance = ""
+    private var lastDistanceSize = 0f
+    private var lastRoad = ""
+    private var lastRoadSize = 0f
+    private var wDistance = 0f
+    private var wRoad = 0f
+
+    fun setLayout(xPx: Int, yPx: Int, size: CarPlayClusterDisplay.OverlaySize) {
+        this.xPx = xPx.coerceIn(0, 1920)
+        this.yPx = yPx.coerceIn(0, 720)
         this.size = size
         invalidate()
     }
@@ -62,8 +71,11 @@ internal class ClusterTurnCardView(context: Context) : View(context) {
             return
         }
         guidance = next
+        val wasVisible = visibility == VISIBLE
         visibility = if (next == null) GONE else VISIBLE
-        bringToFront()
+        // bringToFront() triggers a layout pass, so only raise the layer on the
+        // first show — the turn card updates every second and must not requestLayout each time.
+        if (visibility == VISIBLE && !wasVisible) bringToFront()
         invalidate()
     }
 
@@ -77,39 +89,64 @@ internal class ClusterTurnCardView(context: Context) : View(context) {
     override fun onDraw(canvas: Canvas) {
         super.onDraw(canvas)
         val next = guidance ?: return
-        val card = ClusterTurnCardOverlay.card(width, height, xPercent, yPercent, size)
-        val h = card.height.toFloat()
-        val w = card.width.toFloat()
-
+        val panelW = width.toFloat()
+        val panelH = height.toFloat()
+        val heightFraction = when (size) {
+            CarPlayClusterDisplay.OverlaySize.SMALL -> 0.22f
+            CarPlayClusterDisplay.OverlaySize.MEDIUM -> 0.28f
+            CarPlayClusterDisplay.OverlaySize.LARGE -> 0.34f
+        }
+        val h = (panelH * heightFraction).coerceAtLeast(72f).coerceAtMost(panelH)
         val radius = h * 0.30f
-        rect.set(card.left.toFloat(), card.top.toFloat(), card.left + w, card.top + h)
+        val chip = h * 0.76f
+        val chipLeft = h * 0.12f
+        val textLeft = chipLeft + chip + h * 0.14f
+        val distanceText = distanceLabel(next.distanceMeters)
+        val roadText = roadLabel(next)
+        distancePaint.textSize = h * 0.30f
+        roadPaint.textSize = h * 0.17f
+        // Cached measurement: only re-measure when the string or its size changed.
+        if (distanceText != lastDistance || distancePaint.textSize != lastDistanceSize) {
+            lastDistance = distanceText
+            lastDistanceSize = distancePaint.textSize
+            wDistance = distancePaint.measureText(distanceText)
+        }
+        if (roadText.isNotEmpty() && (roadText != lastRoad || roadPaint.textSize != lastRoadSize)) {
+            lastRoad = roadText
+            lastRoadSize = roadPaint.textSize
+            wRoad = roadPaint.measureText(roadText)
+        }
+        val textW = maxOf(
+            wDistance,
+            if (roadText.isNotEmpty()) wRoad else 0f,
+        )
+        // Width adapts to the text (no ellipsis — text must stay fully visible); if the
+        // adapted card would leave the panel, shift it left and persist the correction.
+        val w = (textLeft + textW + h * 0.10f).coerceAtMost(panelW)
+        var left = xPx.toFloat().coerceIn(0f, (panelW - w).coerceAtLeast(0f))
+        var top = yPx.toFloat().coerceIn(0f, (panelH - h).coerceAtLeast(0f))
+        if (left != xPx.toFloat() || top != yPx.toFloat()) {
+            AirPlayPersistence.saveClusterTurnCardXSilent(context, left.toInt())
+            AirPlayPersistence.saveClusterTurnCardYSilent(context, top.toInt())
+            xPx = left.toInt()
+            yPx = top.toInt()
+        }
+
+        rect.set(left, top, left + w, top + h)
         canvas.drawRoundRect(rect, radius, radius, glassPaint)
         canvas.drawRoundRect(rect, radius, radius, strokePaint)
 
-        val chip = h * 0.76f
-        val chipLeft = card.left + h * 0.12f
-        val chipTop = card.top + (h - chip) / 2f
-        rect.set(chipLeft, chipTop, chipLeft + chip, chipTop + chip)
+        val chipTop = top + (h - chip) / 2f
+        rect.set(chipLeft + left, chipTop, chipLeft + left + chip, chipTop + chip)
         canvas.drawRoundRect(rect, chip * 0.26f, chip * 0.26f, chipPaint)
 
         val exit = next.roundaboutExit.takeIf { it in 1..9 }
-        drawGlyph(canvas, next, chipLeft, chipTop, chip, exit)
+        drawGlyph(canvas, next, chipLeft + left, chipTop, chip, exit)
 
-        val textLeft = chipLeft + chip + h * 0.14f
-        val textWidth = card.left + w - h * 0.10f - textLeft
-        if (textWidth <= 0f) return
-        distancePaint.textSize = h * 0.30f
-        roadPaint.textSize = h * 0.17f
-        canvas.drawText(
-            ellipsize(distanceLabel(next.distanceMeters), textWidth, distancePaint),
-            textLeft, card.top + h * 0.44f, distancePaint,
-        )
-        val road = roadLabel(next)
-        if (road.isNotEmpty()) {
-            canvas.drawText(
-                ellipsize(road, textWidth, roadPaint),
-                textLeft, card.top + h * 0.72f, roadPaint,
-            )
+        val textX = left + textLeft
+        canvas.drawText(distanceText, textX, top + h * 0.44f, distancePaint)
+        if (roadText.isNotEmpty()) {
+            canvas.drawText(roadText, textX, top + h * 0.72f, roadPaint)
         }
     }
 
@@ -167,12 +204,4 @@ internal class ClusterTurnCardView(context: Context) : View(context) {
         } else {
             next.road
         }
-
-    private fun ellipsize(text: String, maxWidth: Float, paint: Paint): String {
-        if (paint.measureText(text) <= maxWidth) return text
-        val ellipsis = "…"
-        var end = text.length
-        while (end > 0 && paint.measureText(text.take(end) + ellipsis) > maxWidth) end--
-        return if (end == 0) ellipsis else text.take(end) + ellipsis
-    }
 }
