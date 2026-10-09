@@ -660,6 +660,26 @@ object AirPlayPersistence {
     }
 
     /**
+     * Nav-only stream bottom reserve (px): the head unit's HUD band at the bottom of the
+     * cluster panel is not part of the projected area, so the car marker rendered by Amap
+     * near the safe-area bottom gets cut in half. Reserving that band in the advertised
+     * safe area moves the marker up into the visible part. 0 = full-panel safe area (old
+     * behaviour). Applies to the navigation stream only, not the whole-screen mirror.
+     */
+    private const val KEY_CLUSTER_NAV_BOTTOM_RESERVE = "cluster_nav_bottom_reserve_px"
+
+    fun loadClusterNavBottomReservePx(context: Context): Int =
+        context.getSharedPreferences(PREFS, Context.MODE_PRIVATE)
+            .getInt(KEY_CLUSTER_NAV_BOTTOM_RESERVE, 0).coerceIn(0, 300)
+
+    fun saveClusterNavBottomReservePx(context: Context, px: Int) {
+        context.getSharedPreferences(PREFS, Context.MODE_PRIVATE).edit()
+            .putInt(KEY_CLUSTER_NAV_BOTTOM_RESERVE, px.coerceIn(0, 300)).apply()
+        // The safe area is part of the /info display negotiation, so the change takes
+        // effect on the next (re)connect / auto-project.
+    }
+
+    /**
      * Dashboard crop: which part of the cluster stream is shown on the instrument panel,
      * as percent of the panel. Width/height below 100 % zoom the picture in (CENTER_CROP
      * style); left/top shift the visible window. Used by ClusterMapPresentation's TextureView

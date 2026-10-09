@@ -16,4 +16,5 @@
     <string name="oem_label_home">车辆图标名称（OEM 标签）</string>
     <string name="cluster_mirror_left_crop">整机镜像左侧裁剪</string>
     <string name="cluster_mirror_left_crop_format">%1$d px</string>
+    <string name="cluster_nav_bottom_reserve">导航流底部预留（解决车标被切）</string>
 </resources>

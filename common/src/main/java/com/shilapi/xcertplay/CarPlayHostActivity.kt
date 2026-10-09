@@ -1345,6 +1345,7 @@ class CarPlayHostActivity : ComponentActivity() {
             AirPlayPersistence.loadClusterMarkerVerticalStep(this),
             AirPlayPersistence.loadClusterContent(this),
             AirPlayPersistence.loadClusterFullSafeArea(this),
+            AirPlayPersistence.loadClusterNavBottomReservePx(this),
         ).also {
             appendLog("Cluster map: requesting ${it.widthPixels}x${it.heightPixels} on ${size.x}x${size.y} safeArea=${it.safeArea} url=${it.initialUrl}")
         }

@@ -140,8 +140,39 @@ internal class BydHudRouteState(
         return maneuvers[activeIndex]
     }
 
+    // AMap fills the iAP2 text fields with its own voice-prompt text ("进入 鄞县大道",
+    // "去往 鄞县大道 石碶北路") instead of a plain road name, which made the road card
+    // and the exit badge show the same narration text. Strip the leading action words so
+    // the cards show a clean label; numeric exit labels like "314" are untouched.
+    private val NAV_ACTION_PREFIXES = listOf(
+        "即将进入", "即将驶入", "即将到达", "进入", "去往", "驶入", "前往", "驶向", "到达",
+        "请直行", "请左转", "请右转", "请掉头", "直行", "左转", "右转", "掉头",
+        "靠左", "靠右", "目的地", "保持", "前方", "向左前方", "向右前方",
+    )
+
+    private fun stripNavAction(raw: String): String {
+        var text = raw.trim()
+        var changed = true
+        while (changed && text.isNotEmpty()) {
+            changed = false
+            for (prefix in NAV_ACTION_PREFIXES) {
+                if (text.startsWith(prefix)) {
+                    text = text.removePrefix(prefix).trimStart(' ', '，', ',', '、')
+                    changed = true
+                    break
+                }
+            }
+        }
+        return text
+    }
+
+    private fun isNavActionText(raw: String): Boolean {
+        val t = raw.trimStart()
+        return t.isEmpty() || NAV_ACTION_PREFIXES.any { t.startsWith(it) }
+    }
+
     // The road the driver turns onto is what the next instruction is about; fall back to the current one.
-    private fun roadFor(maneuver: Maneuver): String = maneuver.afterRoad.ifEmpty { currentRoad }
+    private fun roadFor(maneuver: Maneuver): String = stripNavAction(maneuver.afterRoad).ifEmpty { currentRoad }
 
     private fun parseRouteUpdate(data: ByteArray): BydHudRouteChange {
         lastRouteUpdateNs = nanoTime()
@@ -202,9 +233,13 @@ internal class BydHudRouteState(
                 // Best-effort highway exit label (Apple CPManeuver.highwayExitLabel). The iAP2
                 // TLV for it is undocumented, so any short UTF-8 value on an unknown field is
                 // taken as the exit label; the raw trace stays in the log for later calibration.
+                // AMap narration text ("进入 鄞县大道") arrives through these fields too, so
+                // candidates that start with a navigation action word are rejected - otherwise
+                // the exit badge duplicates the road-name card. Numeric labels like "314" pass.
                 exitLabel.isEmpty() && id !in setOf(0x01, 0x03, 0x04, 0x08) &&
                     valueLength in 1..24 -> {
-                    utf8(data, value, valueLength).takeIf { it.isNotBlank() }?.let { exitLabel = it }
+                    val candidate = utf8(data, value, valueLength)
+                    if (candidate.isNotBlank() && !isNavActionText(candidate)) exitLabel = candidate
                 }
             }
         }

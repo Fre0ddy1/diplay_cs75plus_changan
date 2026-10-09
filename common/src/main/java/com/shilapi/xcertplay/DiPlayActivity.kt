@@ -613,6 +613,46 @@ class DiPlayActivity : ComponentActivity() {
                 }.onFailure { e ->
                     clusterUiLog("整机镜像左侧裁剪控件渲染失败: ${e.message ?: e.javaClass.simpleName}")
                 }
+                // 导航流底部预留（px）：长安仪表盘底部 HUD 读数区不属于投屏显示区，高德
+                // 把车辆图标锚定在安全区底部附近，会有一半被切出画面。预留该区域后高德
+                // 会把车标上移，地图仍铺满仪表（仅影响仅导航模式，整机镜像不受影响）。
+                runCatching {
+                    val navReserveTitle = label(getString(R.string.cluster_nav_bottom_reserve), 16, TEXT, true)
+                    navReserveTitle.setPadding(0, dp(12), 0, 0)
+                    val navReserveValue = label(
+                        "${AirPlayPersistence.loadClusterNavBottomReservePx(this@DiPlayActivity)} px",
+                        16, ACCENT, true,
+                    )
+                    val navReserveHead = LinearLayout(this).apply {
+                        orientation = LinearLayout.HORIZONTAL
+                        gravity = Gravity.CENTER_VERTICAL
+                        addView(navReserveTitle, LinearLayout.LayoutParams(0, -2, 1f))
+                        addView(navReserveValue)
+                    }
+                    card.addView(navReserveHead, LinearLayout.LayoutParams(ViewGroup.LayoutParams.MATCH_PARENT, ViewGroup.LayoutParams.WRAP_CONTENT))
+                    val navReserveSlider = SeekBar(this).apply {
+                        max = 300
+                        progress = AirPlayPersistence.loadClusterNavBottomReservePx(this@DiPlayActivity).coerceIn(0, 300)
+                        setOnSeekBarChangeListener(object : SeekBar.OnSeekBarChangeListener {
+                            override fun onProgressChanged(seekBar: SeekBar?, progress: Int, fromUser: Boolean) {
+                                navReserveValue.text = "$progress px"
+                            }
+
+                            override fun onStartTrackingTouch(seekBar: SeekBar?) {}
+                            override fun onStopTrackingTouch(seekBar: SeekBar?) {
+                                val px = seekBar?.progress ?: 0
+                                AirPlayPersistence.saveClusterNavBottomReservePx(this@DiPlayActivity, px)
+                                // The safe area lives in the /info display negotiation, so it only
+                                // takes effect after a (re)connect. Reconnect now so the change is
+                                // visible immediately; the head unit may announce the re-join.
+                                reconnectForClusterMap()
+                            }
+                        })
+                    }
+                    card.addView(navReserveSlider, LinearLayout.LayoutParams(-1, dp(44)))
+                }.onFailure { e ->
+                    clusterUiLog("导航流底部预留控件渲染失败: ${e.message ?: e.javaClass.simpleName}")
+                }
                 // "自动飞屏" master switch: unchecked = no auto projection AND no stock-Amap
                 // handling at all (manual three-finger swipe still works).
                 toggle(card, getString(R.string.auto_fly_screen),

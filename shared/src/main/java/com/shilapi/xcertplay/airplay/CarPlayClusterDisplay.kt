@@ -75,6 +75,7 @@ object CarPlayClusterDisplay {
         verticalStep: Int = 0,
         content: Content = Content.MAP,
         fullSafeArea: Boolean = true,
+        bottomReservePx: Int = 0,
     ): AirPlayDisplayConfig {
         // Height rounds to a multiple of 8 and width follows it, so the panel's aspect is kept
         // (100 % of 1920x720 gives exactly 1920x720). The cluster scales the stream to the panel.
@@ -84,7 +85,16 @@ object CarPlayClusterDisplay {
         // The whole panel as safe area makes Amap render the detailed follow map on the
         // dashboard, like other CarPlay boxes. A small centred safe area (old behaviour)
         // makes it show an overview so the route and marker fit inside it.
-        val safe = if (fullSafeArea) AirPlayInsets() else safeArea(width, height, horizontalStep, verticalStep)
+        //
+        // A bottom reserve (head-unit HUD band, e.g. the UNI-V cluster's fixed readout strip)
+        // keeps the car marker inside the visible part: Amap anchors the marker near the
+        // safe-area bottom, so reserving the HUD band moves the marker up out of the
+        // cut-off zone while the map still fills the panel (safeAreaDrawOutside = true).
+        val safe = when {
+            fullSafeArea && bottomReservePx <= 0 -> AirPlayInsets()
+            fullSafeArea -> AirPlayInsets(top = 0, bottom = bottomReservePx, left = 0, right = 0)
+            else -> safeArea(width, height, horizontalStep, verticalStep)
+        }
         return AirPlayDisplayConfig(
             widthPixels = width,
             heightPixels = height,
