@@ -668,9 +668,14 @@ object AirPlayPersistence {
      */
     private const val KEY_CLUSTER_NAV_BOTTOM_RESERVE = "cluster_nav_bottom_reserve_px"
 
+    // 100 px = field-tested value on the UNI-V: with 0 px the car marker anchored by Amap
+    // near the safe-area bottom is cut in half by the HUD band; 100 px moves it fully into
+    // the visible part while keeping the map filling the panel.
+    private const val DEFAULT_CLUSTER_NAV_BOTTOM_RESERVE = 100
+
     fun loadClusterNavBottomReservePx(context: Context): Int =
         context.getSharedPreferences(PREFS, Context.MODE_PRIVATE)
-            .getInt(KEY_CLUSTER_NAV_BOTTOM_RESERVE, 0).coerceIn(0, 300)
+            .getInt(KEY_CLUSTER_NAV_BOTTOM_RESERVE, DEFAULT_CLUSTER_NAV_BOTTOM_RESERVE).coerceIn(0, 300)
 
     fun saveClusterNavBottomReservePx(context: Context, px: Int) {
         context.getSharedPreferences(PREFS, Context.MODE_PRIVATE).edit()
@@ -878,14 +883,14 @@ object AirPlayPersistence {
     private fun clusterCardKey(card: String, axis: String) = "cluster_card_${card}_${axis}_abs"
 
     private fun clusterCardDefaultX(card: String): Int = when (card) {
-        // Field-tested defaults (UNI-V, full 1920x720 dashboard canvas): the user tuned
-        // lane to the left edge, eta to the right, road to the upper-right, exit to the
-        // left edge below the turn card. The draw-time clamp re-saves the exact
-        // corrected value if a card overflows.
+        // Field-tested defaults (UNI-V, full 1920x720 dashboard canvas): lane on the left
+        // edge, eta to the right, road upper-right, exit at the top-right (matching the
+        // position preview; the old left-edge default put the badge under the turn card,
+        // which looked like a stray number on the left side of the cluster).
         "lane" -> 0
         "eta" -> 1600
         "road" -> 1400
-        "exit" -> 0
+        "exit" -> 1700
         else -> 43
     }
 
@@ -893,7 +898,7 @@ object AirPlayPersistence {
         "lane" -> 300
         "eta" -> 500
         "road" -> 100
-        "exit" -> 220
+        "exit" -> 43
         else -> 43
     }
 

@@ -1195,7 +1195,7 @@ class CarPlayHostActivity : ComponentActivity() {
             "contentTop=${AirPlayPersistence.loadClusterCardContentTopPx(this)} " +
             "turnXY=${AirPlayPersistence.loadClusterTurnCardX(this)}/" +
             "${AirPlayPersistence.loadClusterTurnCardY(this)} " +
-            "exitTxt=${(g?.exitLabel ?: "").take(14)} roadTxt=${((g?.road ?: g?.currentRoad) ?: "").take(14)}"
+            "exitTxt=${(g?.exitLabel ?: "").take(14)} roadTxt=${(g?.road ?: "").take(14)} curRoad=${(g?.currentRoad ?: "").take(14)}"
         val nowMs = SystemClock.elapsedRealtime()
         if (cardsLog != lastClusterCardsLog || nowMs - lastClusterCardsLogElapsed > 5_000L) {
             lastClusterCardsLog = cardsLog

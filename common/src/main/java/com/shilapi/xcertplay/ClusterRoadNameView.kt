@@ -81,7 +81,11 @@ internal class ClusterRoadNameView(context: Context) : View(context) {
         // Card size adapts to its text: width follows the longer of the two road names,
         // so the glass background always wraps the text ("文字自适应卡片背景").
         val hasCurrent = next.currentRoad.isNotEmpty()
-        val primary = next.road
+        // Primary line = the road the driver is on now ("同德路"), falling back to the
+        // next road; the secondary line shows the next road. Previously the primary line
+        // showed next.road, which on the UNI-V carried Amap's narration text ("请行驶到
+        // 南门") and duplicated the turn card's label.
+        val primary = next.currentRoad.ifEmpty { next.road }
         primaryPaint.textSize = if (hasCurrent) unit * 0.052f else unit * 0.062f
         secondaryPaint.textSize = unit * 0.034f
         val padH = unit * 0.14f
@@ -91,10 +95,10 @@ internal class ClusterRoadNameView(context: Context) : View(context) {
             lastPrimarySize = primaryPaint.textSize
             wPrimary = primaryPaint.measureText(primary)
         }
-        if (hasCurrent && (next.currentRoad != lastSecondary || secondaryPaint.textSize != lastSecondarySize)) {
-            lastSecondary = next.currentRoad
+        if (hasCurrent && (next.road != lastSecondary || secondaryPaint.textSize != lastSecondarySize)) {
+            lastSecondary = next.road
             lastSecondarySize = secondaryPaint.textSize
-            wSecondary = secondaryPaint.measureText(next.currentRoad)
+            wSecondary = secondaryPaint.measureText(next.road)
         }
         // A line that disappeared must not keep its stale measured width (card would stay too wide).
         if (!hasCurrent) wSecondary = 0f
@@ -149,7 +153,7 @@ internal class ClusterRoadNameView(context: Context) : View(context) {
             val lower = left + padH
             val upper = (left + cardW - padH - wSecondary).coerceAtLeast(lower)
             val textX = (left + cardW / 2f - wSecondary / 2f).coerceIn(lower, upper)
-            canvas.drawText(next.currentRoad, textX, top + cardH * 0.74f, secondaryPaint)
+            canvas.drawText(next.road, textX, top + cardH * 0.74f, secondaryPaint)
         }
     }
 }

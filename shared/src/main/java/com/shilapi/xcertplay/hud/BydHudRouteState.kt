@@ -183,7 +183,10 @@ internal class BydHudRouteState(
         forEachTlv(data) { type, value, valueLength ->
             when {
                 type == 0x01 && valueLength >= 1 -> state = data[value].toInt() and 0xff
-                type == 0x03 -> currentRoad = utf8(data, value, valueLength)
+                // Current road name. The 2026-10-09 capture shows it on t=0x0004 ("同德路",
+                // clean name without narration text); t=0x0003 is kept as a fallback for
+                // layouts where it appears instead.
+                type == 0x04 || type == 0x03 -> currentRoad = utf8(data, value, valueLength)
                 type == 0x05 && valueLength >= 8 -> arrivalEpochSeconds = u64(data, value).takeIf { it > 0 }
                 type == 0x06 && valueLength >= 8 -> remainingSeconds = u64(data, value).takeIf { it >= 0 }
                 type == 0x07 && valueLength >= 4 -> remainingMeters = u32(data, value)
