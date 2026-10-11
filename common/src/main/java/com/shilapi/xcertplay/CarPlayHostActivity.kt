@@ -1382,6 +1382,25 @@ class CarPlayHostActivity : ComponentActivity() {
             return true
         }
 
+        // Steering-wheel next/previous, claimed by the CarPlay screen itself. The head unit
+        // gives these keys to whichever window is in front, so claiming them here is what
+        // makes the wheel change tracks without the wheel-key/accessibility service.
+        val mediaPress = CarPlayMediaButton.forCarPlayWindow(
+            event.keyCode,
+            sessionActive = activeAirPlaySession != null,
+            inCall = inCarPlayCall(),
+        )
+        if ((event.action == KeyEvent.ACTION_DOWN || event.action == KeyEvent.ACTION_UP) && mediaPress != null) {
+            // A media button is a tap, and the head unit sends each tap as an instant down/up
+            // pair: send once, on the press. The release is swallowed rather than passed on,
+            // or the car's own player would receive an unpaired key.
+            if (event.action == KeyEvent.ACTION_DOWN && event.repeatCount == 0) {
+                val sent = controller?.sendMediaButton(mediaPress) == true
+                appendLog("Media: wheel key ${event.keyCode} -> CarPlay $mediaPress sent=$sent")
+            }
+            return true
+        }
+
         // Keep DiPlay's existing steering-wheel/voice-key Siri handling intact.
         if (!CarPlayMediaButton.opensSiri(event.keyCode)) return super.dispatchKeyEvent(event)
         if (event.action == KeyEvent.ACTION_UP) {
@@ -1390,6 +1409,11 @@ class CarPlayHostActivity : ComponentActivity() {
         }
         return true
     }
+
+    /** True while the car's audio mode is not normal (a call is active on the head unit). */
+    private fun inCarPlayCall(): Boolean =
+        (getSystemService(Context.AUDIO_SERVICE) as? AudioManager)?.mode
+            ?.let { it != AudioManager.MODE_NORMAL } == true
 
     override fun onWindowFocusChanged(hasFocus: Boolean) {
         super.onWindowFocusChanged(hasFocus)
