@@ -38,6 +38,8 @@ class NcmUsbBridge internal constructor(
     private var failure: IphoneUsbException? = null
     private var sequence = 0
     private var loggedWriteTimeout = false
+    private var bulkOutAccepted = false
+    private var notReadyFrames = 0
     private val frames = ArrayDeque<ByteArray>()
     private var queuedBytes = 0
     private var buffered = ByteArray(0)
@@ -76,15 +78,30 @@ class NcmUsbBridge internal constructor(
             this.sequence.also { this.sequence = (this.sequence + 1) and 0xffff }
         }
         val block = Ntb16Codec.build(frame, sequence)
-        val transferred = connection.bulkTransfer(outEndpoint, block, block.size, timeoutMillis)
+        // bulkTransfer() pins `block` in a JNI critical section until it returns (see the read
+        // path above). While the phone still NAKs this pipe, every frame waited out the full
+        // timeout, and each USBMUX write of the iAP2 handshake finished only when one expired:
+        // ~2 s per step on Android 8.1–14 (#634, #335, #301). Until the phone takes its first
+        // frame, a frame that cannot go out at once is dropped, as it was after the full timeout.
+        val transferred = connection.bulkTransfer(
+            outEndpoint,
+            block,
+            block.size,
+            if (bulkOutAccepted) timeoutMillis else minOf(timeoutMillis, NOT_READY_WRITE_TIMEOUT_MILLIS),
+        )
         // Before StartCarPlaySession the phone keeps the NCM data path NAKed. Android reports the
         // resulting timeout as -1; it is not a detach and later packets must be allowed to retry.
         if (transferred <= 0) {
+            if (!bulkOutAccepted) notReadyFrames++
             if (!loggedWriteTimeout) {
                 loggedWriteTimeout = true
                 Log.i(IphoneCarPlayConfiguration.TAG, "ncm bulk-out not ready; retaining bridge for retry")
             }
             return@synchronized
+        }
+        if (!bulkOutAccepted) {
+            bulkOutAccepted = true
+            runCatching { onDiagnostic("NCM bulk-out ready after $notReadyFrames dropped frames") }
         }
         if (transferred != block.size) {
             throw IphoneUsbException.DeviceUnavailable(
@@ -387,6 +404,7 @@ class NcmUsbBridge internal constructor(
         internal const val USB_SETUP_ATTEMPTS = 5
         private const val USB_SETUP_RETRY_MILLIS = 100L
         private const val STATUS_POLL_TIMEOUT_MILLIS = 20
+        internal const val NOT_READY_WRITE_TIMEOUT_MILLIS = 20
         private const val STATUS_POLL_INTERVAL_MILLIS = 500L
         private const val MAX_QUEUED_FRAMES = 256
         private const val MAX_QUEUED_BYTES = 1 shl 20

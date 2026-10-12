@@ -1,4 +1,5 @@
 <resources>
+    <string name="usb_auto_confirm_desc">Automatically checks Always allow and confirms the Android USB accessory prompt for CarPlay</string>
     <string name="existing_wifi_title">Existing Wi-Fi / Same LAN</string>
     <string name="existing_wifi_description">Use an existing router or portable Wi-Fi. Keep the iPhone and car on the same network with Internet access.</string>
     <string name="existing_wifi_hint">Existing Wi-Fi · Keep both devices on the same Wi-Fi and Bluetooth on. No car hotspot is needed.</string>

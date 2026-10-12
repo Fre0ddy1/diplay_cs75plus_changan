@@ -75,13 +75,19 @@ class ManualHotspotManager(
         require(timeoutMillis > 0) { "timeoutMillis must be positive" }
 
         val deadlineNanos = deadlineAfter(timeoutMillis)
-        val apConfiguration = readApConfiguration()
-        if (apConfiguration != null && apConfiguration.ssid != expectedSsid) {
+        val readConfiguration = readApConfiguration()
+        val companion = readConfiguration != null &&
+            isFiveGhzCompanion(apSsid = readConfiguration.ssid, expectedSsid = expectedSsid)
+        if (readConfiguration != null && readConfiguration.ssid != expectedSsid && !companion) {
             throw IOException(
                 "Manual hotspot SSID does not match the active local AP configuration: " +
-                    "'${apConfiguration.ssid}'",
+                    "'${readConfiguration.ssid}'",
             )
         }
+        // The Android configuration describes the 2.4 GHz network, so its channel, band and
+        // frequency say nothing about the companion; only its security carries over.
+        val apConfiguration = if (companion) null else readConfiguration
+        if (companion) onDiagnostic("Manual hotspot uses the car's 5 GHz companion network of the configured hotspot")
         validateApConfiguration(apConfiguration)
 
         var lastReason = "local hotspot interface was not found"
@@ -89,8 +95,8 @@ class ManualHotspotManager(
             check(!closed) { "ManualHotspotManager is closed" }
             val localInterface = findLocalHotspotInterface()
             if (localInterface != null) {
-                val connectionFrequency = frequencyFromConnectionInfo()
-                val scanFrequency = frequencyFromScanResult(localInterface)
+                val connectionFrequency = if (companion) null else frequencyFromConnectionInfo()
+                val scanFrequency = if (companion) null else frequencyFromScanResult(localInterface)
                 val channel = observedManualHotspotChannel(
                     apChannel = apConfiguration?.channel ?: 0,
                     connectionFrequencyMHz = connectionFrequency,
@@ -454,3 +460,9 @@ private fun ManualHotspotSecurity.toIap2Security(): Iap2WirelessSecurity = when 
     ManualHotspotSecurity.WPA3_TRANSITION -> Iap2WirelessSecurity.WPA3_TRANSITION
     ManualHotspotSecurity.WPA3 -> Iap2WirelessSecurity.WPA3_ONLY
 }
+
+private val FIVE_GHZ_SUFFIXES = listOf("_5G", "-5G")
+
+/** True when [apSsid] is the 5 GHz companion network the hotspot broadcasts next to [expectedSsid]. */
+private fun isFiveGhzCompanion(apSsid: String, expectedSsid: String): Boolean =
+    apSsid.isNotEmpty() && FIVE_GHZ_SUFFIXES.any { expectedSsid.equals(apSsid + it, ignoreCase = true) }
