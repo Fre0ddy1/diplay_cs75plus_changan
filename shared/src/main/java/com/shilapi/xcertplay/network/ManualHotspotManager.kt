@@ -109,7 +109,7 @@ class ManualHotspotManager(
                     scanFrequency != null -> scanFrequency
                     else -> null
                 }
-                val security = apConfiguration?.security ?: expectedSecurity
+                val security = readConfiguration?.security ?: expectedSecurity
                 onDiagnostic("Manual hotspot configReadable=${apConfiguration != null} " +
                     "security=$security channelKnown=${channel > 0} " +
                     "hardwareAddressKnown=${localInterface.hardwareAddress != null} iface=${localInterface.name} " +
