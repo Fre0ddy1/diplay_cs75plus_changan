@@ -53,6 +53,7 @@ import com.shilapi.xcertplay.network.CarHotspotTethering
 import com.shilapi.xcertplay.network.WifiP2pChannels
 import com.shilapi.xcertplay.orchestration.WirelessHotspotMode
 import com.shilapi.xcertplay.transport.EvChargingConnectors
+import com.shilapi.xcertplay.transport.UsbDiagnostics
 import java.io.File
 import java.text.SimpleDateFormat
 import java.util.Date
@@ -428,6 +429,7 @@ class DiPlayActivity : ComponentActivity() {
                 exportDiagnostics()
             }.apply { isEnabled = !exportInProgress }
             card.addView(exportButton, matchButton(10, 60))
+            card.addView(button(getString(R.string.usb_diagnostics), false) { runUsbDiagnostics() }, matchButton(10, 60))
             card.addView(button(getString(R.string.show_diagnostics_on_screen), false) { showDiagnosticsOnScreen() }, matchButton(10, 60))
             card.addView(button(getString(R.string.clear_logs), false) { clearDiagnosticLogs() }, matchButton(10, 60))
             card.addView(button(getString(R.string.choose_save_location), false) { chooseReportDestination() }, matchButton(10, 60))
@@ -1470,6 +1472,32 @@ class DiPlayActivity : ComponentActivity() {
             java.io.File(dir, "diplay.log").appendText("$stamp  $message\n")
         } catch (_: Exception) {
         }
+    }
+
+    /**
+     * One-tap USB bring-up report (see UsbDiagnostics): records every gate that can silently block
+     * wired CarPlay - system permission UI, the app's attach filter, ADB/root fallbacks and the raw
+     * iPhone USB descriptors - into the exported diplay.log. Runs off the main thread; the log file
+     * is appended line by line so a single long report stays readable.
+     */
+    private fun runUsbDiagnostics() {
+        val context = applicationContext
+        clusterUiLog("USB-DIAG 开始采集（插着 iPhone 采集才有意义）")
+        Thread({
+            val report = runCatching { UsbDiagnostics.report(context) }
+                .getOrElse { "USB-DIAG collection failed: ${it.javaClass.simpleName} ${it.message}" }
+            report.lineSequence().forEach { line ->
+                if (line.isNotBlank()) clusterUiLog(line)
+            }
+            runOnUiThread {
+                if (isFinishing || isDestroyed) return@runOnUiThread
+                android.widget.Toast.makeText(
+                    this,
+                    getString(R.string.usb_diagnostics_done),
+                    android.widget.Toast.LENGTH_LONG,
+                ).show()
+            }
+        }, "usb-diagnostics").start()
     }
 
     /** Vehicle icon name (OEM label) input row. iOS renders the CarPlay car icon from this

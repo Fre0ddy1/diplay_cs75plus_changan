@@ -9,6 +9,13 @@ import android.os.Build
 internal object UsbPermissionActivityProbe {
     internal const val COMPONENT = "com.android.systemui/com.android.systemui.usb.UsbPermissionActivity"
 
+    /**
+     * The other half of the same system flow: the "open this device with ...?" activity raised by a
+     * USB_DEVICE_ATTACHED intent filter. A ROM can ship one and not the other, and the two grant
+     * USB permission through completely different paths, so diagnosis needs both.
+     */
+    internal const val CONFIRM_COMPONENT = "com.android.systemui/com.android.systemui.usb.UsbConfirmActivity"
+
     enum class State { AVAILABLE, UNAVAILABLE, UNKNOWN }
 
     data class Result(val state: State) {
@@ -21,11 +28,22 @@ internal object UsbPermissionActivityProbe {
         return Result(probe(context.applicationContext.packageManager))
     }
 
+    /** One compact line for the diagnostic report: both USB system dialogs and the SDK level. */
+    internal fun inspectAll(context: Context, sdk: Int = Build.VERSION.SDK_INT): String {
+        if (sdk !in Build.VERSION_CODES.N_MR1..Build.VERSION_CODES.P) {
+            return "state=UNKNOWN confirm=UNKNOWN sdk=$sdk(out-of-probe-range)"
+        }
+        val manager = context.applicationContext.packageManager
+        return "state=${probe(manager, COMPONENT)} confirm=${probe(manager, CONFIRM_COMPONENT)} sdk=$sdk"
+    }
+
     internal fun supportsProbe(sdk: Int = Build.VERSION.SDK_INT): Boolean =
         sdk in Build.VERSION_CODES.N_MR1..Build.VERSION_CODES.P
 
-    internal fun probe(manager: PackageManager): State = try {
-        val component = ComponentName.unflattenFromString(COMPONENT)!!
+    internal fun probe(manager: PackageManager): State = probe(manager, COMPONENT)
+
+    internal fun probe(manager: PackageManager, specification: String): State = try {
+        val component = ComponentName.unflattenFromString(specification)!!
         // system_server opens this activity, so it need not be exported to applications.
         val info = manager.getActivityInfo(component, PackageManager.MATCH_DISABLED_COMPONENTS)
         val activityEnabled = enabled(manager.getComponentEnabledSetting(component), info.enabled)
