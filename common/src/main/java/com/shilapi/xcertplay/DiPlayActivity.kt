@@ -665,6 +665,17 @@ class DiPlayActivity : ComponentActivity() {
                     AirPlayPersistence.loadAutoProjectOnConnect(this)) {
                     AirPlayPersistence.saveAutoProjectOnConnect(this, it)
                 }
+                // 冷启动偶发失败的两个兜底：投屏重试阶梯 + 关闭时释放投影权限（否则仪表盘黑屏）。
+                toggle(card, getString(R.string.auto_project_retry),
+                    getString(R.string.auto_project_retry_desc),
+                    AirPlayPersistence.loadAutoProjectRetry(this)) {
+                    AirPlayPersistence.saveAutoProjectRetry(this, it)
+                }
+                toggle(card, getString(R.string.cluster_release_on_close),
+                    getString(R.string.cluster_release_on_close_desc),
+                    AirPlayPersistence.loadClusterReleaseOnClose(this)) {
+                    AirPlayPersistence.saveClusterReleaseOnClose(this, it)
+                }
                 // 车辆图标名称（OEM 标签）由 iOS 端按该文字渲染车机图标。
                 // 全部用朴素原生控件，任一渲染异常仅隐藏该控件并把原因写入诊断日志。
                 runCatching {

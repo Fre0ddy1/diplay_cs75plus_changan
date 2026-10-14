@@ -608,6 +608,41 @@ object AirPlayPersistence {
     }
 
     /**
+     * "自动投屏重试": the head unit does not report whether it accepted the projection sequence, so
+     * a cold-start activation that it dropped used to stay blank until the driver swiped by hand.
+     * With this ON (default) the auto projection repeats a bounded ladder of re-asserts (a light
+     * ext-screen re-assert, then one full open sequence) unless the driver takes over. The full
+     * re-send can make incall announce "全屏镜像/导航已开启" once - turn this OFF if that voice is
+     * more annoying than the rare failed first attempt.
+     */
+    private const val KEY_AUTO_PROJECT_RETRY = "auto_project_retry"
+
+    fun loadAutoProjectRetry(context: Context): Boolean =
+        context.getSharedPreferences(PREFS, Context.MODE_PRIVATE).getBoolean(KEY_AUTO_PROJECT_RETRY, true)
+
+    fun saveAutoProjectRetry(context: Context, enabled: Boolean) {
+        context.getSharedPreferences(PREFS, Context.MODE_PRIVATE).edit().putBoolean(KEY_AUTO_PROJECT_RETRY, enabled).apply()
+        overlaySettingsListener?.invoke()
+    }
+
+    /**
+     * "关闭时释放投影": the three-finger "close" swipe (right swipe past whole-screen mirror).
+     * ON (default): the head unit's ext-screen is handed back, so the dashboard returns to the
+     * head unit's own cluster UI (without it the dashboard shows our hidden projection window,
+     * i.e. black). OFF: only the window is hidden and the projection session is left untouched -
+     * the old behaviour, kept as an escape hatch.
+     */
+    private const val KEY_CLUSTER_RELEASE_ON_CLOSE = "cluster_release_on_close"
+
+    fun loadClusterReleaseOnClose(context: Context): Boolean =
+        context.getSharedPreferences(PREFS, Context.MODE_PRIVATE).getBoolean(KEY_CLUSTER_RELEASE_ON_CLOSE, true)
+
+    fun saveClusterReleaseOnClose(context: Context, enabled: Boolean) {
+        context.getSharedPreferences(PREFS, Context.MODE_PRIVATE).edit().putBoolean(KEY_CLUSTER_RELEASE_ON_CLOSE, enabled).apply()
+        overlaySettingsListener?.invoke()
+    }
+
+    /**
      * "自动飞屏" master switch. When checked (default) the app auto-projects to the dashboard
      * on connect AND may bring up the stock car Amap to feed the cluster. When unchecked NEITHER
      * happens: no auto projection and no stock-Amap handling at all (manual three-finger swipe

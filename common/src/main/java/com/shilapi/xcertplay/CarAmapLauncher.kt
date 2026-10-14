@@ -45,6 +45,20 @@ object CarAmapLauncher {
     fun launchAndReturn(activity: Activity) =
         launchAndReturnTo(activity, DiPlayActivity::class.java)
 
+    /**
+     * Readiness probe for the dashboard projection bring-up: true when there is nothing to wait
+     * for (no stock car Amap installed at all) or the Amap process is up. Feiyu OS only keeps the
+     * instrument-cluster projection channel alive while the stock Amap runs, so the cold-start
+     * auto projection must not fire before this turns true (see the retry/readiness gate in
+     * CarPlayHostActivity).
+     */
+    fun stockAmapReady(context: Context): Boolean {
+        val pm = context.packageManager
+        val candidates = CANDIDATES.filter { runCatching { pm.getPackageInfo(it, 0) }.isSuccess }
+        if (candidates.isEmpty()) return true
+        return candidates.any { isProcessRunning(it) }
+    }
+
     fun launchAndReturnTo(activity: Activity, returnActivity: Class<*>) {
         if (launchedInCurrentRun) {
             // The in-run guard exists so reconnects never flash the Amap over DiPlay again,

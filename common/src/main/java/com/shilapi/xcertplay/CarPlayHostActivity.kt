@@ -303,12 +303,20 @@ class CarPlayHostActivity : ComponentActivity() {
     // the current session, so a reconnect/restart does not re-trigger it mid-flight.
     private var autoProjectTriggered = false
     private var autoProjectToken = Any()
-    // Auto-project robustness: the first activation sequence is often sent before the stock
-    // Amap is fully up, so the head-unit may ignore it. After firing we verify what is
-    // observable (window bound; for whole-screen mirror also the 110 stream being decoded)
-    // and re-send the open sequence (keeping the window) until confirmed, with a cap.
-    private val autoProjectVerifyDelayMs = 4000L
-    private val autoProjectMaxVerifyAttempts = 3
+    // Auto-project robustness. Two separate cold-start hazards, both field-observed as
+    // "auto projection sometimes does not come up, a later manual swipe does":
+    //   (1) bring-up race - the head-unit silently drops the activation sequence when it arrives
+    //       while the dashboard path is still coming up (incall service starting, stock Amap not
+    //       running yet). Handled by awaitAutoProjectReady (bounded readiness gate) plus the
+    //       bind-gated sequence in InCallClusterBridge.
+    //   (2) dropped sequence - the head unit ignored the (now correctly timed) sequence anyway.
+    //       There is no observable success signal (the projection display exists before
+    //       activation, and both streams are decoded into our own surfaces regardless of what the
+    //       head unit does), so the previous "verify" always reported success and never retried.
+    //       Replaced by a bounded retry ladder that mirrors the driver's own manual recovery.
+    private val autoProjectReadyTimeoutMs = 25_000L
+    private val autoProjectReadyPollMs = 1_000L
+    private val autoProjectRetryDelaysMs = longArrayOf(11_000L, 25_000L)
     // Keep one surface per layer alive, including while its map card is hidden.
     private val clusterLayers = mutableMapOf<Boolean, ClusterMapPresentation>()
     private var clusterTurnGuidance: com.shilapi.xcertplay.hud.ClusterTurnGuidance? = null
@@ -455,6 +463,12 @@ class CarPlayHostActivity : ComponentActivity() {
     // first left swipe MUST run the activation sequence unconditionally; only afterwards can
     // swipes hot-switch between mirror/navigation on the activated window.
     private var clusterActivationAttempted = false
+    // True while the head unit's ext-screen has been handed back to the OEM cluster UI (the
+    // driver swiped right past whole-screen mirror). The window/session stay alive but incall is
+    // no longer projecting, so the next open must re-send the full open sequence instead of the
+    // quiet hot-switch, which would only make our (hidden) window visible on a display the
+    // head-unit is not showing.
+    private var clusterExtScreenReleased = false
     private var gestureStartX = 0f
     private var gestureStartY = 0f
     // Press→release trajectory: the action is decided on finger-up from the whole swipe,
@@ -3853,8 +3867,55 @@ class CarPlayHostActivity : ComponentActivity() {
                 appendLog("Auto project: 取消（会话已断开）")
                 return@postDelayed
             }
-            autoProjectTo(mirror, "auto")
+            awaitAutoProjectReady(token, mirror, waitedMs = 0L)
         }, 5000L)
+    }
+
+    /**
+     * Cold-start readiness gate. The fixed "5 s after the session went active" trigger raced the
+     * head-unit bring-up: on a cold boot the incall service may still be starting (the bridge now
+     * waits for its binder itself) and Feiyu OS only keeps the cluster projection channel alive
+     * while the stock car Amap runs - firing before that made the first activation silently
+     * dropped, which is the field-reported "cold-start auto projection occasionally fails, a
+     * later manual swipe works". Wait (bounded) for the projection window to be bound and, when
+     * the stock-Amap handling is enabled, for the Amap process to be up; then project. If the
+     * preconditions never arrive we project anyway (best effort - never worse than before).
+     */
+    private fun awaitAutoProjectReady(token: Any, mirror: Boolean, waitedMs: Long) {
+        if (token != autoProjectToken) return
+        if (shuttingDown.get() || handshakeResetInProgress || isFinishing || isDestroyed) return
+        if (activeAirPlaySession == null) {
+            appendLog("Auto project: 取消（会话已断开）")
+            return
+        }
+        if (!AirPlayPersistence.loadAutoFlyScreen(this)) {
+            appendLog("Auto project: 取消（自动飞屏已取消勾选）")
+            return
+        }
+        val windowReady = clusterPresentation != null
+        val amapRequired = AirPlayPersistence.loadAutoStartCarAmap(this)
+        val amapReady = !amapRequired || CarAmapLauncher.stockAmapReady(this)
+        if (windowReady && amapReady) {
+            if (waitedMs > 0L) {
+                appendLog("Auto project: 已就绪（等待 ${waitedMs}ms 窗口=$windowReady 高德=$amapReady）")
+            }
+            autoProjectTo(mirror, "auto")
+            return
+        }
+        if (waitedMs >= autoProjectReadyTimeoutMs) {
+            appendLog(
+                "Auto project: 等待就绪超时 ${waitedMs}ms（窗口=$windowReady 高德=$amapReady），仍尝试投屏",
+            )
+            autoProjectTo(mirror, "auto")
+            return
+        }
+        if (waitedMs == 0L) {
+            appendLog("Auto project: 等待车机就绪（窗口=$windowReady 高德=$amapReady）")
+        }
+        mainHandler.postDelayed(
+            { awaitAutoProjectReady(token, mirror, waitedMs + autoProjectReadyPollMs) },
+            autoProjectReadyPollMs,
+        )
     }
 
     /** Projects now at the given mode (0=whole mirror, 1=nav stream), reusing the swipe path. */
@@ -3888,77 +3949,64 @@ class CarPlayHostActivity : ComponentActivity() {
             // makes the head-unit announce "全屏导航已开启". Keeping the window leaves both 110/111
             // resident across activation, so the announcement never fires (15:51 behavior).
             tryActivateClusterProjection(mirror, direction, keepWindow = true)
-            // Robustness: verify afterwards and re-send the open sequence (keeping the window)
-            // until the dashboard is actually running. See scheduleAutoProjectVerify.
-            scheduleAutoProjectVerify(mirror, attempt = 1)
+            // The head unit may still drop the sequence (it does not tell us either way), so arm
+            // the bounded retry ladder - the same recovery a manual swipe performs by hand.
+            scheduleAutoProjectRetry(mirror, attempt = 0)
         } else if (ClusterMapPresentation.findDisplay(this) != null) {
             applyClusterMode(mirror, direction)
         } else {
             appendLog("Auto project: 无仪表投影 display，尝试激活")
             tryActivateClusterProjection(mirror, direction)
+            scheduleAutoProjectRetry(mirror, attempt = 0)
         }
     }
 
     /**
-     * Auto-project robustness check. The physical dashboard is invisible to the app, so we
-     * verify what IS observable: the cluster window being bound, and for whole-screen mirror
-     * also the 110 main stream being decoded. If either is missing we re-send the open
-     * activation sequence (keeping any existing window alive - no dismiss+recreate, no black
-     * flash) up to autoProjectMaxVerifyAttempts times. Nav-only mode cannot be verified by
-     * stream activity (111 only runs while the user is navigating), so a bound window counts
-     * as success there; the picture fills in the moment guidance starts on the iPhone.
+     * Auto-project retry ladder.
+     *
+     * There is no reliable success signal to verify against: the projection display is registered
+     * before activation (so "window bound" proves nothing) and both streams are decoded into our
+     * own surfaces regardless of what the head unit does (so "stream active" proves nothing
+     * either - the previous verify always passed for exactly this reason and never retried).
+     * What DOES work is the driver's manual swipe, which simply re-sends the sequence later. So
+     * the ladder automates that: a light ext-screen re-assert first (it cannot re-trigger the
+     * incall projection voice), then a full open sequence, both bounded, and the whole ladder is
+     * cancelled the instant the driver takes over (a manual swipe resets autoProjectToken) or the
+     * session/switch changes. Can be turned off with "自动投屏重试" in the dashboard settings.
      */
-    private fun scheduleAutoProjectVerify(mirror: Boolean, attempt: Int) {
+    private fun scheduleAutoProjectRetry(mirror: Boolean, attempt: Int) {
+        val delay = autoProjectRetryDelaysMs.getOrNull(attempt) ?: return
         val token = autoProjectToken
         mainHandler.postDelayed({
             if (token != autoProjectToken) return@postDelayed
             if (shuttingDown.get() || handshakeResetInProgress || isFinishing || isDestroyed) {
-                appendLog("Auto project: 激活验证取消（关闭/重连中）")
-                return@postDelayed
-            }
-            // The user may have unchecked "自动飞屏" while the retry chain was pending:
-            // stop re-sending the activation sequence once auto projection is disabled.
-            if (!AirPlayPersistence.loadAutoFlyScreen(this)) {
-                appendLog("Auto project: 激活验证取消（自动飞屏已取消勾选）")
+                appendLog("Auto project: 重试取消（关闭/重连中）")
                 return@postDelayed
             }
             if (activeAirPlaySession == null) {
-                appendLog("Auto project: 激活验证取消（会话已断开）")
+                appendLog("Auto project: 重试取消（会话已断开）")
                 return@postDelayed
             }
-            val windowOk = clusterPresentation != null
-            val mirrorStreamOk = !mirror || activeScreenStreamTypes.contains(SCREEN_TYPE_MAIN)
-            if (windowOk && mirrorStreamOk) {
-                appendLog(
-                    "Auto project: 激活已生效（窗口就绪" +
-                        if (mirror) "，整机镜像流已激活）" else "，等待手机导航数据）",
-                )
+            if (!AirPlayPersistence.loadAutoFlyScreen(this)) {
+                appendLog("Auto project: 重试取消（自动飞屏已取消勾选）")
                 return@postDelayed
             }
-            if (attempt > autoProjectMaxVerifyAttempts) {
-                appendLog(
-                    "Auto project: 激活验证 $attempt 次仍未生效，停止重试" +
-                        "（可手动三指滑动重新激活）",
-                )
+            if (!AirPlayPersistence.loadAutoProjectRetry(this)) {
+                appendLog("Auto project: 自动重试已关闭，停止重试")
                 return@postDelayed
             }
-            appendLog(
-                "Auto project: 激活未确认（窗口=$windowOk" +
-                    if (mirror) "，镜像流=${activeScreenStreamTypes.contains(SCREEN_TYPE_MAIN)}" else "" +
-                    "），重发激活序列（第 $attempt 次）",
-            )
-            // Mark the activation as NOT confirmed: the next manual swipe must re-run the open
-            // sequence (a hot-switch onto a session the head-unit ignored would stay blank).
-            // When verification succeeds the flag stays true (set by finishActivation), so
-            // later manual swipes take the quiet hot-switch path and incall does NOT re-announce
-            // "全屏镜像已开启" on every swipe (the voice is triggered by re-sending the full
-            // open sequence, which re-switches the head-unit's projection source).
-            clusterActivationAttempted = false
-            // Re-send the open sequence while keeping the window; finishActivation re-applies
-            // the mode (and creates the window if it was never bound).
-            tryActivateClusterProjection(mirror, "auto", keepWindow = true)
-            scheduleAutoProjectVerify(mirror, attempt + 1)
-        }, autoProjectVerifyDelayMs)
+            if (attempt == 0) {
+                appendLog("Auto project: 重试 ${attempt + 1}/${autoProjectRetryDelaysMs.size}，轻量重申仪表盘投影")
+                InCallClusterBridge.reassertProjection(this)
+            } else {
+                appendLog("Auto project: 重试 ${attempt + 1}/${autoProjectRetryDelaysMs.size}，重发完整激活序列")
+                // Mark the activation as NOT confirmed so a later manual swipe also re-runs the
+                // full sequence (a hot-switch onto a session the head unit ignored stays blank).
+                clusterActivationAttempted = false
+                tryActivateClusterProjection(mirror, "auto", keepWindow = true)
+            }
+            scheduleAutoProjectRetry(mirror, attempt + 1)
+        }, delay)
     }
 
     private fun createSessionListener(controllerGeneration: Int): AirPlaySessionListener =
@@ -3999,6 +4047,9 @@ class CarPlayHostActivity : ComponentActivity() {
                     autoProjectToken = Any()
                     clusterSwipePosition = -1
                     clusterActivationAttempted = false
+                    // A released ext-screen must not survive a reconnect: the next open re-runs
+                    // the full sequence anyway, and a stale flag would only force it again.
+                    clusterExtScreenReleased = false
                     // Clear the stream set unconditionally too: the "already streaming" check
                     // (clusterStreamActive) must never inherit types from the ended session. If
                     // the clear happened only after the menuOpen early-return, a session that
@@ -4490,6 +4541,7 @@ class CarPlayHostActivity : ComponentActivity() {
         // 10-08). The swipe position and activation flags are still reset below.
         clusterSwipePosition = -1
         clusterActivationAttempted = false
+        clusterExtScreenReleased = false
         autoProjectTriggered = false
         autoProjectToken = Any()   // cancel any pending auto-project delayed task
         val size = activeDisplaySize
@@ -4929,32 +4981,58 @@ class CarPlayHostActivity : ComponentActivity() {
             }
         }
         clusterSwipePosition = nextPos
+        if (direction != "auto") {
+            // The driver took over: cancel any pending auto-project retry ladder, so it can never
+            // fight a manual swipe (it would re-send the open sequence on top of the driver's
+            // choice). autoProjectTriggered stays true: auto projection does not re-fire until
+            // the next session.
+            autoProjectToken = Any()
+        }
         if (nextPos == -1) {
             // Back at "not projected": hide the dashboard window (keep it alive so the next
             // swipe can show it instantly) instead of leaving it visible.
-            // NOTE: we intentionally do NOT send the InCallClusterBridge.closeProjection()
-            // sequence here. Field testing showed that the close sequence (10116/10117
-            // op/status 2,2 + 0,1 + tx21[1,1]/tx8[3,0]/tx1[1] + tx30) tears down the head-unit's
-            // projection session: every later openProjection() is then ignored by the head-unit
-            // (dashboard stays blank even though our window is up) and the steering-wheel
-            // projection button is also disabled until the head-unit restarts. The UNI-V box
-            // behaves the same way — its RIGHT swipe only stops the presentation window and never
-            // touches the incall session — so repeated left/right swipes keep working. We mirror
-            // that: hide the window, keep the session, and re-run the open sequence on the next
-            // first-left-swipe.
+            // Hiding the window alone leaves the physical dashboard BLACK: while incall is in
+            // projection mode the cluster shows our (now invisible) projection window, and the
+            // head unit's own UI only comes back when the ext-screen is handed back to it.
+            // So the close swipe now also releases the ext-screen (releaseExternalScreen = the
+            // box's r0: 10116/10117 op/status 2,2 -> 4 pkgs + op/status 0,1 -> incall alone) and
+            // NOTHING else - no binder teardown, no window dismiss.
+            // NOTE: we intentionally do NOT port the rest of the box's close path. Field testing
+            // showed that the full close sequence (tx21[1,1]/tx8[3,0]/tx1[1] + D0(0) + tx30)
+            // tears down the head-unit's projection session: every later openProjection() is then
+            // ignored (dashboard stays blank even though our window is up) and the steering-wheel
+            // projection button is disabled until the head-unit restarts.
             clusterPresentation?.setMapVisible(false)
             appendLog("Cluster swipe $direction: 关闭仪表盘投屏 (pos=-1)")
-            // Keep clusterActivationAttempted=true: the session, window and decoder surface are
-            // all still alive (we only hid the window), so the next left swipe takes the quiet
-            // hot-switch path (show window + rebind stream). Re-setting this flag made the next
-            // swipe re-run the full open sequence, which makes incall re-switch its projection
-            // source and announce "全屏镜像/导航已开启" every time the driver closes and reopens
-            // the dashboard projection (field report: the voice came and went with close/reopen).
+            if (AirPlayPersistence.loadClusterReleaseOnClose(this)) {
+                InCallClusterBridge.releaseExternalScreen(this)
+                clusterExtScreenReleased = true
+                // The head unit is out of projection mode now, so the next open is a real open:
+                // it must re-send the full sequence (which re-grabs the ext-screen) instead of the
+                // quiet hot-switch. This may make incall announce "全屏镜像/导航已开启" once per
+                // close->reopen cycle - the price of the dashboard actually coming back; turn
+                // "关闭时释放投影" off in the dashboard settings to keep the old silent behaviour.
+                clusterActivationAttempted = false
+                appendLog("Cluster swipe $direction: 已释放车机投影权限（仪表盘回到车机原界面）")
+            } else {
+                // Old behaviour: keep the projection session but leave the window hidden. Kept as
+                // an escape hatch in case a ROM reacts badly to the ext-screen hand-back.
+                appendLog("Cluster swipe $direction: 仅隐藏窗口（未释放投影权限，仪表盘可能保持黑屏）")
+            }
             return
         }
         // pos 0 = whole-screen mirror, pos 1 = navigation stream only.
         val mirror = nextPos == 0
         appendLog("Cluster swipe $direction: 请求仪表盘显示${if (mirror) "整机界面" else "导航流"} (pos=$nextPos)")
+        if (clusterExtScreenReleased) {
+            // The ext-screen was handed back on the last close: the head unit is not projecting,
+            // so this is a real (re-)open - re-run the full sequence to take the ext-screen back.
+            clusterExtScreenReleased = false
+            clusterActivationAttempted = false
+            appendLog("Cluster swipe $direction: 投影权限已释放，重发完整激活序列 (pos=$nextPos)")
+            tryActivateClusterProjection(mirror, direction, keepWindow = true)
+            return
+        }
         if (direction != "auto" && nextPos >= 0) {
             if (clusterActivationAttempted && ClusterMapPresentation.findDisplay(this) != null) {
                 // Activation was confirmed for this session (window bound AND the verify pass

@@ -43,6 +43,16 @@ import android.util.Log
  *         h0() repeat r0+s0 at {900,1600,2600,4200,5600,7200}, j0() D0(0) at +5 s,
  *         v0() tx30 unregister callback at +5 s.
  *
+ * NOTE (never ported): the binder-side close (s0/h0/j0/v0) is deliberately NOT implemented.
+ * Field testing showed it ends the head-unit's projection session for good - every later
+ * openProjection() is ignored until the head-unit restarts. releaseExternalScreen() below sends
+ * ONLY r0 (the ext-screen hand-back), which is what the driver's "close" swipe needs: the OEM
+ * UI comes back, the projection session and our bound surfaces stay alive.
+ *
+ * Every call is bind-gated: the projection-mode state ladder is meaningless to an incall service
+ * that is still starting, so openProjection waits (bounded) for the service connection before
+ * sending anything, and runs the whole sequence - broadcast half included - once it lands.
+ *
  * The earlier port was behaviourally wrong in several ways (fixed here): the open
  * sequence used the close-side ext-screen values (2,2+0,1) instead of F0 (0,2);
  * the A0 10019 state ladder and tx2[1] were missing entirely; the 12/40 ladder and
@@ -95,15 +105,19 @@ object InCallClusterBridge {
     private val HOLD_RETRY_DELAYS = longArrayOf(80, 180, 420)
     // i.d(): 12/40 source-switch ladder, NON-cumulative absolute offsets
     private val SOURCE_SWITCH_DELAYS = intArrayOf(250, 1200, 2200, 3500)
-    // i.c(): the 10019 EXTRA_STATE ladder A0() broadcasts, one every 90 ms.
+    // A0: the 10019 EXTRA_STATE ladder A0() broadcasts, one every 90 ms.
     // This is the head-unit's projection-mode state machine — previously missing entirely.
     private val STATE_LADDER = intArrayOf(49, 3, 50, 311, 2001, 15, 116, 319, 3025, 46, -1, 200, 417)
+    // How long to wait for the incall service binder before falling back to the broadcast-only
+    // half of the open sequence (cold boot: the service can take a while to come up).
+    private const val SERVICE_WAIT_FALLBACK_MS = 4_000L
 
     private var contextRef: Context? = null
     private var bound = false
     private var binder: IBinder? = null
     private var callbackRegistered = false
     private var openState = false      // f5349k (open in progress / active)
+    private var broadcastHalfSent = false
     private var generation = 0
     private val mainHandler = Handler(Looper.getMainLooper())
     private val token = Any()
@@ -141,7 +155,7 @@ object InCallClusterBridge {
             Log.i(TAG, "service connected: $name")
             binder = service
             bound = true
-            if (openState) runOpenLocked()
+            if (openState) runFullOpenSequence()
         }
 
         override fun onServiceDisconnected(name: ComponentName?) {
@@ -168,6 +182,14 @@ object InCallClusterBridge {
     /**
      * Open the dashboard projection (the full W→E0+G0 sequence from the box).
      * Returns immediately; the handshake continues on the binder thread.
+     *
+     * The whole sequence is bind-gated. Previously the broadcast half (including the A0 10019
+     * projection-mode ladder - the part the head-unit actually acts on) was fired immediately and
+     * only the binder half was re-run when the service connected. On a cold boot the incall
+     * service is often still starting, so that first ladder went nowhere and the dashboard stayed
+     * blank until the driver swiped by hand (the "cold-start auto projection occasionally fails"
+     * field report). Now: wait for the connection, then send the full sequence; if the service
+     * never connects, fall back to the broadcast-only half so behaviour is never worse than before.
      */
     fun openProjection(context: Context) {
         contextRef = context.applicationContext
@@ -175,12 +197,81 @@ object InCallClusterBridge {
         mainHandler.removeCallbacksAndMessages(token)
         generation++
         openState = true
-        // E0 half (broadcasts + CarProperty, does not need the binder): F0 + A0 state
-        // ladder + p0 9/12/40 ladder + Z + J0. Runs immediately so the head-unit starts
-        // switching to projection mode while the service bind is in flight.
-        runOpenBroadcastSide()
+        broadcastHalfSent = false
         ensureBound(ctx)
-        if (binder != null) runOpenLocked()
+        if (binder != null) {
+            runFullOpenSequence()
+        } else {
+            logSeq(generation, "incall service not connected; waiting up to ${SERVICE_WAIT_FALLBACK_MS}ms")
+            val gen = generation
+            mainHandler.postAtTime({
+                if (gen != generation) return@postAtTime
+                if (binder != null) return@postAtTime
+                logSeq(gen, "incall service still not connected; broadcast half only")
+                runBroadcastHalf()
+            }, token, SystemClock.uptimeMillis() + SERVICE_WAIT_FALLBACK_MS)
+        }
+    }
+
+    /**
+     * Light "the projection should be up" re-assert: F0 (ext-screen clear 0/2) + C0 + Z, i.e. the
+     * parts of the open sequence the box itself repeats many times. It deliberately does NOT
+     * replay the 10019 projection-source ladder or the tx2 source-switch confirmation, because
+     * re-running those makes incall re-switch its projection source and announce "全屏镜像/导航已
+     * 开启" again. Used by the auto-project retry ladder as a first, silent nudge.
+     */
+    fun reassertProjection(context: Context) {
+        contextRef = context.applicationContext
+        if (!openState) {
+            // No open sequence is active (e.g. after releaseExternalScreen): nothing to re-assert.
+            logSeq(generation, "reassert skipped: projection not open")
+            return
+        }
+        logSeq(generation, "reassert: F0 + C0 + Z (no source ladder, no announcement)")
+        clearScreenOpen()
+        setCarProperties()
+        val b = binder ?: return
+        setMode(1)
+        setMode(3)
+        mainHandler.postAtTime({
+            if (!alive()) return@postAtTime
+            val ok = txWrite(b, 2, intArrayOf(1))
+            logSeq(generation, "reassert tx2[1] -> $ok")
+        }, token, SystemClock.uptimeMillis() + 90L)
+    }
+
+    /**
+     * Hand the instrument-cluster ext-screen back to the head unit: r0 of the box's close path
+     * (10116 op/status 2,2 to the four packages, then op/status 0,1 to incall alone) and NOTHING
+     * else. Without it a "close" swipe only hides our projection window, and because the dashboard
+     * shows that (now invisible) window while incall is in projection mode, the driver got a black
+     * dashboard instead of the head unit's own cluster UI. The binder session, the registered
+     * callback and both bound stream surfaces stay alive, so the next open takes the ext-screen
+     * back with the normal open sequence.
+     */
+    fun releaseExternalScreen(context: Context) {
+        contextRef = context.applicationContext
+        logSeq(generation, "releaseExternalScreen: r0 ext-screen hand-back (no binder teardown)")
+        // A pending open-sequence post would send F0 and take the ext-screen straight back, so the
+        // open chain is invalidated first (generation bump + pending posts dropped).
+        openState = false
+        generation++
+        mainHandler.removeCallbacksAndMessages(token)
+        broadcastOperateAll(2, 2)
+        broadcastStatusAll(2, 2)
+        broadcastOperateTo(PKG_INCALL, 0, 1)
+        broadcastStatusTo(PKG_INCALL, 0, 1)
+    }
+
+    private fun runFullOpenSequence() {
+        runBroadcastHalf()
+        runOpenLocked()
+    }
+
+    private fun runBroadcastHalf() {
+        if (broadcastHalfSent) return
+        broadcastHalfSent = true
+        runOpenBroadcastSide()
     }
 
     private fun ensureBound(ctx: Context) {

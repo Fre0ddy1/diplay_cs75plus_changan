@@ -13,6 +13,10 @@
     <string name="auto_fly_screen_desc">勾选后连接成功进入 CarPlay 界面时自动投屏（内容跟随“仪表盘内容”设置），并按“自动启动车载高德”处理车机高德；不勾选则完全不自动投屏、也不处理车载高德，手动三指滑动不受影响。</string>
     <string name="auto_project_on_connect">连接后自动投屏</string>
     <string name="auto_project_on_connect_desc">CarPlay 连接成功后自动投屏到仪表盘，无需三指滑动；投屏内容跟随“仪表盘内容”（整机界面/导航流）设置。</string>
+    <string name="auto_project_retry">自动投屏失败时自动重试</string>
+    <string name="auto_project_retry_desc">冷启动时车机可能丢弃首次投屏指令（仪表盘不亮，手动滑动才生效）。勾选后会自动等待车机就绪并重试（先静默重申，再重发完整激活序列），投屏成功与手动滑动都会立即停止重试。重发完整序列时车机可能播报一次“全屏镜像/导航已开启”。</string>
+    <string name="cluster_release_on_close">关闭时归还仪表盘（避免黑屏）</string>
+    <string name="cluster_release_on_close_desc">三指右滑关闭投屏时，把仪表盘交给车机自身界面（回到车机原来的仪表盘显示）。不勾选则只隐藏投屏画面、不释放车机投影权限，此时仪表盘通常会保持黑屏。</string>
     <string name="oem_label_home">车辆图标名称（OEM 标签）</string>
     <string name="cluster_mirror_left_crop">整机镜像左侧裁剪</string>
     <string name="cluster_mirror_left_crop_format">%1$d px</string>
