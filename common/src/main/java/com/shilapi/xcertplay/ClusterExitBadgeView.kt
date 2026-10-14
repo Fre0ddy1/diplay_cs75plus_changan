@@ -2,11 +2,7 @@ package com.shilapi.xcertplay
 
 import android.content.Context
 import android.graphics.Canvas
-import android.graphics.Color
-import android.graphics.Paint
 import android.graphics.RectF
-import android.graphics.Typeface
-import android.text.TextPaint
 import android.view.View
 import com.shilapi.xcertplay.hud.ClusterTurnGuidance
 
@@ -19,14 +15,9 @@ import com.shilapi.xcertplay.hud.ClusterTurnGuidance
 internal class ClusterExitBadgeView(context: Context) : View(context) {
     private var guidance: ClusterTurnGuidance? = null
 
-    private val glassPaint = Paint(Paint.ANTI_ALIAS_FLAG).apply { color = Color.argb(232, 28, 28, 30) }
-    private val strokePaint = Paint(Paint.ANTI_ALIAS_FLAG).apply {
-        color = Color.argb(38, 255, 255, 255); style = Paint.Style.STROKE; strokeWidth = 2f
-    }
-    private val textPaint = TextPaint(Paint.ANTI_ALIAS_FLAG).apply {
-        color = Color.WHITE; typeface = Typeface.create("sans-serif-medium", Typeface.NORMAL)
-    }
+    private val textPaint = GlassCardStyle.labelPaint(0f, 255, true)
     private val rect = RectF()
+    private val textBackstop = RectF()
 
     // Per-frame cost killers: cached position and measured label width — the hot draw path
     // never touches SharedPreferences or re-measures unchanged text.
@@ -110,8 +101,9 @@ internal class ClusterExitBadgeView(context: Context) : View(context) {
         }
 
         rect.set(left, top, left + cardW, top + cardH)
-        canvas.drawRoundRect(rect, radius, radius, glassPaint)
-        canvas.drawRoundRect(rect, radius, radius, strokePaint)
+        GlassCardStyle.drawCapsule(canvas, rect, radius)
+        textBackstop.set(left, top, left + cardW, top + cardH)
+        GlassCardStyle.drawTextBackstop(canvas, textBackstop, radius)
         // Centre the label, but clamp the text start so it can never spill past the capsule
         // background: CJK fallback fonts can render a few px wider than measureText reports,
         // which pushed "请行驶到南门" past the right edge on the UNI-V dashboard.

@@ -28,23 +28,18 @@ internal class ClusterTurnCardView(context: Context) : View(context) {
     private var size = CarPlayClusterDisplay.OverlaySize.MEDIUM
 
     private val accent = Color.rgb(10, 132, 255)
-    private val glassPaint = Paint(Paint.ANTI_ALIAS_FLAG).apply { color = Color.argb(232, 28, 28, 30) }
-    private val strokePaint = Paint(Paint.ANTI_ALIAS_FLAG).apply {
-        color = Color.argb(38, 255, 255, 255); style = Paint.Style.STROKE; strokeWidth = 2f
-    }
-    private val chipPaint = Paint(Paint.ANTI_ALIAS_FLAG).apply { color = Color.argb(38, 255, 255, 255) }
     private val badgePaint = Paint(Paint.ANTI_ALIAS_FLAG).apply { color = accent }
     private val badgeTextPaint = Paint(Paint.ANTI_ALIAS_FLAG).apply {
         color = Color.WHITE; textAlign = Paint.Align.CENTER
         typeface = Typeface.create("sans-serif-medium", Typeface.NORMAL)
+        setShadowLayer(2f, 0f, 1f, Color.argb(140, 0, 0, 0))
     }
-    private val distancePaint = Paint(Paint.ANTI_ALIAS_FLAG).apply {
-        color = Color.WHITE; typeface = Typeface.create("sans-serif-medium", Typeface.NORMAL)
-    }
-    private val roadPaint = Paint(Paint.ANTI_ALIAS_FLAG).apply {
-        color = Color.argb(179, 199, 199, 204); typeface = Typeface.create("sans-serif", Typeface.NORMAL)
-    }
+    // Text paints are created per-draw (labelPaint caches only typeface/shadow geometry); the two
+    // labels keep their sizes, so we hold the paint references and only update textSize in onDraw.
+    private val distancePaint = GlassCardStyle.labelPaint(0f, 255, true)
+    private val roadPaint = GlassCardStyle.labelPaint(0f, 200, false)
     private val rect = RectF()
+    private val textBackstop = RectF()
     private var glyph: Drawable? = null
     private var glyphTag: Int = -1
 
@@ -133,15 +128,19 @@ internal class ClusterTurnCardView(context: Context) : View(context) {
         }
 
         rect.set(left, top, left + w, top + h)
-        canvas.drawRoundRect(rect, radius, radius, glassPaint)
-        canvas.drawRoundRect(rect, radius, radius, strokePaint)
+        // Liquid-glass capsule: translucent fill + top sheen + bevel + soft drop shadow.
+        GlassCardStyle.drawCapsule(canvas, rect, radius)
 
         val chipTop = top + (h - chip) / 2f
         rect.set(chipLeft + left, chipTop, chipLeft + left + chip, chipTop + chip)
-        canvas.drawRoundRect(rect, chip * 0.26f, chip * 0.26f, chipPaint)
+        GlassCardStyle.drawChip(canvas, rect, chip * 0.26f)
 
         val exit = next.roundaboutExit.takeIf { it in 1..9 }
         drawGlyph(canvas, next, chipLeft + left, chipTop, chip, exit)
+
+        // Legibility backstop over the text area, then the labels.
+        textBackstop.set(left, top, left + w, top + h)
+        GlassCardStyle.drawTextBackstop(canvas, textBackstop, radius)
 
         val textX = left + textLeft
         canvas.drawText(distanceText, textX, top + h * 0.44f, distancePaint)

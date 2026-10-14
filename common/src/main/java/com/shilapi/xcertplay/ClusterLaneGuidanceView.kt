@@ -18,21 +18,18 @@ import com.shilapi.xcertplay.hud.BydLaneGuidance
 internal class ClusterLaneGuidanceView(context: Context) : View(context) {
     private var lanes: BydLaneGuidance? = null
 
-    private val glassPaint = Paint(Paint.ANTI_ALIAS_FLAG).apply { color = Color.argb(232, 28, 28, 30) }
-    private val strokePaint = Paint(Paint.ANTI_ALIAS_FLAG).apply {
-        color = Color.argb(38, 255, 255, 255); style = Paint.Style.STROKE; strokeWidth = 2f
-    }
-    private val accentPaint = Paint(Paint.ANTI_ALIAS_FLAG).apply { color = Color.rgb(10, 132, 255) }
     private val accentStrokePaint = Paint(Paint.ANTI_ALIAS_FLAG).apply {
         color = Color.rgb(10, 132, 255); style = Paint.Style.STROKE; strokeWidth = 2f
     }
     private val arrowActivePaint = Paint(Paint.ANTI_ALIAS_FLAG).apply {
         color = Color.WHITE; style = Paint.Style.STROKE; strokeWidth = 6f
         strokeCap = Paint.Cap.ROUND; strokeJoin = Paint.Join.ROUND
+        setShadowLayer(3f, 0f, 1f, Color.argb(120, 0, 0, 0))
     }
     private val arrowIdlePaint = Paint(Paint.ANTI_ALIAS_FLAG).apply {
-        color = Color.argb(160, 255, 255, 255); style = Paint.Style.STROKE; strokeWidth = 6f
+        color = Color.argb(200, 255, 255, 255); style = Paint.Style.STROKE; strokeWidth = 6f
         strokeCap = Paint.Cap.ROUND; strokeJoin = Paint.Join.ROUND
+        setShadowLayer(3f, 0f, 1f, Color.argb(120, 0, 0, 0))
     }
     private val rect = RectF()
 
@@ -109,13 +106,8 @@ internal class ClusterLaneGuidanceView(context: Context) : View(context) {
             val x = left + index * (laneW + gap)
             val current = index == guidance.currentLane
             rect.set(x, top, x + laneW, top + cardH)
-            if (current) {
-                canvas.drawRoundRect(rect, radius, radius, accentPaint)
-                canvas.drawRoundRect(rect, radius, radius, accentStrokePaint)
-            } else {
-                canvas.drawRoundRect(rect, radius, radius, glassPaint)
-                canvas.drawRoundRect(rect, radius, radius, strokePaint)
-            }
+            // Current lane = blue-highlighted glass chip; other lanes = neutral glass chip.
+            GlassCardStyle.drawChip(canvas, rect, radius, highlight = current)
             drawDirections(canvas, mask, x, top, laneW, cardH, if (current) arrowActivePaint else arrowIdlePaint)
         }
     }

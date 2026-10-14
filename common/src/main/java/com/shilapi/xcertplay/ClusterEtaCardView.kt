@@ -2,10 +2,7 @@ package com.shilapi.xcertplay
 
 import android.content.Context
 import android.graphics.Canvas
-import android.graphics.Color
-import android.graphics.Paint
 import android.graphics.RectF
-import android.graphics.Typeface
 import android.view.View
 import com.shilapi.xcertplay.host.R
 import com.shilapi.xcertplay.hud.ClusterTurnGuidance
@@ -26,19 +23,10 @@ import java.util.Locale
 internal class ClusterEtaCardView(context: Context) : View(context) {
     private var guidance: ClusterTurnGuidance? = null
 
-    private val glassPaint = Paint(Paint.ANTI_ALIAS_FLAG).apply { color = Color.argb(232, 28, 28, 30) }
-    private val strokePaint = Paint(Paint.ANTI_ALIAS_FLAG).apply {
-        color = Color.argb(38, 255, 255, 255); style = Paint.Style.STROKE; strokeWidth = 2f
-    }
-    private val arrivalPaint = Paint(Paint.ANTI_ALIAS_FLAG).apply {
-        color = Color.WHITE
-        typeface = Typeface.create("sans-serif-medium", Typeface.NORMAL)
-    }
-    private val subPaint = Paint(Paint.ANTI_ALIAS_FLAG).apply {
-        color = Color.argb(179, 199, 199, 204)
-        typeface = Typeface.create("sans-serif", Typeface.NORMAL)
-    }
+    private val arrivalPaint = GlassCardStyle.labelPaint(0f, 255, true)
+    private val subPaint = GlassCardStyle.labelPaint(0f, 200, false)
     private val rect = RectF()
+    private val textBackstop = RectF()
 
     // Per-frame cost killers: the ETA card is redrawn once per second (remaining time ticks),
     // so the position is cached and text is only re-measured when the string actually changed.
@@ -150,8 +138,9 @@ internal class ClusterEtaCardView(context: Context) : View(context) {
         }
         rect.set(left, top, left + cardW, top + cardH)
         val radius = cardH * 0.28f
-        canvas.drawRoundRect(rect, radius, radius, glassPaint)
-        canvas.drawRoundRect(rect, radius, radius, strokePaint)
+        GlassCardStyle.drawCapsule(canvas, rect, radius)
+        textBackstop.set(left, top, left + cardW, top + cardH)
+        GlassCardStyle.drawTextBackstop(canvas, textBackstop, radius)
 
         // Left-aligned, clamped so a small measure-vs-render font difference can never
         // push the line past the glass background.

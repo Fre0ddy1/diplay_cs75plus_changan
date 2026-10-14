@@ -2,11 +2,7 @@ package com.shilapi.xcertplay
 
 import android.content.Context
 import android.graphics.Canvas
-import android.graphics.Color
-import android.graphics.Paint
 import android.graphics.RectF
-import android.graphics.Typeface
-import android.text.TextPaint
 import android.view.View
 import com.shilapi.xcertplay.hud.ClusterTurnGuidance
 
@@ -18,17 +14,10 @@ import com.shilapi.xcertplay.hud.ClusterTurnGuidance
 internal class ClusterRoadNameView(context: Context) : View(context) {
     private var guidance: ClusterTurnGuidance? = null
 
-    private val glassPaint = Paint(Paint.ANTI_ALIAS_FLAG).apply { color = Color.argb(232, 28, 28, 30) }
-    private val strokePaint = Paint(Paint.ANTI_ALIAS_FLAG).apply {
-        color = Color.argb(38, 255, 255, 255); style = Paint.Style.STROKE; strokeWidth = 2f
-    }
-    private val primaryPaint = TextPaint(Paint.ANTI_ALIAS_FLAG).apply {
-        color = Color.WHITE; typeface = Typeface.create("sans-serif-medium", Typeface.NORMAL)
-    }
-    private val secondaryPaint = TextPaint(Paint.ANTI_ALIAS_FLAG).apply {
-        color = Color.argb(179, 199, 199, 204); typeface = Typeface.create("sans-serif", Typeface.NORMAL)
-    }
+    private val primaryPaint = GlassCardStyle.labelPaint(0f, 255, true)
+    private val secondaryPaint = GlassCardStyle.labelPaint(0f, 200, false)
     private val rect = RectF()
+    private val textBackstop = RectF()
 
     // Per-frame cost killers: the card is redrawn on every guidance/frame change, so the
     // position and measured text widths are cached and only recomputed when the underlying
@@ -132,8 +121,9 @@ internal class ClusterRoadNameView(context: Context) : View(context) {
         }
 
         rect.set(left, top, left + cardW, top + cardH)
-        canvas.drawRoundRect(rect, radius, radius, glassPaint)
-        canvas.drawRoundRect(rect, radius, radius, strokePaint)
+        GlassCardStyle.drawCapsule(canvas, rect, radius)
+        textBackstop.set(left, top, left + cardW, top + cardH)
+        GlassCardStyle.drawTextBackstop(canvas, textBackstop, radius)
 
         val textTop = if (hasCurrent) top + cardH * 0.40f else top + cardH * 0.64f
         // Full text, never ellipsized: the card width adapts to the text, and the
