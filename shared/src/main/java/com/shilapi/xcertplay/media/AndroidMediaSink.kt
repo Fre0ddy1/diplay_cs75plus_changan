@@ -47,6 +47,11 @@ internal class AudioFocusCoordinator(
     private val active = LinkedHashMap<AudioTrack, Entry>()
     private var request: AudioFocusRequestCompat? = null
     private var requestedChannel: AudioChannel? = null
+    // Volume applied to every active track, so a duck is never stacked on a duck: the head unit's
+    // own policy re-evaluates focus every few seconds during a call and would otherwise pull the
+    // media level down once per evaluation (field report: "media volume drops a notch every few
+    // seconds while on a call").
+    private var appliedVolume = FULL_VOLUME
     private val listener = AudioManager.OnAudioFocusChangeListener { change ->
         synchronized(this) {
             runCatching { report("Audio: focus change=$change activeTracks=${active.size}") }
@@ -64,6 +69,9 @@ internal class AudioFocusCoordinator(
         if (!enabled || manager == null || channel == AudioChannel.NAVIGATION) return
         active[track] = Entry(channel, attributes)
         refreshRequest()
+        // A track that appears while others are ducked must start at the same level, or the new
+        // track plays loud until the next focus callback.
+        runCatching { track.setStereoVolume(appliedVolume, appliedVolume) }
     }
 
     @Synchronized
@@ -71,6 +79,12 @@ internal class AudioFocusCoordinator(
         if (active.remove(track) != null) refreshRequest()
     }
 
+    /**
+     * The focus request follows the highest-priority active channel, but the MEDIA request is
+     * deliberately NOT abandoned when a call appears. Abandoning it makes the head unit's audio
+     * policy re-evaluate from scratch, which is what re-ducked media every few seconds during a
+     * call. The call keeps its own GAIN_TRANSIENT request; media simply stays held underneath it.
+     */
     private fun refreshRequest() {
         val primary = active.values.maxByOrNull { it.channel.focusPriority() }
         if (primary == null) {
@@ -79,8 +93,16 @@ internal class AudioFocusCoordinator(
             requestedChannel = null
             return
         }
-        if (request != null && requestedChannel == primary.channel) return
-        manager?.let { request?.abandon(it) }
+        val callActive = active.values.any { it.channel == AudioChannel.PHONE }
+        if (request != null && (requestedChannel == primary.channel || (callActive && requestedChannel == AudioChannel.MEDIA))) {
+            return
+        }
+        // Never abandon a MEDIA request to install a call request: the call gets its own, and the
+        // media one keeps holding its place so the head unit has nothing to re-evaluate.
+        val replacingMedia = requestedChannel == AudioChannel.MEDIA && primary.channel != AudioChannel.MEDIA
+        if (!replacingMedia) {
+            manager?.let { request?.abandon(it) }
+        }
         val gain = when (primary.channel) {
             AudioChannel.MEDIA -> AudioManager.AUDIOFOCUS_GAIN
             AudioChannel.PHONE -> AudioManager.AUDIOFOCUS_GAIN_TRANSIENT
@@ -97,6 +119,9 @@ internal class AudioFocusCoordinator(
     }
 
     private fun setVolume(volume: Float) {
+        // Only ever move toward the target once: repeated duck callbacks must not multiply.
+        if (volume == appliedVolume) return
+        appliedVolume = volume
         active.keys.forEach { track -> runCatching { track.setStereoVolume(volume, volume) } }
     }
 

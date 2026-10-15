@@ -316,7 +316,7 @@ class CarPlayHostActivity : ComponentActivity() {
     //       Replaced by a bounded retry ladder that mirrors the driver's own manual recovery.
     private val autoProjectReadyTimeoutMs = 25_000L
     private val autoProjectReadyPollMs = 1_000L
-    private val autoProjectRetryDelaysMs = longArrayOf(11_000L, 25_000L)
+    private val autoProjectRetryDelaysMs = longArrayOf(11_000L, 45_000L)
     // Keep one surface per layer alive, including while its map card is hidden.
     private val clusterLayers = mutableMapOf<Boolean, ClusterMapPresentation>()
     private var clusterTurnGuidance: com.shilapi.xcertplay.hud.ClusterTurnGuidance? = null
@@ -3962,6 +3962,17 @@ class CarPlayHostActivity : ComponentActivity() {
     }
 
     /**
+     * True while an auto-projection is still working through its retry ladder.
+     *
+     * The full open sequence is the one thing that makes incall announce "全屏导航已开启", so a
+     * manual swipe that lands inside the ladder must cancel it (a swipe is proof the driver can
+     * see the dashboard, i.e. the projection is up and only the announcement is left). The flag
+     * is set when the ladder is armed and cleared on its last attempt, on any manual swipe, and
+     * on session end / restart.
+     */
+    private var autoProjectLadderActive = false
+
+    /**
      * Auto-project retry ladder.
      *
      * There is no reliable success signal to verify against: the projection display is registered
@@ -3975,23 +3986,34 @@ class CarPlayHostActivity : ComponentActivity() {
      * session/switch changes. Can be turned off with "自动投屏重试" in the dashboard settings.
      */
     private fun scheduleAutoProjectRetry(mirror: Boolean, attempt: Int) {
-        val delay = autoProjectRetryDelaysMs.getOrNull(attempt) ?: return
+        val delay = autoProjectRetryDelaysMs.getOrNull(attempt) ?: run {
+            autoProjectLadderActive = false
+            return
+        }
+        autoProjectLadderActive = true
         val token = autoProjectToken
         mainHandler.postDelayed({
-            if (token != autoProjectToken) return@postDelayed
+            if (token != autoProjectToken) {
+                autoProjectLadderActive = false
+                return@postDelayed
+            }
             if (shuttingDown.get() || handshakeResetInProgress || isFinishing || isDestroyed) {
+                autoProjectLadderActive = false
                 appendLog("Auto project: 重试取消（关闭/重连中）")
                 return@postDelayed
             }
             if (activeAirPlaySession == null) {
+                autoProjectLadderActive = false
                 appendLog("Auto project: 重试取消（会话已断开）")
                 return@postDelayed
             }
             if (!AirPlayPersistence.loadAutoFlyScreen(this)) {
+                autoProjectLadderActive = false
                 appendLog("Auto project: 重试取消（自动飞屏已取消勾选）")
                 return@postDelayed
             }
             if (!AirPlayPersistence.loadAutoProjectRetry(this)) {
+                autoProjectLadderActive = false
                 appendLog("Auto project: 自动重试已关闭，停止重试")
                 return@postDelayed
             }
@@ -3999,7 +4021,12 @@ class CarPlayHostActivity : ComponentActivity() {
                 appendLog("Auto project: 重试 ${attempt + 1}/${autoProjectRetryDelaysMs.size}，轻量重申仪表盘投影")
                 InCallClusterBridge.reassertProjection(this)
             } else {
-                appendLog("Auto project: 重试 ${attempt + 1}/${autoProjectRetryDelaysMs.size}，重发完整激活序列")
+                // The full open sequence is the only thing that makes incall announce "全屏导航
+                // 已开启". By this point the driver has been watching the dashboard for half a
+                // minute: a swipe in the meantime already proved the projection is up (and
+                // cancelled this ladder via autoProjectToken), so reaching here means it really
+                // is still blank and the announcement is the lesser evil.
+                appendLog("Auto project: 重试 ${attempt + 1}/${autoProjectRetryDelaysMs.size}，重发完整激活序列（车机可能播报一次）")
                 // Mark the activation as NOT confirmed so a later manual swipe also re-runs the
                 // full sequence (a hot-switch onto a session the head unit ignored stays blank).
                 clusterActivationAttempted = false
@@ -4045,6 +4072,7 @@ class CarPlayHostActivity : ComponentActivity() {
                     // as "reconnect stuck on nav stream only").
                     autoProjectTriggered = false
                     autoProjectToken = Any()
+                    autoProjectLadderActive = false
                     clusterSwipePosition = -1
                     clusterActivationAttempted = false
                     // A released ext-screen must not survive a reconnect: the next open re-runs
@@ -4544,6 +4572,7 @@ class CarPlayHostActivity : ComponentActivity() {
         clusterExtScreenReleased = false
         autoProjectTriggered = false
         autoProjectToken = Any()   // cancel any pending auto-project delayed task
+        autoProjectLadderActive = false
         val size = activeDisplaySize
             ?: CarPlayBackgroundSession.snapshot()?.let { DisplaySize(it.width, it.height) }
             ?: run {
@@ -4987,6 +5016,12 @@ class CarPlayHostActivity : ComponentActivity() {
             // choice). autoProjectTriggered stays true: auto projection does not re-fire until
             // the next session.
             autoProjectToken = Any()
+            // A swipe also proves the projection is up, which is the only success signal there
+            // is: the ladder's remaining full-sequence retry would only add an announcement.
+            if (autoProjectLadderActive) {
+                autoProjectLadderActive = false
+                appendLog("Auto project: 司机已手动操作，停止重试阶梯（投影应已生效）")
+            }
         }
         if (nextPos == -1) {
             // Back at "not projected": hide the dashboard window (keep it alive so the next
