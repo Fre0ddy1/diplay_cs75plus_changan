@@ -984,7 +984,10 @@ class DiPlayActivity : ComponentActivity() {
     // An opted-in connection prepares the hotspot in the controller instead of stopping at this reminder.
     private fun carHotspotOff(): Boolean =
         AirPlayPersistence.loadWirelessHotspotMode(this) == WirelessHotspotMode.MANUAL &&
-            com.shilapi.xcertplay.network.CarHotspotStatus.isEnabled(this) == false &&
+            com.shilapi.xcertplay.network.CarHotspotSettings.reportedOff(
+                this,
+                com.shilapi.xcertplay.network.CarHotspotStatus.isEnabled(this),
+            ) &&
             !(CarHotspotSettings.enabled(this) && CarHotspotTethering.permitted(this))
 
     private fun bydAdbSettings(parent: LinearLayout) {
@@ -1138,7 +1141,12 @@ class DiPlayActivity : ComponentActivity() {
         AlertDialog.Builder(this).setTitle(getString(R.string.car_hotspot_is_off))
             .setMessage(getString(R.string.msg_car_hotspot_connect, AirPlayPersistence.loadManualHotspotSsid(this)))
             .setPositiveButton(getString(R.string.open_car_settings)) { _, _ -> openCarWifiSettings() }
-            .setNeutralButton(getString(R.string.connect)) { _, _ -> connect(true) }
+            .setNeutralButton(getString(R.string.connect)) { _, _ ->
+                // The driver sees the hotspot on: trust that over Android's report, or this dialog
+                // would come back on every tap (#604).
+                CarHotspotSettings.setOffReportIgnored(this, true)
+                connect(true)
+            }
             .setNegativeButton(getString(R.string.cancel), null).show()
     }
 
