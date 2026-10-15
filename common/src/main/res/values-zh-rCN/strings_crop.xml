@@ -23,4 +23,5 @@
     <string name="cluster_nav_bottom_reserve">导航流底部预留（解决车标被切）</string>
     <string name="usb_diagnostics">USB 诊断（写入日志）</string>
     <string name="usb_diagnostics_done">USB 诊断已写入日志，请用“保存诊断报告”导出后发送</string>
+    <string name="vpn_root_grant">有线连接修复：root 授权 VPN</string>
 </resources>

@@ -330,6 +330,28 @@ class CarPlayVpnService : VpnService() {
         /** Returns the VPN consent intent, or null when consent is already granted. */
         fun prepare(context: Context): Intent? = VpnService.prepare(context)
 
+        /** AppOps operation that gates whether an app may bring up a tunnel at all. */
+        private const val OP_ACTIVATE_VPN = "android:activate_vpn"
+
+        /**
+         * Whether the platform allows this app to activate a VPN.
+         *
+         * `establish()` returns null either because the app is not a *prepared* VPN (the consent
+         * dialog this ROM deleted) or because the ACTIVATE_VPN AppOps operation is not allowed.
+         * Both must be satisfied, and only the first is visible through [prepare]. This is the
+         * second half, and it is the one a slimmed ROM can fix without any dialog:
+         *
+         *     adb shell appops set <package> ACTIVATE_VPN allow
+         *
+         * (the documented workaround for the same missing-dialog situation on Windows Subsystem
+         * for Android). The mode persists across reboots; MODE_DEFAULT means "not allowed here".
+         */
+        fun activateVpnAllowed(context: Context): Boolean? = runCatching {
+            val appOps = context.getSystemService(android.app.AppOpsManager::class.java) ?: return null
+            val mode = appOps.checkOpNoThrow(OP_ACTIVATE_VPN, android.os.Process.myUid(), context.packageName)
+            mode == android.app.AppOpsManager.MODE_ALLOWED
+        }.getOrNull()
+
         /**
          * One-line state of the VPN bring-up for the diagnostic report.
          *
@@ -338,18 +360,22 @@ class CarPlayVpnService : VpnService() {
          *
          *  - `prepare()` keeps returning an intent -> the app is not an approved VPN, so the
          *    platform refuses the tunnel. Fix: grant consent (the dialog this ROM deleted, or
-         *    `am start-user`/root to restore com.android.vpndialogs, or DeviceOwner).
-         *  - `prepare()` returns null but `establish()` still fails -> the platform already
-         *    considers the app approved yet refuses the tunnel, which is a ROM policy and needs a
-         *    different route entirely (e.g. routing the NCM traffic without VpnService).
+         *    restore com.android.vpndialogs, or DeviceOwner).
+         *  - ACTIVATE_VPN AppOps not allowed -> the tunnel is refused even when the consent path
+         *    was never the blocker. Fix: `appops set <package> ACTIVATE_VPN allow` as root/shell.
          *
-         * Only the first is reachable from inside the app, so the report states which one it is.
+         * The report states both, because the field log so far only proves the dialog is missing.
          */
         fun diagnostic(context: Context): String {
             val prepared = try {
                 prepare(context) == null
             } catch (error: Throwable) {
                 return "vpn prepare threw ${error.javaClass.simpleName}"
+            }
+            val appOps = when (activateVpnAllowed(context)) {
+                true -> "activateVpn=allow"
+                false -> "activateVpn=denied"
+                null -> "activateVpn=unknown"
             }
             val pkg = runCatching {
                 context.packageManager.getPackageInfo("com.android.vpndialogs", 0)
@@ -359,7 +385,47 @@ class CarPlayVpnService : VpnService() {
                 val manager = context.getSystemService(android.app.admin.DevicePolicyManager::class.java)
                 if (manager?.isDeviceOwnerApp(context.packageName) == true) "deviceOwner=yes" else "deviceOwner=no"
             }.getOrElse { "deviceOwner=unknown" }
-            return "vpn approved=$prepared consentDialogPkg=$pkg $deviceOwner"
+            return "vpn approved=$prepared $appOps consentDialogPkg=$pkg $deviceOwner"
+        }
+
+        /**
+         * Best-effort root grant of [OP_ACTIVATE_VPN]: on a rooted head unit this fixes the wired
+         * path with no dialog and no PC. Returns the shell output so the caller can log exactly
+         * what happened; `su` that waits for a prompt is reported as unavailable rather than left
+         * hanging.
+         */
+        fun grantActivateVpnWithRoot(context: Context, timeoutMillis: Long = 12_000L): String {
+            val command = "appops set ${context.packageName} ACTIVATE_VPN allow && appops get ${context.packageName} ACTIVATE_VPN"
+            val process = runCatching { ProcessBuilder("su", "-c", command).redirectErrorStream(true).start() }
+                .getOrElse { return "su 启动失败 ${it.javaClass.simpleName}" }
+            val output = StringBuilder()
+            val reader = Thread {
+                runCatching {
+                    process.inputStream.bufferedReader().use { input ->
+                        var line = input.readLine()
+                        while (line != null && output.length < 2_048) {
+                            output.append(line).append('\n')
+                            line = input.readLine()
+                        }
+                    }
+                }
+            }
+            reader.isDaemon = true
+            reader.start()
+            val finished = runCatching {
+                process.waitFor(timeoutMillis, java.util.concurrent.TimeUnit.MILLISECONDS)
+            }.getOrDefault(false)
+            if (!finished) {
+                runCatching { process.destroy() }
+                return "su 无响应（需在 root 管理器里给 DiPlay 永久授权后重试）"
+            }
+            reader.join(1_000L)
+            val text = output.toString().trim()
+            return if (activateVpnAllowed(context) == true) {
+                "已授权 ACTIVATE_VPN ${if (text.isEmpty()) "" else "(${text.replace('\n', ' ')})"}"
+            } else {
+                "su 执行完成但未生效：${text.ifEmpty { "无输出" }}"
+            }
         }
     }
 }

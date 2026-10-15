@@ -24,4 +24,5 @@
     <string name="cluster_no_display_hint">未检测到仪表盘投影显示（模拟器或未连接车机时不可见），以下设置仍可预先配置，车机连接后自动生效。</string>
     <string name="usb_diagnostics">USB 诊断（写入日志）</string>
     <string name="usb_diagnostics_done">USB 诊断已写入日志，请用“保存诊断报告”导出后发送</string>
+    <string name="vpn_root_grant">有线连接修复：root 授权 VPN</string>
 </resources>

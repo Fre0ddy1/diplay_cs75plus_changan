@@ -50,6 +50,7 @@ import com.shilapi.xcertplay.hud.BydVehicleProbeOutcome
 import com.shilapi.xcertplay.host.R
 import com.shilapi.xcertplay.network.CarHotspotSettings
 import com.shilapi.xcertplay.network.CarHotspotTethering
+import com.shilapi.xcertplay.network.CarPlayVpnService
 import com.shilapi.xcertplay.network.WifiP2pChannels
 import com.shilapi.xcertplay.orchestration.WirelessHotspotMode
 import com.shilapi.xcertplay.transport.EvChargingConnectors
@@ -430,6 +431,7 @@ class DiPlayActivity : ComponentActivity() {
             }.apply { isEnabled = !exportInProgress }
             card.addView(exportButton, matchButton(10, 60))
             card.addView(button(getString(R.string.usb_diagnostics), false) { runUsbDiagnostics() }, matchButton(10, 60))
+            card.addView(button(getString(R.string.vpn_root_grant), false) { runVpnRootGrant() }, matchButton(10, 60))
             card.addView(button(getString(R.string.show_diagnostics_on_screen), false) { showDiagnosticsOnScreen() }, matchButton(10, 60))
             card.addView(button(getString(R.string.clear_logs), false) { clearDiagnosticLogs() }, matchButton(10, 60))
             card.addView(button(getString(R.string.choose_save_location), false) { chooseReportDestination() }, matchButton(10, 60))
@@ -1469,6 +1471,31 @@ class DiPlayActivity : ComponentActivity() {
                 }
             })
         }
+
+    /**
+     * One-tap root grant of the ACTIVATE_VPN AppOps operation.
+     *
+     * The wired CarPlay path ends by establishing a VpnService tunnel, and a ROM that deletes
+     * com.android.vpndialogs leaves the app unable to pass the consent step, so establish()
+     * returns null and the whole wired link fails at the last gate. A rooted head unit can fix
+     * that without any dialog with `appops set <package> ACTIVATE_VPN allow` - the same
+     * workaround documented for Windows Subsystem for Android, which has the same missing
+     * component. Runs off the main thread; su that waits for a prompt times out and says so.
+     */
+    private fun runVpnRootGrant() {
+        val context = applicationContext
+        clusterUiLog("VPN-ROOT 开始尝试 root 授权 ACTIVATE_VPN")
+        Thread({
+            val result = runCatching { CarPlayVpnService.grantActivateVpnWithRoot(context) }
+                .getOrElse { "异常 ${it.javaClass.simpleName}: ${it.message}" }
+            clusterUiLog("VPN-ROOT 结果：$result")
+            clusterUiLog("USB-DIAG vpn: ${CarPlayVpnService.diagnostic(context)}")
+            runOnUiThread {
+                if (isFinishing || isDestroyed) return@runOnUiThread
+                android.widget.Toast.makeText(this, result, android.widget.Toast.LENGTH_LONG).show()
+            }
+        }, "vpn-root-grant").start()
+    }
 
     /** Appends a diagnostic line to filesDir/logs/diplay.log (same file the car exports). */
     private fun clusterUiLog(message: String) {
