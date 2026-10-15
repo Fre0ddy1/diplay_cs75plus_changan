@@ -142,6 +142,14 @@ object InCallClusterBridge {
                     data.enforceInterface(CALLBACK_TOKEN)
                     val value = data.readInt()
                     Log.i(TAG, "INavigateCallback code=$code value=$value")
+                    // The head unit calling back is the only channel through which it can tell the
+                    // app anything about the projection, so the raw values go to the exported log:
+                    // if one of them tracks the projection state, a later version can use it to
+                    // skip the open sequence when the dashboard is already up (the announcement is
+                    // caused by re-sending it).
+                    runCatching {
+                        diagnosticSink?.invoke("ClusterBridge callback: code=$code value=$value")
+                    }
                     reply?.writeNoException()
                     return true
                 }
@@ -383,7 +391,19 @@ object InCallClusterBridge {
 
     private fun logSeq(gen: Int, msg: String) {
         Log.i(TAG, "[seq $gen] $msg")
+        // Forward to the host's diagnostic log. Without this the whole activation sequence is
+        // invisible in the exported report: the host only logs that it called openProjection(),
+        // never which transacts/broadcasts landed or what the head unit reported back, which is
+        // exactly what a field report needs to tell "the head unit ignored us" from "we sent the
+        // wrong thing".
+        runCatching { diagnosticSink?.invoke("ClusterBridge: $msg") }
     }
+
+    /**
+     * Diagnostic sink for the host's exported log. Set once when the CarPlay session starts.
+     */
+    @Volatile
+    var diagnosticSink: ((String) -> Unit)? = null
 
     private fun registerCallback(b: IBinder): Boolean {
         val ok = txBinder(b, 29, navigateCallback.asBinder())

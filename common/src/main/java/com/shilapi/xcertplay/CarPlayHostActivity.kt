@@ -316,7 +316,16 @@ class CarPlayHostActivity : ComponentActivity() {
     //       Replaced by a bounded retry ladder that mirrors the driver's own manual recovery.
     private val autoProjectReadyTimeoutMs = 25_000L
     private val autoProjectReadyPollMs = 1_000L
-    private val autoProjectRetryDelaysMs = longArrayOf(11_000L, 45_000L)
+    // Silent re-asserts are free (they cannot trigger the incall announcement), so the ladder can
+    // afford several of them instead of one loud re-send.
+    private val autoProjectRetryDelaysMs = longArrayOf(11_000L, 30_000L, 60_000L)
+    /**
+     * Set when the auto-projection fired while its readiness preconditions never arrived (the
+     * window was still unbound, or the stock Amap never came up). The head unit is likely to have
+     * dropped that first sequence, so only then is a re-send of the announcing open sequence worth
+     * the incall announcement. Otherwise the retry ladder stays silent.
+     */
+    private var autoProjectAttemptWasEarly = false
     // Keep one surface per layer alive, including while its map card is hidden.
     private val clusterLayers = mutableMapOf<Boolean, ClusterMapPresentation>()
     private var clusterTurnGuidance: com.shilapi.xcertplay.hud.ClusterTurnGuidance? = null
@@ -3903,8 +3912,11 @@ class CarPlayHostActivity : ComponentActivity() {
             return
         }
         if (waitedMs >= autoProjectReadyTimeoutMs) {
+            // The first attempt is about to run while a precondition never arrived, so it is the
+            // one case where re-sending the announcing open sequence is worth the announcement.
+            autoProjectAttemptWasEarly = true
             appendLog(
-                "Auto project: 等待就绪超时 ${waitedMs}ms（窗口=$windowReady 高德=$amapReady），仍尝试投屏",
+                "Auto project: 等待就绪超时 ${waitedMs}ms（窗口=$windowReady 高德=$amapReady），仍尝试投屏（首次序列可能被车机丢弃，允许补发）",
             )
             autoProjectTo(mirror, "auto")
             return
@@ -4018,19 +4030,24 @@ class CarPlayHostActivity : ComponentActivity() {
                 return@postDelayed
             }
             if (attempt == 0) {
-                appendLog("Auto project: 重试 ${attempt + 1}/${autoProjectRetryDelaysMs.size}，轻量重申仪表盘投影")
+                appendLog("Auto project: 重试 ${attempt + 1}/${autoProjectRetryDelaysMs.size}，静默重申仪表盘投影")
                 InCallClusterBridge.reassertProjection(this)
-            } else {
-                // The full open sequence is the only thing that makes incall announce "全屏导航
-                // 已开启". By this point the driver has been watching the dashboard for half a
-                // minute: a swipe in the meantime already proved the projection is up (and
-                // cancelled this ladder via autoProjectToken), so reaching here means it really
-                // is still blank and the announcement is the lesser evil.
-                appendLog("Auto project: 重试 ${attempt + 1}/${autoProjectRetryDelaysMs.size}，重发完整激活序列（车机可能播报一次）")
-                // Mark the activation as NOT confirmed so a later manual swipe also re-runs the
-                // full sequence (a hot-switch onto a session the head unit ignored stays blank).
+            } else if (autoProjectAttemptWasEarly) {
+                // Only reachable when the first attempt ran before its preconditions arrived, so a
+                // dropped sequence is likely and the announcement it costs is justified.
+                appendLog("Auto project: 重试 ${attempt + 1}/${autoProjectRetryDelaysMs.size}，首次序列曾过早发出，补发完整激活序列（车机可能播报一次）")
                 clusterActivationAttempted = false
                 tryActivateClusterProjection(mirror, "auto", keepWindow = true)
+            } else {
+                // The common case: the first attempt ran with everything ready and there is no way
+                // to observe whether the head unit accepted it. A silent re-assert costs nothing;
+                // re-sending the full sequence here is what made incall announce "全屏导航已开启"
+                // long after a perfectly working projection (field log: a ladder retry 36 s after
+                // the first sequence, with the driver watching the dashboard). The driver's swipe
+                // stays the recovery for a genuinely dropped attempt - a swipe is a deliberate
+                // action, so the announcement it may cause is expected.
+                appendLog("Auto project: 重试 ${attempt + 1}/${autoProjectRetryDelaysMs.size}，静默重申（不补发完整序列，避免多余播报）")
+                InCallClusterBridge.reassertProjection(this)
             }
             scheduleAutoProjectRetry(mirror, attempt + 1)
         }, delay)
@@ -4073,6 +4090,7 @@ class CarPlayHostActivity : ComponentActivity() {
                     autoProjectTriggered = false
                     autoProjectToken = Any()
                     autoProjectLadderActive = false
+                    autoProjectAttemptWasEarly = false
                     clusterSwipePosition = -1
                     clusterActivationAttempted = false
                     // A released ext-screen must not survive a reconnect: the next open re-runs
@@ -4573,6 +4591,7 @@ class CarPlayHostActivity : ComponentActivity() {
         autoProjectTriggered = false
         autoProjectToken = Any()   // cancel any pending auto-project delayed task
         autoProjectLadderActive = false
+        autoProjectAttemptWasEarly = false
         val size = activeDisplaySize
             ?: CarPlayBackgroundSession.snapshot()?.let { DisplaySize(it.width, it.height) }
             ?: run {
@@ -5022,6 +5041,8 @@ class CarPlayHostActivity : ComponentActivity() {
                 autoProjectLadderActive = false
                 appendLog("Auto project: 司机已手动操作，停止重试阶梯（投影应已生效）")
             }
+            // A swipe proves the projection is up, so an early first attempt is no longer in doubt.
+            autoProjectAttemptWasEarly = false
         }
         if (nextPos == -1) {
             // Back at "not projected": hide the dashboard window (keep it alive so the next
@@ -5335,6 +5356,9 @@ class CarPlayHostActivity : ComponentActivity() {
             )
         }
         sessionLog = activeLog
+        // The cluster bridge logs its activation steps and the head unit's callback values only to
+        // logcat by default; routing them here puts them in the exported report.
+        InCallClusterBridge.diagnosticSink = { message -> appendLog(message) }
     }
 
     private fun refreshLogView(nowMillis: Long) {
