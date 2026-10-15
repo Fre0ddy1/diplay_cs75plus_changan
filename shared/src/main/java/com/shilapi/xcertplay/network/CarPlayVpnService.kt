@@ -390,14 +390,59 @@ class CarPlayVpnService : VpnService() {
 
         /**
          * Best-effort root grant of [OP_ACTIVATE_VPN]: on a rooted head unit this fixes the wired
-         * path with no dialog and no PC. Returns the shell output so the caller can log exactly
-         * what happened; `su` that waits for a prompt is reported as unavailable rather than left
-         * hanging.
+         * path with no dialog and no PC.
+         *
+         * `su` is not one program. The Chang'an Feiyu ROM ships a minimal su that rejects `-c`
+         * outright ("su: invalid uid/gid '-c'") and asks for a password on its own stdin, so the
+         * standard form cannot work there and the command has to be fed through stdin instead.
+         * Every style is tried and the one that worked is reported, rather than assuming.
          */
         fun grantActivateVpnWithRoot(context: Context, timeoutMillis: Long = 12_000L): String {
-            val command = "appops set ${context.packageName} ACTIVATE_VPN allow && appops get ${context.packageName} ACTIVATE_VPN"
-            val process = runCatching { ProcessBuilder("su", "-c", command).redirectErrorStream(true).start() }
-                .getOrElse { return "su 启动失败 ${it.javaClass.simpleName}" }
+            val pkg = context.packageName
+            val script = "appops set $pkg ACTIVATE_VPN allow; appops get $pkg ACTIVATE_VPN; exit"
+            val attempts = listOf(
+                SuAttempt("su -c", listOf("su", "-c", script), stdin = null),
+                SuAttempt("su 0 0", listOf("su", "0", "0"), stdin = script),
+                SuAttempt("su", listOf("su"), stdin = script),
+                SuAttempt("sh su -c", listOf("sh", "-c", "su -c '$script'"), stdin = null),
+            )
+            val problems = mutableListOf<String>()
+            for (attempt in attempts) {
+                val output = runSu(attempt, timeoutMillis)
+                if (activateVpnAllowed(context) == true) {
+                    return "已授权 ACTIVATE_VPN（方式 ${attempt.label}）"
+                }
+                problems += "${attempt.label}: ${output.take(80).ifEmpty { "无输出" }}"
+            }
+            // No su that works. The head unit's own adbd is a better route: the shell user already
+            // holds MANAGE_APP_OPS_MODES, so the operation can be set with no root and no password
+            // at all - only the network-ADB port has to be open (127.0.0.1:5555).
+            val adb = grantActivateVpnWithLocalAdb(context)
+            if (activateVpnAllowed(context) == true) return adb
+            problems += adb
+            return "未生效；${problems.joinToString(" ")}"
+        }
+
+        private fun grantActivateVpnWithLocalAdb(context: Context): String {
+            val pkg = context.packageName
+            return runCatching {
+                com.shilapi.xcertplay.adb.LocalAdb(com.shilapi.xcertplay.adb.AdbKeys.load(context)).use { adb ->
+                    // Never offer a key here: an unapproved key must stay unapproved.
+                    if (adb.connect(mayAsk = false) != com.shilapi.xcertplay.adb.LocalAdb.Access.READY) {
+                        return@use "adb: 车机网络 ADB(127.0.0.1:5555) 未开启或未授权"
+                    }
+                    val output = adb.shell("appops set $pkg ACTIVATE_VPN allow", 8_000)
+                    "adb: ${output?.trim().orEmpty().ifEmpty { "已执行" }}"
+                }
+            }.getOrElse { "adb: ${it.javaClass.simpleName}" }
+        }
+
+        private data class SuAttempt(val label: String, val command: List<String>, val stdin: String?)
+
+        private fun runSu(attempt: SuAttempt, timeoutMillis: Long): String {
+            val process = runCatching {
+                ProcessBuilder(attempt.command).redirectErrorStream(true).start()
+            }.getOrElse { return "启动失败 ${it.javaClass.simpleName}" }
             val output = StringBuilder()
             val reader = Thread {
                 runCatching {
@@ -412,20 +457,24 @@ class CarPlayVpnService : VpnService() {
             }
             reader.isDaemon = true
             reader.start()
+            if (attempt.stdin != null) {
+                runCatching {
+                    process.outputStream.bufferedWriter().use { writer ->
+                        writer.write(attempt.stdin)
+                        writer.flush()
+                    }
+                }
+            }
             val finished = runCatching {
                 process.waitFor(timeoutMillis, java.util.concurrent.TimeUnit.MILLISECONDS)
             }.getOrDefault(false)
             if (!finished) {
                 runCatching { process.destroy() }
-                return "su 无响应（需在 root 管理器里给 DiPlay 永久授权后重试）"
+                reader.join(500L)
+                return "无响应（超时）${output.toString().trim().take(60)}"
             }
-            reader.join(1_000L)
-            val text = output.toString().trim()
-            return if (activateVpnAllowed(context) == true) {
-                "已授权 ACTIVATE_VPN ${if (text.isEmpty()) "" else "(${text.replace('\n', ' ')})"}"
-            } else {
-                "su 执行完成但未生效：${text.ifEmpty { "无输出" }}"
-            }
+            reader.join(500L)
+            return output.toString().trim()
         }
     }
 }
