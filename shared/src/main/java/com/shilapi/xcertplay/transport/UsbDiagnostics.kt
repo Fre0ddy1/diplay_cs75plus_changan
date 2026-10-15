@@ -7,6 +7,7 @@ import android.hardware.usb.UsbManager
 import android.os.Build
 import com.shilapi.xcertplay.adb.AdbKeys
 import com.shilapi.xcertplay.adb.LocalAdb
+import com.shilapi.xcertplay.network.CarPlayVpnService
 import java.io.File
 import java.util.concurrent.TimeUnit
 
@@ -70,6 +71,19 @@ object UsbDiagnostics {
         add("adb-grant-route: supported=$adbGrantSupported (needs Android 7.1-9 AND an approved adb key)")
         add("root: ${rootState()}")
 
+        // ---- gate 5: the VPN/NCM tunnel the wired path ends with ----
+        // Permission alone does not finish the wired bring-up: the last step establishes a
+        // VpnService tunnel for the NCM/Apple Ethernet traffic, and a ROM that deletes
+        // com.android.vpndialogs leaves an unapproved app whose establish() always returns null.
+        add("vpn: ${CarPlayVpnService.diagnostic(app)}")
+
+        // ---- gate 5: the VPN/NCM tunnel the wired path ends with ----
+        // Permission alone does not finish the wired bring-up: the last step establishes a
+        // VpnService tunnel for the NCM/Apple Ethernet traffic, and a ROM that deletes
+        // com.android.vpndialogs leaves an unapproved app whose establish() always returns null.
+        val vpn = CarPlayVpnService.diagnostic(app)
+        add("vpn: $vpn")
+
         // ---- gate 4: what the iPhone actually exposes ----
         val devices = usb.deviceList.values
         add("devices: total=${devices.size} apple=${devices.count { it.vendorId == APPLE_VENDOR_ID }}")
@@ -77,21 +91,32 @@ object UsbDiagnostics {
 
         val appleDevices = devices.filter { it.vendorId == APPLE_VENDOR_ID }
         val granted = appleDevices.count { usb.hasPermission(it) }
-        add("summary: appleDevices=${appleDevices.size} permissionGranted=$granted permissionUi=$permissionUi adb=$adb")
-        add("verdict: ${verdict(appleDevices.size, granted, permissionUi, adb)}")
+        add("summary: appleDevices=${appleDevices.size} permissionGranted=$granted permissionUi=$permissionUi adb=$adb vpn=$vpn")
+        add("verdict: ${verdict(appleDevices.size, granted, permissionUi, adb, vpn)}")
         add("===== USB 诊断结束 =====")
         return lines.joinToString("\n")
     }
 
-    private fun verdict(appleDevices: Int, granted: Int, permissionUi: String, adb: String): String = when {
+    private fun verdict(
+        appleDevices: Int,
+        granted: Int,
+        permissionUi: String,
+        adb: String,
+        vpn: String,
+    ): String = when {
         appleDevices == 0 -> "未枚举到 Apple 设备：先确认 iPhone 已插好、车机 USB 口是数据口（不是纯充电口）"
-        granted > 0 -> "USB 权限已授予：若仍连不上，问题在权限之后的配置切换/协议阶段，看 wired USB configuration 与 usbmux 日志行"
+        granted > 0 && vpn.startsWith("vpn approved=false") ->
+            "权限已拿到但 VPN 未授权（同意框已被 ROM 删除）：这就是现在卡住的地方。修复=把 com.android.vpndialogs 装回/恢复，或用 root 把本应用设为 VPN 批准方；短期可试「无线连接」"
+        granted > 0 && vpn.startsWith("vpn approved=true") ->
+            "权限与 VPN 授权都正常：问题在配置切换/协议阶段，看 wired USB configuration 与 usbmux 日志行"
+        granted > 0 ->
+            "USB 权限已授予，VPN 状态需人工确认（$vpn）"
         permissionUi.startsWith("state=AVAILABLE") && adb.startsWith("READY") ->
             "有系统授权弹窗也有 ADB：优先在车机上点弹窗；弹窗没出现即说明被 ROM 吞掉，改走 ADB 授权"
         permissionUi.startsWith("state=AVAILABLE") ->
             "有系统授权弹窗但 ADB 不可用：弹窗应该出现；没出现就说明该 ROM 的弹窗被拦截（需核对 SystemUI）"
         else ->
-            "枚举到 iPhone 但无权限，且系统 USB 授权弹窗不可用（$permissionUi）——这就是「插上没弹窗、连不上」的根因，需要 root 或 ADB 授权通道"
+            "枚举到 iPhone 但无权限，且系统 USB 授权弹窗不可用（$permissionUi）——需要 root 或 ADB 授权通道"
     }
 
     private fun describeDevice(usb: UsbManager, device: UsbDevice, add: (String) -> Unit) {

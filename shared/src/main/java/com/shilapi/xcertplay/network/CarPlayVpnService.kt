@@ -329,5 +329,37 @@ class CarPlayVpnService : VpnService() {
 
         /** Returns the VPN consent intent, or null when consent is already granted. */
         fun prepare(context: Context): Intent? = VpnService.prepare(context)
+
+        /**
+         * One-line state of the VPN bring-up for the diagnostic report.
+         *
+         * `establish()` returning null has two causes with opposite fixes, and the wired CarPlay
+         * path cannot tell them apart on its own:
+         *
+         *  - `prepare()` keeps returning an intent -> the app is not an approved VPN, so the
+         *    platform refuses the tunnel. Fix: grant consent (the dialog this ROM deleted, or
+         *    `am start-user`/root to restore com.android.vpndialogs, or DeviceOwner).
+         *  - `prepare()` returns null but `establish()` still fails -> the platform already
+         *    considers the app approved yet refuses the tunnel, which is a ROM policy and needs a
+         *    different route entirely (e.g. routing the NCM traffic without VpnService).
+         *
+         * Only the first is reachable from inside the app, so the report states which one it is.
+         */
+        fun diagnostic(context: Context): String {
+            val prepared = try {
+                prepare(context) == null
+            } catch (error: Throwable) {
+                return "vpn prepare threw ${error.javaClass.simpleName}"
+            }
+            val pkg = runCatching {
+                context.packageManager.getPackageInfo("com.android.vpndialogs", 0)
+                "installed"
+            }.getOrElse { "absent" }
+            val deviceOwner = runCatching {
+                val manager = context.getSystemService(android.app.admin.DevicePolicyManager::class.java)
+                if (manager?.isDeviceOwnerApp(context.packageName) == true) "deviceOwner=yes" else "deviceOwner=no"
+            }.getOrElse { "deviceOwner=unknown" }
+            return "vpn approved=$prepared consentDialogPkg=$pkg $deviceOwner"
+        }
     }
 }
