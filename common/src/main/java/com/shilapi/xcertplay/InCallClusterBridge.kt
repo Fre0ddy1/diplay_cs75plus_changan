@@ -129,8 +129,31 @@ object InCallClusterBridge {
     private var observeCallbackRequested = false
     /** Last callback value reported per code, so only transitions reach the exported log. */
     private val lastCallbackValue = java.util.concurrent.ConcurrentHashMap<Int, Int>()
+
+    /**
+     * What incall reports on callback code 2 once the cluster is being driven by us. Measured twice:
+     * it is the value sent while the driver has the projection channel open by hand (before we send
+     * anything), and the value the head unit settles on right after our source switch lands.
+     */
+    private const val CALLBACK_PROJECTING = 3
+
+    /**
+     * Whether incall's own last report says the cluster is already being projected.
+     *
+     * This is the signal that display topology cannot provide: the dashboard display exists from the
+     * first moments of every session, including sessions where the open sequence never runs at all,
+     * so only incall can say whether it is currently routing the cluster to us.
+     */
+    private fun incallReportsProjecting(): Boolean = lastCallbackValue[2] == CALLBACK_PROJECTING
     private var openState = false      // f5349k (open in progress / active)
     private var broadcastHalfSent = false
+    /**
+     * True when this open was started while incall already reported projecting, so only the parts
+     * that cannot switch its projection source may be sent. Also consulted when the service connects
+     * late, which would otherwise run the full sequence and undo the decision.
+     */
+    private var silentOpenOnly = false
+    private var silentHoldScheduled = false
     private var generation = 0
     private val mainHandler = Handler(Looper.getMainLooper())
     private val token = Any()
@@ -185,7 +208,9 @@ object InCallClusterBridge {
                 val ok = registerCallback(service ?: return)
                 logSeq(generation, "observe: registered INavigateCallback before activation -> $ok")
             }
-            if (openState) runFullOpenSequence()
+            if (openState) {
+                if (silentOpenOnly) runSilentOpen() else runFullOpenSequence()
+            }
         }
 
         override fun onServiceDisconnected(name: ComponentName?) {
@@ -253,9 +278,20 @@ object InCallClusterBridge {
         val ctx = contextRef ?: return
         mainHandler.removeCallbacksAndMessages(token)
         generation++
+        // Read incall's own report before we send anything: if the driver has already brought
+        // projection up (the cluster shows "等待 CarPlay 连接"), the source is already ours and the
+        // open sequence's switch would be a switch to the same source - which is what makes incall
+        // announce "全屏导航已开启" for nothing.
+        val alreadyProjecting = incallReportsProjecting()
         openState = true
         broadcastHalfSent = false
+        silentOpenOnly = alreadyProjecting
         ensureBound(ctx)
+        if (alreadyProjecting) {
+            logSeq(generation, "open: incall already reports projecting; silent half only, no source switch")
+            runSilentOpen()
+            return
+        }
         if (binder != null) {
             runFullOpenSequence()
         } else {
@@ -271,11 +307,14 @@ object InCallClusterBridge {
     }
 
     /**
-     * Light "the projection should be up" re-assert: F0 (ext-screen clear 0/2) + C0 + Z, i.e. the
-     * parts of the open sequence the box itself repeats many times. It deliberately does NOT
-     * replay the 10019 projection-source ladder or the tx2 source-switch confirmation, because
-     * re-running those makes incall re-switch its projection source and announce "全屏镜像/导航已
-     * 开启" again. Used by the auto-project retry ladder as a first, silent nudge.
+     * Light "the projection should be up" re-assert: F0 (ext-screen clear 0/2) + C0 + Z, the parts
+     * of the open sequence the box itself repeats many times. It does NOT replay the 10019
+     * projection-source ladder, which is what makes incall re-switch its source and announce
+     * "全屏镜像/导航已开启" again. Used by the auto-project retry ladder as a first nudge.
+     *
+     * NOTE: this still sends tx2[1] (see the body - the older comment here claimed it did not, which
+     * was wrong), so its silence has never actually been verified. A strictly broadcast-only path is
+     * [runSilentOpen]; prefer it when incall already reports projecting.
      */
     fun reassertProjection(context: Context) {
         contextRef = context.applicationContext
@@ -323,6 +362,41 @@ object InCallClusterBridge {
     private fun runFullOpenSequence() {
         runBroadcastHalf()
         runOpenLocked()
+    }
+
+    /**
+     * The parts of the open sequence that cannot switch incall's projection source: F0 (ext-screen
+     * clear), C0(1), C0(3) and the CarProperty write, plus the box's silent hold loop
+     * (F0 + C0(3) + Z).
+     *
+     * Everything that might be the announcement trigger is omitted: the 10019 projection-source
+     * ladder (A0), the 9/12/40 ladder (p0) and the tx2[1] source-switch confirmation. That is
+     * deliberate and stronger than [reassertProjection], whose own comment claims to leave tx2 out
+     * while the code still sends it - so no path here had actually been verified silent. This one is
+     * built from the broadcasts alone, which are the parts the box itself repeats many times.
+     *
+     * Used only when incall reports it is already projecting, so there is no source to switch; the
+     * worst case is a cluster that keeps showing the head unit's own screen, which the driver
+     * recovers with a swipe (a swipe always sends the full sequence).
+     */
+    private fun runSilentOpen() {
+        broadcastHalfSent = true   // the broadcast ladder half is exactly what is being skipped
+        clearScreenOpen()
+        setCarProperties()
+        setMode(1)
+        setMode(3)
+        // Called again when the service connects late; the binder half should run then, but the hold
+        // loop must not be scheduled twice.
+        if (silentHoldScheduled) return
+        silentHoldScheduled = true
+        for (at in HOLD_RETRY_DELAYS) {
+            mainHandler.postAtTime({
+                if (!alive()) return@postAtTime
+                clearScreenOpen()
+                setMode(3)
+                setCarProperties()
+            }, token, SystemClock.uptimeMillis() + at)
+        }
     }
 
     private fun runBroadcastHalf() {
