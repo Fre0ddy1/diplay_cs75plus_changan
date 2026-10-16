@@ -522,6 +522,19 @@ private class VideoDecoder(
     private var lastConfig: VideoJob.Config? = null
     private var renderedFrameLogged = false
     private var submittedFrameLogged = false
+    /**
+     * Set while the codec is behind on its own queue, which is not the same as having lost frames.
+     *
+     * The reference chain is intact in that case, so the picture is brought current by feeding
+     * every frame and skipping the *display* of the stale ones. The alternative that was used
+     * before - discarding the queue and rebuilding the codec - froze the picture for a codec
+     * teardown plus a keyframe wait (field-reported as 1-2 s, intermittently) to remove a 250 ms
+     * backlog, which left the picture far staler than the backlog it was meant to fix.
+     *
+     * Only the decoder thread reads or writes this, so no synchronization is needed.
+     */
+    private var catchingUp = false
+    private var skippedWhileCatchingUp = 0
     private var duplicateConfigLogged = false
     private var failureReports = 0
     private val referenceChain = VideoReferenceChain()
@@ -556,16 +569,25 @@ private class VideoDecoder(
                     when (job) {
                         is VideoJob.Config -> configureDecoder(job)
                         is VideoJob.Frame -> {
-                            if (System.nanoTime() - job.receivedNs > MAX_FRAME_AGE_NS) {
-                                queue.discardFrames()
-                                recover("video backlog exceeded 250 ms")
-                            } else feed(job.nalus)
+                            val ageNs = System.nanoTime() - job.receivedNs
+                            // Behind, not broken: every frame is still here and the reference chain
+                            // is intact, so feed all of them and let drainOutput skip the stale
+                            // displays. See beginCatchUp for why the old discard-and-rebuild path
+                            // was replaced. Genuine frame loss still arrives as VideoJob.Resync
+                            // below and keeps its rebuild.
+                            if (ageNs > MAX_FRAME_AGE_NS) beginCatchUp(ageNs / 1_000_000)
+                            feed(job.nalus)
                         }
                         is VideoJob.SurfaceChanged -> changeSurface(job.surface)
                         is VideoJob.Resync -> recover("video queue overflow")
                         null -> Unit
                     }
                     decoder?.let(::drainOutput)
+                    // The backlog is drained once every queued frame has been fed; only then is the
+                    // display current again. This cannot live inside drainOutput: feed() drains
+                    // through VideoInputPump while acquiring an input buffer, so an end-of-pass
+                    // check there would end the catch-up before the backlog had been fed.
+                    if (catchingUp && queue.isEmpty()) finishCatchUp()
                     stats.logIfDue()?.let(report)
                     if (referenceChain.needsKeyFrame && lastConfig != null && outputSurface != null) requestKeyFrameIfDue()
                 } catch (error: Exception) {
@@ -795,9 +817,13 @@ private class VideoDecoder(
                 index == MediaCodec.INFO_TRY_AGAIN_LATER -> return
                 index == MediaCodec.INFO_OUTPUT_FORMAT_CHANGED -> logOutputFormat(codec.outputFormat)
                 index >= 0 -> {
-                    val render = outputSurface != null
+                    // While the codec is catching up its stale frames are released unseen, which is
+                    // what makes the picture current again. Identical to the original when not
+                    // catching up: render then equals outputSurface != null.
+                    val render = outputSurface != null && !catchingUp
                     codec.releaseOutputBuffer(index, render)
                     if (render) stats.onRendered()
+                    if (catchingUp) skippedWhileCatchingUp++
                     if (render && !renderedFrameLogged) {
                         renderedFrameLogged = true
                         report("first frame rendered")
@@ -808,6 +834,30 @@ private class VideoDecoder(
                 else -> return
             }
         }
+    }
+
+    /**
+     * Starts a catch-up episode: the codec is behind, so the display of frames decoded while the
+     * backlog drains is skipped. The codec itself keeps running and no keyframe is requested.
+     */
+    private fun beginCatchUp(ageMillis: Long) {
+        if (catchingUp) return
+        catchingUp = true
+        // Counted with the recoveries the video stats line already reports, so a field log still
+        // shows how often the decoder fell behind; the report text tells this apart from a real
+        // recovery (which says "waiting for keyframe").
+        stats.onRecovery()
+        val line = "video catch-up: frame waited ${ageMillis}ms " +
+            "(limit ${MAX_FRAME_AGE_NS / 1_000_000}ms); skipping stale displays, codec kept"
+        Log.i(TAG, line)
+        report(line)
+    }
+
+    private fun finishCatchUp() {
+        catchingUp = false
+        val skipped = skippedWhileCatchingUp
+        skippedWhileCatchingUp = 0
+        report("video catch-up done: $skipped frame(s) not displayed, no keyframe wait")
     }
 
     private fun logOutputFormat(format: MediaFormat) {

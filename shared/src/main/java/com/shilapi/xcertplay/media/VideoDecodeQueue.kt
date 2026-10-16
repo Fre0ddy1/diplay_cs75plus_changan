@@ -48,6 +48,9 @@ internal class VideoDecodeQueue(
     }
 
     fun poll(timeoutMillis: Long): VideoJob? = jobs.poll(timeoutMillis, TimeUnit.MILLISECONDS)
+
+    /** True once every queued job has been taken; used to tell when a video catch-up is complete. */
+    fun isEmpty(): Boolean = jobs.isEmpty()
 }
 
 /** Drain output while waiting for input: full output buffers can otherwise starve input forever. */
