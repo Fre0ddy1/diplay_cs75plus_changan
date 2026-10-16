@@ -52,12 +52,26 @@ internal class AudioFocusCoordinator(
     // media level down once per evaluation (field report: "media volume drops a notch every few
     // seconds while on a call").
     private var appliedVolume = FULL_VOLUME
+    private val volumeHandler = Handler(Looper.getMainLooper())
+    // Our own duck is only ever meant to bridge a short prompt, so it undoes itself. The head unit
+    // does not always send AUDIOFOCUS_GAIN when the interrupting audio ends, and without this the
+    // music stayed at 20 % for the rest of the drive - field report: "it turned the media volume
+    // down once and never brought it back". The phone's own duck/unduck commands measure 9-10 s in
+    // the field, so 12 s sits just past them and only fires when the restore really never comes.
+    private val unduckRunnable = Runnable { synchronized(this@AudioFocusCoordinator) { setVolume(FULL_VOLUME) } }
     private val listener = AudioManager.OnAudioFocusChangeListener { change ->
         synchronized(this) {
             runCatching { report("Audio: focus change=$change activeTracks=${active.size}") }
             when (change) {
-                AudioManager.AUDIOFOCUS_LOSS_TRANSIENT_CAN_DUCK -> setVolume(DUCKED_VOLUME)
-                AudioManager.AUDIOFOCUS_GAIN -> setVolume(FULL_VOLUME)
+                AudioManager.AUDIOFOCUS_LOSS_TRANSIENT_CAN_DUCK -> {
+                    setVolume(DUCKED_VOLUME)
+                    volumeHandler.removeCallbacks(unduckRunnable)
+                    volumeHandler.postDelayed(unduckRunnable, DUCK_HOLD_MS)
+                }
+                AudioManager.AUDIOFOCUS_GAIN -> {
+                    volumeHandler.removeCallbacks(unduckRunnable)
+                    setVolume(FULL_VOLUME)
+                }
                 // Keep CarPlay audio running on permanent or transient loss. Some head units
                 // do not send a later gain callback after taking focus back.
             }
@@ -69,9 +83,11 @@ internal class AudioFocusCoordinator(
         if (!enabled || manager == null || channel == AudioChannel.NAVIGATION) return
         active[track] = Entry(channel, attributes)
         refreshRequest()
-        // A track that appears while others are ducked must start at the same level, or the new
-        // track plays loud until the next focus callback.
-        runCatching { track.setStereoVolume(appliedVolume, appliedVolume) }
+        // A track that appears while the music is ducked starts at that same level, so it cannot
+        // play loud under a prompt. Prompts and calls are never attenuated this way.
+        if (channel == AudioChannel.MEDIA) {
+            runCatching { track.setStereoVolume(appliedVolume, appliedVolume) }
+        }
     }
 
     @Synchronized
@@ -122,7 +138,10 @@ internal class AudioFocusCoordinator(
         // Only ever move toward the target once: repeated duck callbacks must not multiply.
         if (volume == appliedVolume) return
         appliedVolume = volume
-        active.keys.forEach { track -> runCatching { track.setStereoVolume(volume, volume) } }
+        // Music only. Turning down the prompt that caused the duck would defeat its purpose, and a
+        // call's audio must never be attenuated.
+        active.entries.filter { it.value.channel == AudioChannel.MEDIA }
+            .forEach { (track, _) -> runCatching { track.setStereoVolume(volume, volume) } }
     }
 
     private fun AudioChannel.focusPriority(): Int = when (this) {
@@ -136,6 +155,8 @@ internal class AudioFocusCoordinator(
         const val TAG = "DiPlay-AudioFocus"
         const val FULL_VOLUME = 1f
         const val DUCKED_VOLUME = 0.2f
+        /** How long our own duck survives without a restore callback from the head unit. */
+        const val DUCK_HOLD_MS = 12_000L
     }
 }
 
@@ -1121,8 +1142,12 @@ private class AudioRenderer(
         val streamOverride = channelOverride(selection.channel)
         var attributes = audioAttributesFor(selection, streamOverride)
         trackAttributes = attributes
-        val plan = MediaAudioBuffer.plan(selection.channel == AudioChannel.MEDIA,
-            format.sampleRate, format.channels, minBuffer, mediaBufferMillis)
+        val plan = MediaAudioBuffer.plan(
+            selection.channel == AudioChannel.MEDIA,
+            format.sampleRate, format.channels, minBuffer, mediaBufferMillis,
+            prompt = selection.channel == AudioChannel.NAVIGATION ||
+                selection.channel == AudioChannel.ASSISTANT,
+        )
         bytesPerSecond = format.sampleRate * frameBytes
         val built: AudioTrack
         var routeLabel: String
