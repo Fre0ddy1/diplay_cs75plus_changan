@@ -20,7 +20,9 @@ import android.graphics.Shader
  *   3. A soft dark drop shadow under the capsule (the "floats above the map" cue).
  *   4. A bright hairline top edge + a dim bottom edge (glossy bevel).
  *
- * Every paint is created once and reused across cards; nothing allocates on the draw path.
+ * The shared paints are created once and reused. The draw path is not allocation-free: drawChip and
+ * drawTextBackstop build a Paint (and, for the text backstop, a LinearGradient) per call. That is
+ * cheap at the rate these cards redraw (about once a second) but would matter if they ever animate.
  */
 internal object GlassCardStyle {
 
@@ -35,9 +37,18 @@ internal object GlassCardStyle {
     private const val SHEEN_ALPHA_TOP = 72
     private const val SHEEN_ALPHA_MID = 22
 
-    /** Soft shadow offset/radius, in fractions of the capsule height. */
-    private const val SHADOW_DY = 0.14f
-    private const val SHADOW_RADIUS = 0.20f
+    /**
+     * Shadow: a small fixed offset with a faint fill, so the capsule reads as lifted without a
+     * slab appearing under it. The earlier proportional offset (14 % of the height) plus a 35 %
+     * black fill drew a solid dark block under tall cards rather than a shadow; field feedback was
+     * "the shadow block is too big and too heavy". The fill also has to stay faint because a shape's
+     * shadow layer is not honoured on every hardware-accelerated path, and a transparent fill would
+     * then leave no shadow at all.
+     */
+    private const val SHADOW_DY_PX = 2f
+    private const val SHADOW_FILL_ALPHA = 26
+    private const val SHADOW_BLUR = 5f
+    private const val SHADOW_LAYER_ALPHA = 64
 
     /** Hairline edges. */
     private val topEdge = Color.argb(90, 255, 255, 255)
@@ -47,8 +58,9 @@ internal object GlassCardStyle {
     // Paints are stateless apart from geometry, so they are safe to share across cards and threads
     // as long as each caller sets its own RectF before drawing (no per-card mutation needed).
     val shadowPaint = Paint(Paint.ANTI_ALIAS_FLAG).apply {
-        color = Color.argb(90, 0, 0, 0)
-        setShadowLayer(1f, 0f, 0f, Color.argb(90, 0, 0, 0))
+        // Faint, not solid: this used to be 35 % black, which painted a dark slab rather than depth.
+        color = Color.argb(SHADOW_FILL_ALPHA, 0, 0, 0)
+        setShadowLayer(SHADOW_BLUR, 0f, SHADOW_DY_PX, Color.argb(SHADOW_LAYER_ALPHA, 0, 0, 0))
     }
     private val fillPaint = Paint(Paint.ANTI_ALIAS_FLAG).apply {
         color = Color.argb(FILL_ALPHA, FILL_R, FILL_G, FILL_B)
@@ -64,11 +76,10 @@ internal object GlassCardStyle {
      * [radius] is the corner radius; the shadow is drawn first so the fill sits on top of it.
      */
     fun drawCapsule(canvas: Canvas, rect: RectF, radius: Float) {
-        // Shadow: offset downward, soft. Drawn as a blurred round rect by offsetting the rect and
-        // relying on the shadow layer; a single extra fill keeps the cost to one more draw.
+        // A small, fixed drop shadow. saveLayer bounds where the soft edge may paint.
         canvas.saveLayer(rect.left - radius, rect.top - radius, rect.right + radius, rect.bottom + radius, null)
         val shadowRect = RectF(rect)
-        shadowRect.offset(0f, rect.height() * SHADOW_DY)
+        shadowRect.offset(0f, SHADOW_DY_PX)
         canvas.drawRoundRect(shadowRect, radius, radius, shadowPaint)
         canvas.restore()
 

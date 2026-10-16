@@ -103,8 +103,17 @@ object InCallClusterBridge {
     private val OPEN_RETRY_DELAYS = longArrayOf(80, 180, 420, 900, 1600, 2400, 3600, 5200, 7600)
     // f5336w: hold-loop points (F0 + C0(3) + Z)
     private val HOLD_RETRY_DELAYS = longArrayOf(80, 180, 420)
-    // i.d(): 12/40 source-switch ladder, NON-cumulative absolute offsets
-    private val SOURCE_SWITCH_DELAYS = intArrayOf(250, 1200, 2200, 3500)
+    // i.d(): 12/40 source-switch ladder, NON-cumulative absolute offsets.
+    //
+    // The source switch is the head unit's cue to announce "全屏导航已开启", and the reference box
+    // repeated state=40 three times (1200/2200/3500 ms), so one activation produced three
+    // announcements in a row - field report: "it announces three or four times, close together".
+    // The switch itself only has to be signalled once: state=9 enters, state=12 selects, state=40
+    // settles. Keeping the full progression and dropping the two redundant repeats leaves the state
+    // machine identical while announcing once instead of three times. F0 (ext-screen) and C0/Z keep
+    // their own repeats for reliability, and those are silent. If a cold start ever comes up blank
+    // because the head unit ignored the single switch, restoring one repeat is a one-line change.
+    private val SOURCE_SWITCH_DELAYS = intArrayOf(250, 1200)
     // A0: the 10019 EXTRA_STATE ladder A0() broadcasts, one every 90 ms.
     // This is the head-unit's projection-mode state machine — previously missing entirely.
     private val STATE_LADDER = intArrayOf(49, 3, 50, 311, 2001, 15, 116, 319, 3025, 46, -1, 200, 417)
