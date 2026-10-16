@@ -308,13 +308,21 @@ object InCallClusterBridge {
 
     /**
      * Light "the projection should be up" re-assert: F0 (ext-screen clear 0/2) + C0 + Z, the parts
-     * of the open sequence the box itself repeats many times. It does NOT replay the 10019
-     * projection-source ladder, which is what makes incall re-switch its source and announce
-     * "全屏镜像/导航已开启" again. Used by the auto-project retry ladder as a first nudge.
+     * of the open sequence the box itself repeats many times. Used by the auto-project retry ladder
+     * as its nudge.
      *
-     * NOTE: this still sends tx2[1] (see the body - the older comment here claimed it did not, which
-     * was wrong), so its silence has never actually been verified. A strictly broadcast-only path is
-     * [runSilentOpen]; prefer it when incall already reports projecting.
+     * It genuinely sends no source-switch signal: not the 10019 projection-source ladder, and not
+     * the tx2[1] confirmation. The older version of this function claimed to leave tx2 out while
+     * its body still sent it, and the field log caught the consequence - one activation announced
+     * three times, ~11 s and ~30 s apart, which is exactly the open sequence plus the two retries
+     * that had run before the driver swiped:
+     *
+     *     20:38:30.779  openProjection()                     -> announcement 1
+     *     20:38:41.854  Auto project: 重试 1/3，静默重申        -> announcement 2
+     *     20:39:11.883  Auto project: 重试 2/3，静默重申        -> announcement 3
+     *
+     * A dropped open still has a guaranteed recovery: the driver's swipe runs the full sequence,
+     * which keeps tx2 for the case where the source really is not ours yet.
      */
     fun reassertProjection(context: Context) {
         contextRef = context.applicationContext
@@ -323,17 +331,12 @@ object InCallClusterBridge {
             logSeq(generation, "reassert skipped: projection not open")
             return
         }
-        logSeq(generation, "reassert: F0 + C0 + Z (no source ladder, no announcement)")
+        logSeq(generation, "reassert: F0 + C0 + Z (broadcast only, no source switch, no announcement)")
         clearScreenOpen()
         setCarProperties()
-        val b = binder ?: return
+        if (binder == null) return
         setMode(1)
         setMode(3)
-        mainHandler.postAtTime({
-            if (!alive()) return@postAtTime
-            val ok = txWrite(b, 2, intArrayOf(1))
-            logSeq(generation, "reassert tx2[1] -> $ok")
-        }, token, SystemClock.uptimeMillis() + 90L)
     }
 
     /**
