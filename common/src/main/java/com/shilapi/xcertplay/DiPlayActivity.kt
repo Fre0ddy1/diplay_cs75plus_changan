@@ -337,7 +337,7 @@ class DiPlayActivity : ComponentActivity() {
         status = label(getString(R.string.ready_when_you_are), 24, TEXT, true).apply { setPadding(0, dp(10), 0, dp(16)) }
         card.addView(status)
         connectButton = button(getString(R.string.connect_phone), true) {
-            if (CarPlayBackgroundSession.hasSession()) openProjection()
+            if (CarPlayBackgroundSession.hasSession()) launchCarPlayScreen()
             else connect(true)
         }
         card.addView(connectButton, matchButton())
@@ -2395,12 +2395,18 @@ class DiPlayActivity : ComponentActivity() {
         }
         val open = {
             AirPlayPersistence.saveWirelessEnabled(this, wireless)
-            openProjection()
+            launchCarPlayScreen()
         }
         if (CarPlayBackgroundSession.hasSession()) CarPlayBackgroundSession.stop { runOnUiThread { open() } }
         else open()
     }
-    private fun openProjection() {
+    /**
+     * Brings the CarPlay screen forward. This only starts the activity - it sends no projection
+     * command. It used to be called openProjection(), which read like InCallClusterBridge's
+     * openProjection() (the real activation sequence) and made every audit of "what can trigger
+     * an announcement" report this settings screen as a suspect.
+     */
+    private fun launchCarPlayScreen() {
         startActivity(Intent(this, CarPlayHostActivity::class.java).addFlags(Intent.FLAG_ACTIVITY_REORDER_TO_FRONT))
     }
     private fun choosePhone() {

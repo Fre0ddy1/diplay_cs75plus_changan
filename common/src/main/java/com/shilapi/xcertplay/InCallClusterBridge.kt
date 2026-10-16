@@ -29,7 +29,7 @@ import android.util.Log
  *     E0: F0() ext-screen clear (10116/10117 op=0 mode=2 -> 4 pkgs)
  *         A0() 10019 EXTRA_STATE ladder {49,3,50,311,2001,15,116,319,3025,46,-1,200,417},
  *              one state every 90 ms; state -1 also re-sends 10117(0,2)
- *         p0() 10019 state=9 then 12/40 ladder at {250,1200,2200,3500} (absolute)
+ *         p0() 10019 state=9 then 12/40 ladder at {250,1200} (absolute)
  *     Z()  CarProperty 557855845=3 / 557855847=1
  *     J0() binder connected -> G0; otherwise F0+D0(9)+l0(waits for binder)
  *     G0: tx29(INavigateCallback stub) register callback
@@ -65,6 +65,35 @@ import android.util.Log
  * All calls are best-effort: failures are logged and never thrown. The head unit
  * may reject a call without system signature; the log will show which steps
  * actually landed so it can be tuned per ROM.
+ *
+ * ---- WHAT CAN MAKE INCALL ANNOUNCE (single source of truth; read this before changing any
+ * ---- send path, so a stale comment cannot mislead again) ----
+ *
+ * The voice ("全屏导航已开启" / "全屏镜像已开启") is produced by the head unit, and only these
+ * sends have been observed or are suspected to cause it:
+ *
+ *   1. the 10019 EXTRA_STATE ladder (A0) and the 9/12/40 source ladder (p0) - a source switch
+ *   2. tx2[1], the source-switch confirmation
+ *   3. (re-)activating a CarPlay video stream on the incall sink, notably 111
+ *
+ * F0 (ext-screen clear), the C0 mode writes (tx21/tx8/tx1) and Z (CarProperty) are the parts the
+ * box itself repeats many times; none has ever been observed to announce. runSilentOpen() and
+ * reassertProjection() are deliberately built from those parts only.
+ *
+ * NOT a signal: whether the dashboard display exists. Our Presentation is on display 1 within
+ * 200-300 ms of the host starting, in sessions where openProjection() is never called at all, so
+ * display topology is always "present" and says nothing about projection state.
+ *
+ * What IS a state signal: callback code 2 - value 3 while incall is projecting, value 0 when it is
+ * not. openProjection() reads it before sending anything and takes the silent path when it already
+ * reports projecting.
+ *
+ * Still unproven, and deliberately left alone rather than "fixed" by guesswork: which single send
+ * among (1)-(3) produces the one announcement a genuine cold-start switch still makes.
+ *
+ * Everything that used to send a source-switch signal more than once in an activation is gone:
+ * the 12/40 ladder repeats, tx2 in the re-assert path, the retry ladder's full re-send, and the
+ * duplicated state=9 (now sent once per open via sendSourceEnter()).
  */
 object InCallClusterBridge {
     private const val TAG = "InCallClusterBridge"
@@ -154,6 +183,8 @@ object InCallClusterBridge {
      */
     private var silentOpenOnly = false
     private var silentHoldScheduled = false
+    /** Set once the entering state (9) has been sent for this open. */
+    private var sourceEnterSent = false
     private var generation = 0
     private val mainHandler = Handler(Looper.getMainLooper())
     private val token = Any()
@@ -285,6 +316,7 @@ object InCallClusterBridge {
         val alreadyProjecting = incallReportsProjecting()
         openState = true
         broadcastHalfSent = false
+        sourceEnterSent = false
         silentOpenOnly = alreadyProjecting
         ensureBound(ctx)
         if (alreadyProjecting) {
@@ -451,7 +483,7 @@ object InCallClusterBridge {
             t += 90L
         }
         // p0: D0(9) then 12/40 ladder at NON-cumulative offsets {250,1200,2200,3500}.
-        broadcastSource(9)
+        sendSourceEnter()
         for ((i, d) in SOURCE_SWITCH_DELAYS.withIndex()) {
             mainHandler.postAtTime({
                 if (gen != generation) return@postAtTime
@@ -476,7 +508,7 @@ object InCallClusterBridge {
         logSeq(gen, "G0: register + F0 + 9 + n0(F0) + C0(1) + C0(3) + Z + tx2 + hold")
         registerCallback(b)
         clearScreenOpen()
-        broadcastSource(9)
+        sendSourceEnter()
         // n0: repeat F0() at f5334u points (ext-screen clear only).
         repeatAt(OPEN_RETRY_DELAYS) {
             if (gen != generation) return@repeatAt
@@ -559,6 +591,19 @@ object InCallClusterBridge {
     private fun clearScreenOpen() {
         broadcastOperateAll(0, 2)
         broadcastStatusAll(0, 2)
+    }
+
+    /**
+     * The "entering projection" state (9), sent at most once per open.
+     *
+     * Both halves of the open sequence send it - the broadcast half as the head of its p0 ladder
+     * and the binder half as its own step - which put two copies of a source-switch signal ~30 ms
+     * apart inside one activation. Only the first caller's copy is sent.
+     */
+    private fun sendSourceEnter() {
+        if (sourceEnterSent) return
+        sourceEnterSent = true
+        broadcastSource(9)
     }
 
     private fun broadcastSource(state: Int) {

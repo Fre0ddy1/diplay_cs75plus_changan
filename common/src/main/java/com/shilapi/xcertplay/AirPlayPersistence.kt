@@ -610,10 +610,11 @@ object AirPlayPersistence {
     /**
      * "自动投屏重试": the head unit does not report whether it accepted the projection sequence, so
      * a cold-start activation that it dropped used to stay blank until the driver swiped by hand.
-     * With this ON (default) the auto projection repeats a bounded ladder of re-asserts (a light
-     * ext-screen re-assert, then one full open sequence) unless the driver takes over. The full
-     * re-send can make incall announce "全屏镜像/导航已开启" once - turn this OFF if that voice is
-     * more annoying than the rare failed first attempt.
+     * With this ON (default) the auto projection repeats a bounded ladder of three silent
+     * re-asserts (F0 + C0 + Z only, no source switch) unless the driver takes over. The full open
+     * sequence is re-sent only when the first attempt is known to have run before its preconditions
+     * arrived, and that re-send can make incall announce once - turn this OFF if a rare announcement
+     * is more annoying than a rare failed first attempt.
      */
     private const val KEY_AUTO_PROJECT_RETRY = "auto_project_retry"
 
