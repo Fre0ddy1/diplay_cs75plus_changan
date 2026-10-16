@@ -159,16 +159,6 @@ class AndroidMediaSink(
     private val navigationStreamType: Int = AudioChannelMapper.DEFAULT_NAVIGATION_STREAM_TYPE,
     onScreenStreamActiveChanged: ((Int, Boolean) -> Unit)? = null,
     private val mediaBufferMillis: Int = MediaAudioBuffer.DEFAULT_MILLIS,
-    /**
-     * How long to hold each video frame before rendering it, in milliseconds.
-     *
-     * The music channel carries a deliberate jitter buffer (see [MediaAudioBuffer]: 300/1000/1500
-     * ms) while video is rendered the moment it is decoded, so sound sits behind the picture by
-     * that much and lyrics show up early. The offset is a fixed delay, not a drift, so delaying
-     * video by the same amount lines the two back up without touching the buffer that keeps music
-     * from stuttering on a weak Wi-Fi link. 0 keeps the old behaviour.
-     */
-    private val videoDelayMillis: Int = 0,
     private val onAudioDiagnostic: (String) -> Unit = {},
     /** True while any music ("media") audio stream is running; called from media threads. */
     private val onMediaAudioChanged: (Boolean) -> Unit = {},
@@ -490,7 +480,6 @@ class AndroidMediaSink(
         videoWidth,
         videoHeight,
         preferSoftwareHevcDecoder,
-        videoDelayMillis,
         requestKeyFrame = { requestVideoRecovery(type) },
         report = { videoDiagnosticHandlers[type]?.invoke(it) },
         statsLabel = statsLabel,
@@ -522,13 +511,11 @@ private class VideoDecoder(
     private val width: Int,
     private val height: Int,
     private val preferSoftwareHevcDecoder: Boolean,
-    /** Render delay in ms, to line the picture up with the buffered music; 0 renders at once. */
-    private val videoDelayMillis: Int = 0,
     private val requestKeyFrame: () -> Unit,
     private val report: (String) -> Unit,
     statsLabel: String? = null,
 ) : Closeable {
-    private val queue = VideoDecodeQueue(holdMillis = videoDelayMillis.toLong())
+    private val queue = VideoDecodeQueue()
     @Volatile private var running = true
     @Volatile private var decoder: MediaCodec? = null
     private var outputSurface: Surface? = surface

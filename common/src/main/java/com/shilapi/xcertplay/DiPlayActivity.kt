@@ -464,14 +464,6 @@ class DiPlayActivity : ComponentActivity() {
                 bufferPresets.indexOf(AirPlayPersistence.loadMediaBufferMillis(this)).coerceAtLeast(0)) {
                 AirPlayPersistence.saveMediaBufferMillis(this, bufferPresets[it])
             }
-            // The music buffer delays sound by design (Wi-Fi jitter) while video renders at once,
-            // so lyrics can show up early. Delay the picture by the same amount to line them up.
-            val delayPresets = AirPlayPersistence.videoDelayPresets
-            choice(card, getString(R.string.video_sync_delay), listOf(getString(R.string.video_sync_off), getString(R.string.video_sync_300_ms), getString(R.string.video_sync_1000_ms), getString(R.string.video_sync_1500_ms)),
-                delayPresets.indexOf(AirPlayPersistence.loadVideoDelayMillis(this)).coerceAtLeast(0)) {
-                AirPlayPersistence.saveVideoDelayMillis(this, delayPresets[it])
-            }
-            card.addView(label(getString(R.string.video_sync_delay_hint), 14, MUTED).apply { setPadding(0, dp(10), 0, 0) })
             choice(card, getString(R.string.frame_rate), listOf(getString(R.string.s_30_fps_lighter_load), getString(R.string.s_60_fps_smoother_motion)), if (AirPlayPersistence.loadFps(this) == 60) 1 else 0) { AirPlayPersistence.saveFps(this, if (it == 1) 60 else 30) }
             toggle(card, getString(R.string.efficient_video), getString(R.string.use_hevc_leave_off_for_the_widest_head_unit_compatibility), AirPlayPersistence.loadHevcEnabled(this)) { AirPlayPersistence.saveHevcEnabled(this, it) }
             toggle(card, getString(R.string.right_hand_drive), getString(R.string.place_carplay_s_controls_closer_to_the_driver), AirPlayPersistence.loadRightHandDrive(this)) { AirPlayPersistence.saveRightHandDrive(this, it) }
