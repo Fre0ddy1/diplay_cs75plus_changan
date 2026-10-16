@@ -1106,6 +1106,11 @@ class CarPlayHostActivity : ComponentActivity() {
             applyClusterTurnOverlay()
             Log.i(ClusterMapPresentation.TAG, "cluster presentation shown display=${display.displayId} name=${display.name}")
             appendLog("Cluster map: presentation shown display=${display.displayId}")
+            // Start watching incall's callback now, long before any activation. The display above
+            // is always present (measured within ~300 ms of startup, including sessions where the
+            // open sequence never runs at all), so display topology cannot say whether the head
+            // unit is already projecting; incall's own callback is the only channel that can.
+            InCallClusterBridge.observeCallback(this)
         } catch (error: RuntimeException) {
             Log.w(ClusterMapPresentation.TAG, "cluster presentation failed", error)
             appendLog("Cluster map: presentation failed ${error.javaClass.simpleName}")

@@ -125,6 +125,10 @@ object InCallClusterBridge {
     private var bound = false
     private var binder: IBinder? = null
     private var callbackRegistered = false
+    /** Set once the host asks us to watch the callback before any projection is requested. */
+    private var observeCallbackRequested = false
+    /** Last callback value reported per code, so only transitions reach the exported log. */
+    private val lastCallbackValue = java.util.concurrent.ConcurrentHashMap<Int, Int>()
     private var openState = false      // f5349k (open in progress / active)
     private var broadcastHalfSent = false
     private var generation = 0
@@ -152,12 +156,17 @@ object InCallClusterBridge {
                     val value = data.readInt()
                     Log.i(TAG, "INavigateCallback code=$code value=$value")
                     // The head unit calling back is the only channel through which it can tell the
-                    // app anything about the projection, so the raw values go to the exported log:
-                    // if one of them tracks the projection state, a later version can use it to
-                    // skip the open sequence when the dashboard is already up (the announcement is
-                    // caused by re-sending it).
-                    runCatching {
-                        diagnosticSink?.invoke("ClusterBridge callback: code=$code value=$value")
+                    // app anything about the projection. Only transitions reach the exported log:
+                    // during a state ladder the head unit answers every broadcast, and with the
+                    // callback now registered before activation that would flood the report.
+                    val previous = lastCallbackValue.put(code, value)
+                    if (previous == null || previous != value) {
+                        runCatching {
+                            diagnosticSink?.invoke(
+                                "ClusterBridge callback: code=$code value=$value" +
+                                    (previous?.let { " (was $it)" } ?: ""),
+                            )
+                        }
                     }
                     reply?.writeNoException()
                     return true
@@ -172,6 +181,10 @@ object InCallClusterBridge {
             Log.i(TAG, "service connected: $name")
             binder = service
             bound = true
+            if (observeCallbackRequested && !callbackRegistered) {
+                val ok = registerCallback(service ?: return)
+                logSeq(generation, "observe: registered INavigateCallback before activation -> $ok")
+            }
             if (openState) runFullOpenSequence()
         }
 
@@ -180,6 +193,33 @@ object InCallClusterBridge {
             binder = null
             bound = false
             callbackRegistered = false
+        }
+    }
+
+    /**
+     * Watches the head unit's INavigateCallback without sending a single projection command.
+     *
+     * Whether the dashboard display exists is not the question: our Presentation is on display 1
+     * within about 300 ms of the host starting, in sessions where openProjection is never called at
+     * all, so display topology is always "present" and cannot say whether incall is routing the
+     * cluster to our ext-screen. That is incall's own state, and this callback is the only channel
+     * through which it can report it.
+     *
+     * Registering here, rather than inside the open sequence, is what makes the next field run a
+     * measurement of the one thing that would let the open sequence be skipped when the driver has
+     * already brought projection up by hand: does incall report a state before we ask it for one?
+     */
+    fun observeCallback(context: Context) {
+        contextRef = context.applicationContext
+        if (observeCallbackRequested) return
+        observeCallbackRequested = true
+        val existing = binder
+        if (existing != null) {
+            val ok = runCatching { registerCallback(existing) }.getOrDefault(false)
+            logSeq(generation, "observe: registered INavigateCallback before activation -> $ok")
+        } else {
+            logSeq(generation, "observe: binding to watch INavigateCallback before activation")
+            ensureBound(context)
         }
     }
 
