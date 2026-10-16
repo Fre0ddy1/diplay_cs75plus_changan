@@ -4046,6 +4046,28 @@ class CarPlayHostActivity : ComponentActivity() {
         object : AirPlaySessionListener {
             private val diagnosticLog = sessionLog
 
+            /**
+             * The phone's own audio-interruption commands. iOS sends these when one of its sounds
+             * (a camera shutter, a notification, Siri) should be heard over the car's playback,
+             * and the accessory is expected to lower its audio for the requested window. They used
+             * to be ignored, so the only thing that ever ducked our music was the head unit's focus
+             * callback - and with no matching restore from it, taking a photo could leave the music
+             * quiet for the rest of the drive.
+             */
+            override fun onCommand(session: AirPlaySession, type: String, params: Map<String, Any?>) {
+                when (type) {
+                    "duckAudio" -> {
+                        val durationMs = (params["durationMs"] as? Number)?.toLong() ?: 2_000L
+                        appendLog("CarPlay audio: duckAudio durationMs=$durationMs")
+                        sink?.duckMediaFor(durationMs)
+                    }
+                    "unduckAudio" -> {
+                        appendLog("CarPlay audio: unduckAudio")
+                        sink?.unduckMedia()
+                    }
+                }
+            }
+
             override fun onSessionActive(session: AirPlaySession) {
                 runOnUiThread {
                     if (controllerGeneration != restartGeneration) {

@@ -670,8 +670,10 @@ object AirPlayPersistence {
     private const val KEY_CLUSTER_MIRROR_LEFT_CROP = "cluster_mirror_left_crop_px"
 
     fun loadClusterMirrorLeftCropPx(context: Context): Int =
+        // 0 by default: the left-dock crop was defaulting to 150 px, which quietly cut 150 px off
+        // the mirror for every driver who never opened this slider.
         context.getSharedPreferences(PREFS, Context.MODE_PRIVATE)
-            .getInt(KEY_CLUSTER_MIRROR_LEFT_CROP, 150).coerceIn(0, 400)
+            .getInt(KEY_CLUSTER_MIRROR_LEFT_CROP, 0).coerceIn(0, 400)
 
     fun saveClusterMirrorLeftCropPx(context: Context, px: Int) {
         context.getSharedPreferences(PREFS, Context.MODE_PRIVATE).edit()

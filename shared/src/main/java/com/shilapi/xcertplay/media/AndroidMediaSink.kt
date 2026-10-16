@@ -144,6 +144,31 @@ internal class AudioFocusCoordinator(
             .forEach { (track, _) -> runCatching { track.setStereoVolume(volume, volume) } }
     }
 
+    /**
+     * The phone's own duckAudio command: lower the music for [durationMs] and then bring it back.
+     *
+     * CarPlay sends this when one of iOS's own sounds (a camera shutter, a notification, Siri)
+     * should be heard over ours, and the accessory is expected to honour it. Ignoring it left the
+     * head unit's focus callback as the only thing that ever lowered our music - and when that
+     * callback's matching restore never arrived, the music stayed quiet for the rest of the drive
+     * (field report: taking a photo ducked the volume and it did not come back).
+     */
+    fun duckFor(durationMs: Long) {
+        synchronized(this) {
+            setVolume(DUCKED_VOLUME)
+            volumeHandler.removeCallbacks(unduckRunnable)
+            volumeHandler.postDelayed(unduckRunnable, durationMs.coerceIn(200L, DUCK_HOLD_MS))
+        }
+    }
+
+    /** The phone's unduckAudio command, or the end of the window we were given. */
+    fun unduck() {
+        synchronized(this) {
+            volumeHandler.removeCallbacks(unduckRunnable)
+            setVolume(FULL_VOLUME)
+        }
+    }
+
     private fun AudioChannel.focusPriority(): Int = when (this) {
         AudioChannel.MEDIA -> 3
         AudioChannel.PHONE -> 2
@@ -457,6 +482,23 @@ class AndroidMediaSink(
                 Log.w("xcertplay-usb", "could not restore audio mode $savedAudioMode", error)
             }
         }
+    }
+
+    /**
+     * The phone's CarPlay audio-interruption commands, forwarded from the session.
+     *
+     * iOS sends duckAudio/unduckAudio when one of its own sounds (camera shutter, notification,
+     * Siri) should be heard over the accessory's playback, and the accessory is expected to lower
+     * its audio for the requested window. Both were ignored, which left the head unit's focus
+     * callback as the only thing that ever lowered the music - and when its matching restore never
+     * came, the music stayed quiet (field report: a photo ducked the volume and it never returned).
+     */
+    fun duckMediaFor(durationMs: Long) {
+        audioRenderers.values.forEach { runCatching { it.duckAudioFor(durationMs) } }
+    }
+
+    fun unduckMedia() {
+        audioRenderers.values.forEach { runCatching { it.unduckAudio() } }
     }
 
     fun close() {
@@ -954,8 +996,7 @@ private class AudioRenderer(
     private val audioFocusEnabled: Boolean,
     private val mediaChannel: Int,
     private val navigationChannel: Int,
-    private val audioFocusCoordinator: AudioFocusCoordinator,
-    private val navigationStreamType: Int,
+    private val audioFocusCoordinator: AudioFocusCoordinator,    private val navigationStreamType: Int,
     private val mediaBufferMillis: Int,
     private val report: (String) -> Unit,
 ) : Closeable {
@@ -1289,6 +1330,10 @@ private class AudioRenderer(
     private fun abandonAudioFocus() {
         track?.let(audioFocusCoordinator::release)
     }
+
+    /** Forwarded from AndroidMediaSink when the phone sends its duckAudio/unduckAudio commands. */
+    fun duckAudioFor(durationMs: Long) = audioFocusCoordinator.duckFor(durationMs)
+    fun unduckAudio() = audioFocusCoordinator.unduck()
 
     private fun pcmFormat(encoding: Int, channelMask: Int) = AndroidAudioFormat.Builder()
         .setSampleRate(format.sampleRate)
