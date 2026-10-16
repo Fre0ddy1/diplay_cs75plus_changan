@@ -25,4 +25,10 @@
     <string name="usb_diagnostics">USB 诊断（写入日志）</string>
     <string name="usb_diagnostics_done">USB 诊断已写入日志，请用“保存诊断报告”导出后发送</string>
     <string name="vpn_root_grant">有线连接修复：root 授权 VPN</string>
+    <string name="video_sync_delay">影音同步延时</string>
+    <string name="video_sync_off">关闭</string>
+    <string name="video_sync_300_ms">300 毫秒</string>
+    <string name="video_sync_1000_ms">1000 毫秒</string>
+    <string name="video_sync_1500_ms">1500 毫秒</string>
+    <string name="video_sync_delay_hint">音乐为了抗 Wi-Fi 抖动会故意缓冲（见“音乐缓冲”），画面则是即解即显，所以歌词可能比声音早。此项把画面延后同样时长来对齐；缓冲设多少就选多少，若不同步相反（声音比画面早）请关闭。</string>
 </resources>

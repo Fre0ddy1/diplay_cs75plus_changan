@@ -65,6 +65,7 @@ object AirPlayPersistence {
     private const val KEY_OEM_LABEL = "oem_label"
     private const val KEY_FPS = "display_fps"
     private const val KEY_MEDIA_BUFFER_MS = "media_buffer_ms"
+    private const val KEY_VIDEO_DELAY_MS = "video_delay_ms"
     private const val KEY_CLUSTER_MAP = "cluster_map_enabled"
     private const val KEY_CLUSTER_MIRROR_MAIN = "cluster_mirror_main_screen"
     private const val KEY_CENTER_MAP_OVERLAY = "center_map_overlay"
@@ -521,6 +522,26 @@ object AirPlayPersistence {
         context.getSharedPreferences(PREFS, Context.MODE_PRIVATE).edit()
             .putInt(KEY_MEDIA_BUFFER_MS, com.shilapi.xcertplay.media.MediaAudioBuffer.sanitize(millis)).apply()
     }
+
+    /**
+     * Video render delay used to line the picture up with the buffered music, in milliseconds.
+     * 0 disables it; the presets track [com.shilapi.xcertplay.media.MediaAudioBuffer] so the
+     * delay can match the audio buffer the user picked.
+     */
+    fun loadVideoDelayMillis(context: Context): Int = sanitizeVideoDelayMillis(
+        context.getSharedPreferences(PREFS, Context.MODE_PRIVATE).getInt(KEY_VIDEO_DELAY_MS, 0),
+    )
+
+    fun saveVideoDelayMillis(context: Context, millis: Int) {
+        context.getSharedPreferences(PREFS, Context.MODE_PRIVATE).edit()
+            .putInt(KEY_VIDEO_DELAY_MS, sanitizeVideoDelayMillis(millis)).apply()
+    }
+
+    /** Matches the music buffer presets plus "off"; see MediaAudioBuffer.presets. */
+    val videoDelayPresets = listOf(0, 300, 1000, 1500)
+
+    fun sanitizeVideoDelayMillis(millis: Int): Int =
+        millis.takeIf { it in videoDelayPresets } ?: 0
 
     fun saveFps(context: Context, fps: Int) {
         context.getSharedPreferences(PREFS, Context.MODE_PRIVATE).edit()
