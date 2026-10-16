@@ -1018,6 +1018,17 @@ class CarPlayHostActivity : ComponentActivity() {
         }
         settingsGestureHint?.text = getString(R.string.open_diplay_settings_hint)
         ensureClusterPresentation()
+        // Watch for the dashboard display arriving late. Cold boot: the driver can open the app
+        // before the instrument cluster has come up, findDisplay() then returns nothing, the
+        // readiness gate times out at 25 s, and autoProjectTriggered is already set - so the
+        // projection was never attempted and never retried, and the dashboard stayed empty.
+        if (!clusterDisplayListenerRegistered) {
+            runCatching {
+                getSystemService(android.hardware.display.DisplayManager::class.java)
+                    ?.registerDisplayListener(clusterDisplayListener, mainHandler)
+                clusterDisplayListenerRegistered = true
+            }
+        }
         // Any settings save (card dx/dy, content-top, left-rail crop, dashboard rect…) must
         // redraw the live dashboard immediately: refresh the card overlays AND re-apply the
         // TextureView crop transform. The crop must NOT reconnect (re-activating the 111 nav
@@ -1061,6 +1072,43 @@ class CarPlayHostActivity : ComponentActivity() {
         detectedCluster = state
         if (!AirPlayPersistence.loadClusterMapEnabled(this)) { dismissClusterPresentation(); return }
         ensureClusterPresentation()
+    }
+
+    private val clusterDisplayListener = object : android.hardware.display.DisplayManager.DisplayListener {
+        override fun onDisplayAdded(displayId: Int) =
+            onClusterDisplayArrived("display $displayId added")
+
+        // A removed display only means the window's host is gone; the activation path rebuilds it.
+        override fun onDisplayRemoved(displayId: Int) = Unit
+        override fun onDisplayChanged(displayId: Int) = Unit
+    }
+    private var clusterDisplayListenerRegistered = false
+
+    /**
+     * Brings the dashboard up on a display that arrived after us.
+     *
+     * Nothing used to happen here, because auto projection fires once per session
+     * (autoProjectTriggered) and its readiness gate polls for a bounded 25 s. On a cold boot where
+     * the cluster takes longer than that, the whole chain had already run and given up, so the
+     * driver got no projection at all - the reported symptom. Creating the window on arrival and
+     * running the projection recovers it without a reconnect.
+     *
+     * Re-activating cannot re-announce: InCallClusterBridge.openProjection() reads incall's own
+     * state first and takes its silent path when the head unit already reports projecting, which is
+     * exactly the case when only the window was missing.
+     */
+    private fun onClusterDisplayArrived(reason: String) {
+        if (shuttingDown.get() || handshakeResetInProgress || isFinishing || isDestroyed) return
+        if (!AirPlayPersistence.loadClusterMapEnabled(this)) return
+        if (clusterPresentation != null) return
+        if (!AirPlayPersistence.loadAutoFlyScreen(this)) return
+        if (activeAirPlaySession == null) return
+        appendLog("Cluster map: $reason; 仪表屏就绪，补做自动投屏")
+        runCatching { ensureClusterPresentation() }
+        if (clusterPresentation == null) return
+        val mirror = AirPlayPersistence.loadClusterMirrorMain(this)
+        tryActivateClusterProjection(mirror, "auto", keepWindow = true)
+        scheduleAutoProjectRetry(mirror, attempt = 0)
     }
 
     private fun ensureClusterPresentation() {
@@ -1515,6 +1563,13 @@ class CarPlayHostActivity : ComponentActivity() {
     }
 
     override fun onDestroy() {
+        if (clusterDisplayListenerRegistered) {
+            runCatching {
+                getSystemService(android.hardware.display.DisplayManager::class.java)
+                    ?.unregisterDisplayListener(clusterDisplayListener)
+            }
+            clusterDisplayListenerRegistered = false
+        }
         mainHandler.removeCallbacks(refreshTurnOverlay)
         AirPlayPersistence.overlaySettingsListener = null
         com.shilapi.xcertplay.hud.BydNavigationOutputs.setTurnOverlayListener(null)
