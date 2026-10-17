@@ -317,6 +317,14 @@ class CarPlayHostActivity : ComponentActivity() {
     private val autoProjectReadyTimeoutMs = 25_000L
     private val autoProjectReadyPollMs = 1_000L
     /**
+     * The gate's preconditions are normally met within a second of the session coming up, so a flat
+     * 1 s poll wasted up to that second on every connect. The first few seconds poll fast; after
+     * that the cheap interval takes over, because a precondition that is still missing is the slow
+     * case (cold boot) where 250 ms polling buys nothing.
+     */
+    private val autoProjectReadyFastPollMs = 250L
+    private val autoProjectReadyFastWindowMs = 4_000L
+    /**
      * Settle time after the session goes active before the readiness gate takes over. The gate's own
      * conditions are the real readiness signal, so this is not the old 5 s fixed trigger - see the
      * call site.
@@ -3995,9 +4003,16 @@ class CarPlayHostActivity : ComponentActivity() {
         if (waitedMs == 0L) {
             appendLog("Auto project: 等待车机就绪（窗口=$windowReady 高德=$amapReady）")
         }
+        // Poll fast while the preconditions are expected to arrive any moment; after that the
+        // remaining wait is a genuinely slow head unit, where a tighter poll only burns wakeups.
+        val pollMs = if (waitedMs < autoProjectReadyFastWindowMs) {
+            autoProjectReadyFastPollMs
+        } else {
+            autoProjectReadyPollMs
+        }
         mainHandler.postDelayed(
-            { awaitAutoProjectReady(token, mirror, waitedMs + autoProjectReadyPollMs) },
-            autoProjectReadyPollMs,
+            { awaitAutoProjectReady(token, mirror, waitedMs + pollMs) },
+            pollMs,
         )
     }
 
