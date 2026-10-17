@@ -229,6 +229,15 @@ internal object CarPlayMediaKeys {
             Log.i(TAG, "media key $source -> car video player $index")
             return
         }
+        // The driver may switch the wheel's track keys off: drop next/previous here and in
+        // the CarPlay window, but keep play/pause and Siri working. The car video player
+        // above keeps its seek keys.
+        if ((index == CarPlayMediaButton.NEXT || index == CarPlayMediaButton.PREVIOUS) &&
+            appContext?.let { AirPlayPersistence.loadBlockWheelTrackChange(it) } == true
+        ) {
+            Log.i(TAG, "media key $source -> blocked (steering-wheel track change disabled)")
+            return
+        }
         val sent = synchronized(this) { controller }?.sendMediaButton(index) ?: false
         Log.i(TAG, "media key $source -> CarPlay $index sent=$sent")
     }

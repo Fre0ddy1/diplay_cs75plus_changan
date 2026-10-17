@@ -537,6 +537,11 @@ class DiPlayActivity : ComponentActivity() {
                 AirPlayPersistence.loadNavigationFocusEnabled(this)) {
                 AirPlayPersistence.saveNavigationFocusEnabled(this, it)
             }
+            toggle(card, getString(R.string.block_wheel_track_change),
+                getString(R.string.block_wheel_track_change_description),
+                AirPlayPersistence.loadBlockWheelTrackChange(this)) {
+                AirPlayPersistence.saveBlockWheelTrackChange(this, it)
+            }
         }
         section(content, getString(R.string.location), R.drawable.ic_dp_navigation) { card ->
             toggle(card, getString(R.string.report_location_to_iphone),

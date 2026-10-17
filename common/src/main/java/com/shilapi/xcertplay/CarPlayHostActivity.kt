@@ -1520,6 +1520,20 @@ class CarPlayHostActivity : ComponentActivity() {
             return true
         }
 
+        // The driver may switch the wheel's track keys off. Swallow them so neither the
+        // iPhone nor the car's own player changes tracks.
+        if (activeAirPlaySession != null &&
+            CarPlayVideo.activity == null &&
+            (event.keyCode == KeyEvent.KEYCODE_MEDIA_NEXT ||
+                event.keyCode == KeyEvent.KEYCODE_MEDIA_PREVIOUS) &&
+            AirPlayPersistence.loadBlockWheelTrackChange(this)
+        ) {
+            if (event.action == KeyEvent.ACTION_DOWN && event.repeatCount == 0) {
+                appendLog("Media: wheel key ${event.keyCode} blocked (steering-wheel track change disabled)")
+            }
+            return true
+        }
+
         // Steering-wheel next/previous, claimed by the CarPlay screen itself. The head unit
         // gives these keys to whichever window is in front, so claiming them here is what
         // makes the wheel change tracks without the wheel-key/accessibility service.
