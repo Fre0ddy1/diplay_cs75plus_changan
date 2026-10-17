@@ -496,6 +496,18 @@ class CarPlayHostActivity : ComponentActivity() {
     // quiet hot-switch, which would only make our (hidden) window visible on a display the
     // head-unit is not showing.
     private var clusterExtScreenReleased = false
+    /**
+     * How long a disconnect is tolerated before the dashboard is handed back to the head unit.
+     * Without this the projection window stayed up with the waiting label, so a phone that never
+     * came back left the driver with an instrument cluster showing "waiting" instead of the car's
+     * own dials. The delay means a transient drop - which reconnects in seconds - does not flash the
+     * dashboard back and forth or force a fresh open sequence (which can make incall announce once).
+     * 20 s is longer than any reconnect observed here and short enough that real departures restore
+     * the cluster quickly.
+     */
+    private val disconnectReleaseDelayMs = 20_000L
+    private val releaseDashboardAfterDisconnect = Runnable { releaseDashboardForDisconnect() }
+
     private var gestureStartX = 0f
     private var gestureStartY = 0f
     // Press→release trajectory: the action is decided on finger-up from the whole swipe,
@@ -1323,6 +1335,28 @@ class CarPlayHostActivity : ComponentActivity() {
         }
     }
 
+    /**
+     * Gives the instrument cluster back to the head unit after a disconnect that did not recover.
+     * Mirrors the three-finger close, the path field-tested to restore the car's own dials: hide our
+     * window and send the ext-screen release (r0). It deliberately does NOT dismiss the presentation
+     * or touch the binder - the full close sequence is known to tear down the head unit's projection
+     * session, after which every later open is ignored.
+     */
+    private fun releaseDashboardForDisconnect() {
+        if (shuttingDown.get() || isFinishing || isDestroyed) return
+        if (activeAirPlaySession != null) return
+        if (clusterExtScreenReleased) return
+        if (!AirPlayPersistence.loadClusterReleaseOnClose(this)) {
+            appendLog("Disconnect: 仪表盘归还已关闭（设置），保持等待画面")
+            return
+        }
+        val presentation = clusterPresentation ?: return
+        presentation.setMapVisible(false)
+        InCallClusterBridge.releaseExternalScreen(this)
+        clusterExtScreenReleased = true
+        appendLog("Disconnect: 已归还原车仪表画面（${disconnectReleaseDelayMs}ms 未重连）")
+    }
+
     private fun dismissClusterPresentation() {
         val presentations = (clusterLayers.values + listOfNotNull(clusterPresentation)).distinct()
         clusterLayers.clear()
@@ -1598,6 +1632,7 @@ class CarPlayHostActivity : ComponentActivity() {
             clusterDisplayListenerRegistered = false
         }
         mainHandler.removeCallbacks(refreshTurnOverlay)
+        mainHandler.removeCallbacks(releaseDashboardAfterDisconnect)
         AirPlayPersistence.overlaySettingsListener = null
         com.shilapi.xcertplay.hud.BydNavigationOutputs.setTurnOverlayListener(null)
         com.shilapi.xcertplay.hud.BydNavigationOutputs.setSongListener(null)
@@ -4171,6 +4206,7 @@ class CarPlayHostActivity : ComponentActivity() {
                     }
                     activeAirPlaySession = session
                     CarPlayBackgroundSession.active = true
+                    mainHandler.removeCallbacks(releaseDashboardAfterDisconnect)
                     reconnectAttempts = 0
                     logThemeState(ThemeModeDiagnostics.Source.SESSION_ACTIVE, resources.configuration)
                     syncAirPlayDarkMode(ThemeModeDiagnostics.Source.SESSION_ACTIVE)
@@ -4202,6 +4238,9 @@ class CarPlayHostActivity : ComponentActivity() {
                     // A released ext-screen must not survive a reconnect: the next open re-runs
                     // the full sequence anyway, and a stale flag would only force it again.
                     clusterExtScreenReleased = false
+                    // Hand the dashboard back if the phone does not return: see the runnable.
+                    mainHandler.removeCallbacks(releaseDashboardAfterDisconnect)
+                    mainHandler.postDelayed(releaseDashboardAfterDisconnect, disconnectReleaseDelayMs)
                     // Clear the stream set unconditionally too: the "already streaming" check
                     // (clusterStreamActive) must never inherit types from the ended session. If
                     // the clear happened only after the menuOpen early-return, a session that
