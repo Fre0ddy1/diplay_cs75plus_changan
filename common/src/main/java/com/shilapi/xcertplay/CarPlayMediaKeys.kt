@@ -222,17 +222,17 @@ internal object CarPlayMediaKeys {
         )
     }
 
-    private fun send(index: Int, source: String) {
+    private fun send(index: Int, source: String, fromWheel: Boolean) {
         // While the car's video player is on screen the wheel drives it: a CarPlay play/pause would
         // make the iPhone end the video session.
         if (CarPlayVideo.onMediaKey(index)) {
             Log.i(TAG, "media key $source -> car video player $index")
             return
         }
-        // The driver may switch the wheel's track keys off: drop next/previous here and in
-        // the CarPlay window, but keep play/pause and Siri working. The car video player
-        // above keeps its seek keys.
-        if ((index == CarPlayMediaButton.NEXT || index == CarPlayMediaButton.PREVIOUS) &&
+        // Only hardware keys, i.e. the steering wheel, are dropped. A skip from a media
+        // controller is the head unit's own on-screen control and must keep working.
+        if (fromWheel &&
+            (index == CarPlayMediaButton.NEXT || index == CarPlayMediaButton.PREVIOUS) &&
             appContext?.let { AirPlayPersistence.loadBlockWheelTrackChange(it) } == true
         ) {
             Log.i(TAG, "media key $source -> blocked (steering-wheel track change disabled)")
@@ -302,7 +302,9 @@ internal object CarPlayMediaKeys {
  * Media-session input → CarPlay presses. Hardware keys arrive as button events and keep the toggle;
  * media controllers (not hardware keys) call [onPlay] and [onPause] with an explicit intent.
  */
-internal class CarPlayMediaCallback(private val send: (index: Int, source: String) -> Unit) : MediaSession.Callback() {
+internal class CarPlayMediaCallback(
+    private val send: (index: Int, source: String, fromWheel: Boolean) -> Unit,
+) : MediaSession.Callback() {
     // Some head-unit ROMs deliver the same hardware press twice: once through the media-button
     // event and once through the skip callbacks, so a single steering-wheel press skipped two
     // tracks. Debounce per index; the debounce is short enough to leave deliberate rapid presses
@@ -315,22 +317,22 @@ internal class CarPlayMediaCallback(private val send: (index: Int, source: Strin
         val event = mediaButtonIntent.getParcelableExtra<KeyEvent>(Intent.EXTRA_KEY_EVENT) ?: return false
         val index = CarPlayMediaButton.forKeyCode(event.keyCode) ?: return super.onMediaButtonEvent(mediaButtonIntent)
         if (event.action == KeyEvent.ACTION_DOWN && event.repeatCount == 0) {
-            deliver(index, KeyEvent.keyCodeToString(event.keyCode))
+            deliver(index, KeyEvent.keyCodeToString(event.keyCode), fromWheel = true)
         }
         return true
     }
 
-    override fun onPlay() = deliver(CarPlayMediaButton.PLAY, "play")
-    override fun onPause() = deliver(CarPlayMediaButton.PAUSE, "pause")
-    override fun onSkipToNext() = deliver(CarPlayMediaButton.NEXT, "next")
-    override fun onSkipToPrevious() = deliver(CarPlayMediaButton.PREVIOUS, "previous")
+    override fun onPlay() = deliver(CarPlayMediaButton.PLAY, "play", fromWheel = false)
+    override fun onPause() = deliver(CarPlayMediaButton.PAUSE, "pause", fromWheel = false)
+    override fun onSkipToNext() = deliver(CarPlayMediaButton.NEXT, "next", fromWheel = false)
+    override fun onSkipToPrevious() = deliver(CarPlayMediaButton.PREVIOUS, "previous", fromWheel = false)
 
-    private fun deliver(index: Int, source: String) {
+    private fun deliver(index: Int, source: String, fromWheel: Boolean) {
         val now = SystemClock.elapsedRealtime()
         val slot = if (index in 1..5) index else 0
         val last = lastSentAt[slot]
         lastSentAt[slot] = now
         if (last >= 0 && now - last < debounceMillis) return
-        send(index, source)
+        send(index, source, fromWheel)
     }
 }

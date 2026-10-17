@@ -18,7 +18,7 @@ import java.time.Duration
 @Config(sdk = [29], manifest = Config.NONE)
 class CarPlayMediaCallbackTest {
     private val sent = mutableListOf<Int>()
-    private val callback = CarPlayMediaCallback { index, _ -> sent += index }
+    private val callback = CarPlayMediaCallback { index, _, _ -> sent += index }
 
     @Test
     fun controllerPlayAndPauseAreExplicit() {
@@ -52,6 +52,22 @@ class CarPlayMediaCallbackTest {
         callback.onMediaButtonEvent(button(KeyEvent(0, 0, KeyEvent.ACTION_DOWN, KeyEvent.KEYCODE_MEDIA_NEXT, 0)))
 
         assertEquals(listOf(CarPlayMediaButton.NEXT), sent)
+    }
+
+    @Test
+    fun hardwarePressesAreMarkedAsWheelButControllerSkipsAreNot() {
+        // Only the steering wheel may be silenced; the head unit's own on-screen control must
+        // keep skipping, so the flag has to travel with every press.
+        val fromWheel = mutableListOf<Boolean>()
+        val probe = CarPlayMediaCallback { _, _, wheel -> fromWheel += wheel }
+
+        probe.onMediaButtonEvent(button(KeyEvent(0, 0, KeyEvent.ACTION_DOWN, KeyEvent.KEYCODE_MEDIA_NEXT, 0)))
+        ShadowSystemClock.advanceBy(Duration.ofMillis(300))
+        probe.onSkipToNext()
+        ShadowSystemClock.advanceBy(Duration.ofMillis(300))
+        probe.onSkipToPrevious()
+
+        assertEquals(listOf(true, false, false), fromWheel)
     }
 
     @Test
