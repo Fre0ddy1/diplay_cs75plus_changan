@@ -47,6 +47,7 @@ object AirPlayPersistence {
     private const val KEY_ADVANCED_AUDIO_CHANNEL_MAPPING = "advanced_audio_channel_mapping"
     private const val KEY_AUDIO_FOCUS_ENABLED = "audio_focus_enabled"
     private const val KEY_BLOCK_WHEEL_TRACK_CHANGE = "block_wheel_track_change"
+    private const val KEY_NAV_DUCK_PERCENT = "nav_duck_percent"
     private const val KEY_MEDIA_AUDIO_CHANNEL = "media_audio_channel"
     private const val KEY_NAVIGATION_AUDIO_CHANNEL = "navigation_audio_channel"
     private const val KEY_NAVIGATION_STREAM_TYPE = "navigation_stream_type"
@@ -206,6 +207,22 @@ object AirPlayPersistence {
     fun saveBlockWheelTrackChange(context: Context, enabled: Boolean) {
         context.getSharedPreferences(PREFS, Context.MODE_PRIVATE).edit()
             .putBoolean(KEY_BLOCK_WHEEL_TRACK_CHANGE, enabled)
+            .apply()
+    }
+
+    /** Music level while a navigation prompt plays; 100 % leaves the music untouched. */
+    const val NAV_DUCK_MIN = 10
+    const val NAV_DUCK_MAX = 100
+    const val NAV_DUCK_DEFAULT = 20
+
+    fun loadNavDuckPercent(context: Context): Int =
+        context.getSharedPreferences(PREFS, Context.MODE_PRIVATE)
+            .getInt(KEY_NAV_DUCK_PERCENT, NAV_DUCK_DEFAULT)
+            .coerceIn(NAV_DUCK_MIN, NAV_DUCK_MAX)
+
+    fun saveNavDuckPercent(context: Context, percent: Int) {
+        context.getSharedPreferences(PREFS, Context.MODE_PRIVATE).edit()
+            .putInt(KEY_NAV_DUCK_PERCENT, percent.coerceIn(NAV_DUCK_MIN, NAV_DUCK_MAX))
             .apply()
     }
 

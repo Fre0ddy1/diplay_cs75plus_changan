@@ -542,6 +542,7 @@ class DiPlayActivity : ComponentActivity() {
                 AirPlayPersistence.loadBlockWheelTrackChange(this)) {
                 AirPlayPersistence.saveBlockWheelTrackChange(this, it)
             }
+            navDuckPercentControl(card)
         }
         section(content, getString(R.string.location), R.drawable.ic_dp_navigation) { card ->
             toggle(card, getString(R.string.report_location_to_iphone),
@@ -1523,6 +1524,42 @@ class DiPlayActivity : ComponentActivity() {
                 override fun onStopTrackingTouch(seek: SeekBar?) = Unit
             })
         }, LinearLayout.LayoutParams(-1, dp(44)))
+    }
+
+    /**
+     * How far the music drops while a navigation prompt plays. Media tracks only, so a call is
+     * never attenuated; the value is read when the next CarPlay session opens.
+     */
+    private fun navDuckPercentControl(parent: LinearLayout) {
+        val current = AirPlayPersistence.loadNavDuckPercent(this)
+        val value = label(getString(R.string.nav_duck_percent_value, current), 15, ACCENT, true)
+        val head = row().apply { setPadding(0, dp(12), 0, 0) }
+        head.addView(label(getString(R.string.nav_duck_percent_title), 15, TEXT, true),
+            LinearLayout.LayoutParams(0, -2, 1f))
+        head.addView(value)
+        parent.addView(head, LinearLayout.LayoutParams(-1, -2))
+        parent.addView(SeekBar(this).apply {
+            val step = 5
+            val min = AirPlayPersistence.NAV_DUCK_MIN
+            max = (AirPlayPersistence.NAV_DUCK_MAX - min) / step
+            progress = ((current - min) / step).coerceIn(0, max)
+            // No setMinHeight: this head-unit ROM strips SeekBar#setMinHeight and throws
+            // NoSuchMethodError, which would kill the whole settings page.
+            setOnSeekBarChangeListener(object : SeekBar.OnSeekBarChangeListener {
+                override fun onProgressChanged(seek: SeekBar?, progress: Int, fromUser: Boolean) {
+                    val percent = min + progress * step
+                    value.text = getString(R.string.nav_duck_percent_value, percent)
+                    if (fromUser) {
+                        AirPlayPersistence.saveNavDuckPercent(this@DiPlayActivity, percent)
+                    }
+                }
+                override fun onStartTrackingTouch(seek: SeekBar?) = Unit
+                override fun onStopTrackingTouch(seek: SeekBar?) = Unit
+            })
+        }, LinearLayout.LayoutParams(-1, dp(44)))
+        parent.addView(label(getString(R.string.nav_duck_percent_hint), 14, MUTED).apply {
+            setPadding(0, dp(4), 0, dp(12))
+        })
     }
 
     private fun numberInput(initial: Int, max: Int, onChange: (Int) -> Unit): EditText =

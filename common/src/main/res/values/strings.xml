@@ -604,6 +604,9 @@
     <string name="location_reporting_reconnects">Changing this setting reconnects an active CarPlay session.</string>
     <string name="navigation_volume_keys_focus">Steering-wheel keys adjust guidance volume</string>
     <string name="navigation_volume_keys_focus_description">While navigation guidance is playing, DiPlay briefly takes audio focus so the head unit routes the volume keys to the guidance channel instead of media. Music is ducked during prompts, like factory CarPlay.</string>
+    <string name="nav_duck_percent_title">Music level during navigation prompts</string>
+    <string name="nav_duck_percent_value">%1$d%%</string>
+    <string name="nav_duck_percent_hint">Music drops to this level while a prompt plays and comes back when it ends. Calls are never lowered; changes apply from the next prompt.</string>
     <string name="block_wheel_track_change">Block steering-wheel track change</string>
     <string name="block_wheel_track_change_description">Off by default. When on, only previous/next on the steering wheel is ignored: neither the iPhone nor the car player changes tracks. On-screen buttons, play/pause and Siri still work.</string>
     <string name="dashboard_detailed_map">Detailed dashboard map</string>

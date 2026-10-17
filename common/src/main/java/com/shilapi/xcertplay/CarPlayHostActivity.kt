@@ -3919,6 +3919,7 @@ class CarPlayHostActivity : ComponentActivity() {
             mediaChannel = AirPlayPersistence.loadMediaAudioChannel(this),
             navigationChannel = AirPlayPersistence.loadNavigationAudioChannel(this),
             navigationFocusEnabled = AirPlayPersistence.loadNavigationFocusEnabled(this),
+            navDuckPercent = { AirPlayPersistence.loadNavDuckPercent(this) },
             context = this,
             navigationStreamType = navigationStreamType,
             onScreenStreamActiveChanged = { type, active ->

@@ -39,6 +39,8 @@ internal fun audioTrackAttributesForFocus(track: AudioTrack, configured: AudioAt
 internal class AudioFocusCoordinator(
     context: Context?,
     private val enabled: Boolean,
+    // Read per duck so the slider takes effect on the next prompt, not the next connection.
+    private val duckPercent: () -> Int = { DEFAULT_DUCK_PERCENT },
     private val report: (String) -> Unit = {},
 ) {
     private data class Entry(val channel: AudioChannel, val attributes: AudioAttributes)
@@ -53,24 +55,38 @@ internal class AudioFocusCoordinator(
     // seconds while on a call").
     private var appliedVolume = FULL_VOLUME
     private val volumeHandler = Handler(Looper.getMainLooper())
+    /** Music level while ducked; 100 % means the setting is effectively off. */
+    private fun duckVolume(): Float =
+        duckPercent().coerceIn(DUCK_PERCENT_MIN, DUCK_PERCENT_MAX) / 100f
+    /** A duck request with an expiry: the head unit's CAN_DUCK or the phone's duckAudio. */
+    private var timedDucking = false
+    /** Set for as long as a navigation prompt is playing; we observe this exactly. */
+    private var guidanceDucking = false
     // Our own duck is only ever meant to bridge a short prompt, so it undoes itself. The head unit
     // does not always send AUDIOFOCUS_GAIN when the interrupting audio ends, and without this the
     // music stayed at 20 % for the rest of the drive - field report: "it turned the media volume
     // down once and never brought it back". The phone's own duck/unduck commands measure 9-10 s in
     // the field, so 12 s sits just past them and only fires when the restore really never comes.
-    private val unduckRunnable = Runnable { synchronized(this@AudioFocusCoordinator) { setVolume(FULL_VOLUME) } }
+    private val unduckRunnable = Runnable {
+        synchronized(this@AudioFocusCoordinator) {
+            timedDucking = false
+            applyDuckVolume()
+        }
+    }
     private val listener = AudioManager.OnAudioFocusChangeListener { change ->
         synchronized(this) {
             runCatching { report("Audio: focus change=$change activeTracks=${active.size}") }
             when (change) {
                 AudioManager.AUDIOFOCUS_LOSS_TRANSIENT_CAN_DUCK -> {
-                    setVolume(DUCKED_VOLUME)
+                    timedDucking = true
+                    applyDuckVolume()
                     volumeHandler.removeCallbacks(unduckRunnable)
                     volumeHandler.postDelayed(unduckRunnable, DUCK_HOLD_MS)
                 }
                 AudioManager.AUDIOFOCUS_GAIN -> {
                     volumeHandler.removeCallbacks(unduckRunnable)
-                    setVolume(FULL_VOLUME)
+                    timedDucking = false
+                    applyDuckVolume()
                 }
                 // Keep CarPlay audio running on permanent or transient loss. Some head units
                 // do not send a later gain callback after taking focus back.
@@ -80,9 +96,11 @@ internal class AudioFocusCoordinator(
 
     @Synchronized
     fun acquire(track: AudioTrack, channel: AudioChannel, attributes: AudioAttributes) {
-        if (!enabled || manager == null || channel == AudioChannel.NAVIGATION) return
+        if (channel == AudioChannel.NAVIGATION) return
         active[track] = Entry(channel, attributes)
-        refreshRequest()
+        // Ducking is independent of holding focus: that is a separate switch, and a driver who
+        // turned it off still expects a prompt to lower the music.
+        if (enabled) refreshRequest()
         // A track that appears while the music is ducked starts at that same level, so it cannot
         // play loud under a prompt. Prompts and calls are never attenuated this way.
         if (channel == AudioChannel.MEDIA) {
@@ -92,7 +110,7 @@ internal class AudioFocusCoordinator(
 
     @Synchronized
     fun release(track: AudioTrack) {
-        if (active.remove(track) != null) refreshRequest()
+        if (active.remove(track) != null && enabled) refreshRequest()
     }
 
     /**
@@ -155,7 +173,8 @@ internal class AudioFocusCoordinator(
      */
     fun duckFor(durationMs: Long) {
         synchronized(this) {
-            setVolume(DUCKED_VOLUME)
+            timedDucking = true
+            applyDuckVolume()
             volumeHandler.removeCallbacks(unduckRunnable)
             volumeHandler.postDelayed(unduckRunnable, durationMs.coerceIn(200L, DUCK_HOLD_MS))
         }
@@ -165,8 +184,28 @@ internal class AudioFocusCoordinator(
     fun unduck() {
         synchronized(this) {
             volumeHandler.removeCallbacks(unduckRunnable)
-            setVolume(FULL_VOLUME)
+            timedDucking = false
+            applyDuckVolume()
         }
+    }
+
+    /**
+     * A navigation prompt is playing. Guidance is the one duck we observe exactly, so the music
+     * comes back the moment the prompt ends even if nobody sent us a duck request. Only MEDIA
+     * tracks move: call audio is never attenuated.
+     */
+    fun setGuidanceDucking(active: Boolean) {
+        synchronized(this) {
+            if (guidanceDucking == active) return
+            guidanceDucking = active
+            applyDuckVolume()
+        }
+    }
+
+    private fun applyDuckVolume() {
+        val target = if (guidanceDucking || timedDucking) duckVolume() else FULL_VOLUME
+        runCatching { report("Audio: duck guidance=$guidanceDucking timed=$timedDucking target=$target") }
+        setVolume(target)
     }
 
     private fun AudioChannel.focusPriority(): Int = when (this) {
@@ -176,10 +215,12 @@ internal class AudioFocusCoordinator(
         AudioChannel.NAVIGATION -> 0
     }
 
-    private companion object {
+    companion object {
         const val TAG = "DiPlay-AudioFocus"
         const val FULL_VOLUME = 1f
-        const val DUCKED_VOLUME = 0.2f
+        const val DUCK_PERCENT_MIN = 10
+        const val DUCK_PERCENT_MAX = 100
+        const val DEFAULT_DUCK_PERCENT = 20
         /** How long our own duck survives without a restore callback from the head unit. */
         const val DUCK_HOLD_MS = 12_000L
     }
@@ -212,12 +253,15 @@ class AndroidMediaSink(
     private val onNavigationGuidanceChanged: (Boolean) -> Unit = {},
     /** Take transient audio focus during guidance prompts so head-unit volume keys hit guidance. */
     private val navigationFocusEnabled: Boolean = true,
+    /** Music level (percent) while a prompt plays or the phone asks us to duck. */
+    private val navDuckPercent: () -> Int = { AudioFocusCoordinator.DEFAULT_DUCK_PERCENT },
 ) : MediaSink {
     private val appContext = context?.applicationContext
     private val audioManager = appContext?.getSystemService(AudioManager::class.java)
     private val audioFocusCoordinator = AudioFocusCoordinator(
         appContext,
         audioFocusEnabled,
+        navDuckPercent,
         onAudioDiagnostic,
     )
     private val screenStateLock = Any()
@@ -390,6 +434,7 @@ class AndroidMediaSink(
         }
         if (before != after) {
             if (after) requestNavigationFocus() else abandonNavigationFocus()
+            audioFocusCoordinator.setGuidanceDucking(after)
             onNavigationGuidanceChanged(after)
         }
     }
