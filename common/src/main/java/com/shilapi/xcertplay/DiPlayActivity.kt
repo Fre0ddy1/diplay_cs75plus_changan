@@ -801,6 +801,10 @@ class DiPlayActivity : ComponentActivity() {
                             val y = pendingXY["turn"]?.second ?: 0
                             pendingXY["turn"] = Pair(v, y)
                             positionPreview.setTurnOffset(v, y)
+                            // Persist on every keystroke: the dashboard is on another screen that is
+                            // visible at the same time as this one, so the driver watches the card move
+                            // while typing instead of applying and going over to look.
+                            AirPlayPersistence.saveClusterTurnCardX(this@DiPlayActivity, v)
                         }, LinearLayout.LayoutParams(dp(150), dp(48)).apply { leftMargin = dp(8) })
                     })
                     card.addView(LinearLayout(this@DiPlayActivity).apply {
@@ -812,6 +816,7 @@ class DiPlayActivity : ComponentActivity() {
                             val x = pendingXY["turn"]?.first ?: 0
                             pendingXY["turn"] = Pair(x, v)
                             positionPreview.setTurnOffset(x, v)
+                            AirPlayPersistence.saveClusterTurnCardY(this@DiPlayActivity, v)
                         }, LinearLayout.LayoutParams(dp(150), dp(48)).apply { leftMargin = dp(8) })
                     })
                     card.addView(button(getString(R.string.reset_turn_card_overlay), false) {
