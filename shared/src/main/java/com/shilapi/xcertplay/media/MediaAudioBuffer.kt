@@ -9,8 +9,19 @@ object MediaAudioBuffer {
     // Wi-Fi Direct on head units shows radio gaps of several hundred ms routinely and ~1.1 s
     // occasionally (measured maxGapMs=1114 with a 19:40 underrun). 300 ms + 200 ms headroom
     // was too shallow and rebuffered; 1000 ms + 200 ms outlasts the measured gaps.
-    const val DEFAULT_MILLIS = 1000
-    val presets = listOf(300, DEFAULT_MILLIS, 1500)
+    /**
+     * Default jitter buffer for music, in milliseconds.
+     *
+     * 300, not the old 1000. The buffer arrived in 0.2.14 and 0.2.13 had none at all, and the field
+     * comparison is unambiguous: 0.2.13 "works very well", 0.2.20 has music coming out ahead of the
+     * lyrics. Measured on our own UNI-V, the music channel sits ~580 ms behind the video path
+     * (audio stats estimatedQueuedFrames=27838 at 48 kHz) against ~80 ms of touch-to-frame video
+     * latency, so the buffer is the whole offset. 300 ms still covers the radio gaps the field log
+     * measures (~400 ms worst case) while taking ~700 ms of it back; the presets are still there for
+     * a driver whose link is worse than ours, and raising it is the fix for stutter, not lowering it.
+     */
+    const val DEFAULT_MILLIS = 300
+    val presets = listOf(300, 1000, 1500)
 
     /**
      * Jitter buffer for short spoken prompts (navigation guidance, assistant).

@@ -316,6 +316,12 @@ class CarPlayHostActivity : ComponentActivity() {
     //       Replaced by a bounded retry ladder that mirrors the driver's own manual recovery.
     private val autoProjectReadyTimeoutMs = 25_000L
     private val autoProjectReadyPollMs = 1_000L
+    /**
+     * Settle time after the session goes active before the readiness gate takes over. The gate's own
+     * conditions are the real readiness signal, so this is not the old 5 s fixed trigger - see the
+     * call site.
+     */
+    private val autoProjectSettleMs = 1_000L
     // The re-asserts go through InCallClusterBridge.reassertProjection(), which sends only F0 + C0
     // + Z. That was NOT always true - it used to send tx2[1] as well while its comment claimed
     // otherwise, and the result was one activation announcing three times (the open plus the two
@@ -3920,8 +3926,14 @@ class CarPlayHostActivity : ComponentActivity() {
         }
         autoProjectTriggered = true
         val mirror = AirPlayPersistence.loadClusterMirrorMain(this)
-        appendLog("Auto project: 连接成功，5 秒后自动投屏 mirror=$mirror")
+        appendLog("Auto project: 连接成功，稍后自动投屏 mirror=$mirror")
         val token = autoProjectToken
+        // One second of settle, then the readiness gate decides. It used to be a flat 5 s, which the
+        // gate had already superseded: the fixed delay was what raced the head-unit bring-up, and
+        // the gate's own conditions (projection window bound, stock Amap up) are the real readiness
+        // signal. Leaving both in place meant every connect paid 5 s of pure latency on top - the
+        // field report "自动投屏需要很长一段时间". If the preconditions are missing the gate waits
+        // (bounded 25 s) instead, so this is not a return to the race it was written for.
         mainHandler.postDelayed({
             if (token != autoProjectToken) return@postDelayed
             if (shuttingDown.get() || handshakeResetInProgress || isFinishing || isDestroyed) {
@@ -3933,7 +3945,7 @@ class CarPlayHostActivity : ComponentActivity() {
                 return@postDelayed
             }
             awaitAutoProjectReady(token, mirror, waitedMs = 0L)
-        }, 5000L)
+        }, autoProjectSettleMs)
     }
 
     /**
