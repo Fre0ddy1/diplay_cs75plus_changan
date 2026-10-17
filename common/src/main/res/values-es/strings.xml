@@ -306,16 +306,13 @@
     <string name="review_app_permissions">Revisar permisos de la aplicación</string>
     <string name="right_hand_drive">Volante a la derecha</string>
     <string name="running">En ejecución</string>
-    <string name="s_1000_ms_most_stable">1500 ms · la más estable</string>
     <string name="s_1_choose_your_connection">1 · Elige tu conexión</string>
     <string name="s_1_connect_a_computer_with_adb_installed_to_the_car_using">1. Conecta un ordenador con ADB instalado al coche mediante tu conexión USB o de depuración inalámbrica existente. Aprueba la depuración en el coche si se te pide.\n\n2. Ejecuta este comando en la terminal del ordenador:</string>
     <string name="s_1_open_car_hotspot_settings_turn_the_hotspot_on_and_sele">1. Abre los ajustes del punto de acceso del coche, actívalo y selecciona 5 GHz si está disponible.\n2. Copia abajo su nombre y contraseña exactamente.\n3. Deja el punto de acceso del coche activado al conectarte. DiPlay envía los datos por Bluetooth; tu iPhone se une automáticamente.</string>
     <string name="s_2_pair_your_iphone">2 · Empareja tu iPhone</string>
-    <string name="s_300_ms_default">300 ms · predeterminado</string>
     <string name="s_30_fps_lighter_load">30 img/s · carga más ligera</string>
     <string name="s_3_connect">3 · Conéctate</string>
     <string name="s_3_tap_check_and_enable_below_this_enables_the_cluster_ma">3. Toca «Comprobar y activar» abajo. Esto activa el mapa del cuadro y el seguimiento automático del tema. Una sesión de CarPlay activa se reconectará una vez. Después puedes desconectar el ordenador.</string>
-    <string name="s_500_ms">1000 ms · predeterminado (recomendado)</string>
     <string name="s_60_fps_smoother_motion">60 img/s · movimiento más suave</string>
     <string name="s_60_lightest_load" formatted="false">60% · carga más ligera</string>
     <string name="s_80_lighter_load" formatted="false">80% · carga más ligera</string>

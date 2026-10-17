@@ -1114,7 +1114,10 @@ class CarPlayHostActivity : ComponentActivity() {
         if (clusterPresentation == null) return
         val mirror = AirPlayPersistence.loadClusterMirrorMain(this)
         tryActivateClusterProjection(mirror, "auto", keepWindow = true)
-        scheduleAutoProjectRetry(mirror, attempt = 0)
+        // Only arm the ladder if it is not already running: the normal chain may still be part way
+        // through its 11/30/60 s attempts when the display finally arrives, and two ladders sharing
+        // one token would double every silent re-assert.
+        if (!autoProjectLadderActive) scheduleAutoProjectRetry(mirror, attempt = 0)
     }
 
     private fun ensureClusterPresentation() {
