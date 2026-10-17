@@ -785,10 +785,16 @@ object AirPlayPersistence {
         context.getSharedPreferences(PREFS, Context.MODE_PRIVATE).edit().putBoolean(KEY_CENTER_MAP_OVERLAY, enabled).apply()
     }
 
+    /**
+     * Defaults to the map with the custom turn card, not the bare map. The bare map hides the
+     * whole custom-card section of the settings - position, size, show/hide - so a driver on the
+     * default could not find the controls that make this build worth installing, and reported
+     * them as missing. Existing installs keep whatever they stored.
+     */
     fun loadClusterContent(context: Context): CarPlayClusterDisplay.Content =
         context.getSharedPreferences(PREFS, Context.MODE_PRIVATE).getString(KEY_CLUSTER_CONTENT, null)
             ?.let { name -> CarPlayClusterDisplay.Content.entries.firstOrNull { it.name == name } }
-            ?: CarPlayClusterDisplay.Content.MAP
+            ?: CarPlayClusterDisplay.Content.MAP_WITH_CUSTOM_CARD
 
     fun saveClusterContent(context: Context, content: CarPlayClusterDisplay.Content) {
         context.getSharedPreferences(PREFS, Context.MODE_PRIVATE).edit().putString(KEY_CLUSTER_CONTENT, content.name).apply()
