@@ -32,12 +32,16 @@ internal class ClusterSongView(context: Context) : View(context) {
     private var measured = 0f
 
     fun setSong(next: ClusterSong?) {
-        if (song == next) {
-            visibility = if (next == null) GONE else VISIBLE
+        // Obey the same show/hide switch as the guidance cards. This is read here rather than in
+        // the presentation's visibility pass on purpose: the card must not join the nav-only group
+        // (it also shows in the mirror), but it must still respect a driver who switched it off.
+        val wanted = if (AirPlayPersistence.loadClusterCardVisible(context, CARD)) next else null
+        if (song == wanted) {
+            visibility = if (wanted == null) GONE else VISIBLE
             return
         }
-        song = next
-        visibility = if (next == null) GONE else VISIBLE
+        song = wanted
+        visibility = if (wanted == null) GONE else VISIBLE
         // Paused music keeps its title up: the card is an information overlay, not a play indicator.
         invalidate()
     }
