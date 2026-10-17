@@ -30,6 +30,16 @@ internal data class BydClusterFrame(
         private const val ROUNDABOUT_EXIT_CLOCKWISE = 18
         private const val U_TURN_RIGHT = 19
 
+        /** Amap sends a placeholder when it has no road name; on the highway drive it was
+         *  "未知位置" in 533 of 547 samples, which the card then echoed as a road.
+         */
+        private val ROAD_PLACEHOLDERS = setOf("未知位置", "未知道路", "未知", "无名道路", "unknown")
+
+        private fun roadName(value: String): String {
+            val trimmed = value.trim()
+            return if (trimmed in ROAD_PLACEHOLDERS) "" else trimmed
+        }
+
         /** Apple iAP2 RouteGuidanceManeuverType -> AMap NEW_ICON (+ ROUNG_ABOUT_NUM). */
         fun from(maneuver: BydAppleManeuver): BydClusterFrame {
             val leftHandTraffic = maneuver.drivingSide == 1
@@ -41,7 +51,7 @@ internal data class BydClusterFrame(
             val arrivalEpoch = maneuver.arrivalEpochSeconds
             if (type in 28..46) {
                 val icon = if (leftHandTraffic) ROUNDABOUT_ENTER_CLOCKWISE else ROUNDABOUT_ENTER
-                return BydClusterFrame(icon, type - 27, distance, road, remainingMeters, remainingSeconds, arrivalEpoch, maneuver.currentRoad, maneuver.exitLabel)
+                return BydClusterFrame(icon, type - 27, distance, roadName(road), remainingMeters, remainingSeconds, arrivalEpoch, roadName(maneuver.currentRoad), maneuver.exitLabel)
             }
             val icon = when (type) {
                 1, 20 -> LEFT
@@ -57,7 +67,7 @@ internal data class BydClusterFrame(
                 3, 5, 8, 9, 11, 51 -> STRAIGHT
                 else -> 0 // Unknown/no maneuver must not become a false straight arrow.
             }
-            return BydClusterFrame(icon, 0, distance, road, remainingMeters, remainingSeconds, arrivalEpoch, maneuver.currentRoad, maneuver.exitLabel)
+            return BydClusterFrame(icon, 0, distance, roadName(road), remainingMeters, remainingSeconds, arrivalEpoch, roadName(maneuver.currentRoad), maneuver.exitLabel)
         }
     }
 }

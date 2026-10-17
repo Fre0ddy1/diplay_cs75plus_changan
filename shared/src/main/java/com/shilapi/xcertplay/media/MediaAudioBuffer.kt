@@ -20,13 +20,17 @@ object MediaAudioBuffer {
      * measures (~400 ms worst case) while taking ~700 ms of it back; the presets are still there for
      * a driver whose link is worse than ours, and raising it is the fix for stutter, not lowering it.
      */
-    const val DEFAULT_MILLIS = 300
+    const val DEFAULT_MILLIS = 500
     /**
      * Selectable music buffers, smallest first. 150 ms is there for a driver who wants the lyrics
      * tight like 0.2.13 (which had no buffer at all) and accepts the extra stutter risk; 1500 ms is
      * for a link worse than the one we measured (~400 ms worst-case arrival gap).
      */
-    val presets = listOf(150, 300, 1000, 1500)
+    val presets = listOf(150, 300, 500, 1000, 1500)
+    // 500 is the default because the highway drive measured it: with the 150 ms preset the
+    // arrival gaps reached 394-396 ms, the queue drained to 0 ms (min of 757 samples) and the
+    // channel recorded 23/31/51 rebuffers - audible stutter. 500 leaves ~100 ms of headroom
+    // over the measured gap; 150/300 stay for a link that is genuinely clean.
 
     /**
      * Jitter buffer for short spoken prompts (navigation guidance, assistant).
