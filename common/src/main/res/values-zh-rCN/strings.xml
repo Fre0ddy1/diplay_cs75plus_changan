@@ -319,6 +319,12 @@
     <string name="running">运行中</string>
     <string name="s_0_3x">0.3x</string>
     <string name="s_1000_ms_most_stable">1500 毫秒 · 最稳定</string>
+    <string name="s_ms_value">%1$d 毫秒</string>
+    <string name="s_ms_value_hint">%1$d 毫秒 · %2$s</string>
+    <string name="s_buffer_hint_default">默认</string>
+    <string name="s_buffer_hint_stable">最稳定</string>
+    <string name="s_buffer_hint_low_latency">延迟最低</string>
+
     <string name="s_1_0x">1.0x</string>
     <string name="s_1_choose_your_connection">1 · 选择连接方式</string>
     <string name="s_1_connect_a_computer_with_adb_installed_to_the_car_using">1. 用装有 ADB 的电脑，通过现有的 USB 或无线调试连接连接到车机。如有调试授权提示请批准。\n\n2. 在电脑终端中运行此命令：</string>

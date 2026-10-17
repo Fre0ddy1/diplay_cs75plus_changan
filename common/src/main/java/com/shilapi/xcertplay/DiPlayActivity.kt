@@ -460,7 +460,21 @@ class DiPlayActivity : ComponentActivity() {
             carPlaySizeControl(card)
             choice(card, getString(R.string.resolution), listOf(getString(R.string.resolution_native), getString(R.string.s_80_lighter_load), getString(R.string.s_60_lightest_load)), listOf(10, 8, 6).indexOf(AirPlayPersistence.loadDisplayScaleTenths(this)).coerceAtLeast(0)) { AirPlayPersistence.saveDisplayScaleTenths(this, listOf(10, 8, 6)[it]) }
             val bufferPresets = com.shilapi.xcertplay.media.MediaAudioBuffer.presets
-            choice(card, getString(R.string.music_buffer), listOf(getString(R.string.s_300_ms_default), getString(R.string.s_500_ms), getString(R.string.s_1000_ms_most_stable)),
+            // Labels are derived from the presets, never written out by hand: the old hard-coded
+            // three labels had already drifted from the values once (a row named "500 ms" whose
+            // content read 1000 ms), and a stale label here silently mis-directs the driver.
+            val bufferLabels = bufferPresets.map { ms ->
+                val hint = when (ms) {
+                    com.shilapi.xcertplay.media.MediaAudioBuffer.DEFAULT_MILLIS ->
+                        getString(R.string.s_buffer_hint_default)
+                    bufferPresets.max() -> getString(R.string.s_buffer_hint_stable)
+                    bufferPresets.min() -> getString(R.string.s_buffer_hint_low_latency)
+                    else -> null
+                }
+                if (hint == null) getString(R.string.s_ms_value, ms)
+                else getString(R.string.s_ms_value_hint, ms, hint)
+            }
+            choice(card, getString(R.string.music_buffer), bufferLabels,
                 bufferPresets.indexOf(AirPlayPersistence.loadMediaBufferMillis(this)).coerceAtLeast(0)) {
                 AirPlayPersistence.saveMediaBufferMillis(this, bufferPresets[it])
             }
