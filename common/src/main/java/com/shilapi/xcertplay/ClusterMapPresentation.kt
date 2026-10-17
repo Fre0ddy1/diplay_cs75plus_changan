@@ -331,8 +331,8 @@ internal class ClusterMapPresentation(
         }
     }
 
-    fun setTurnCardOverlay(xPx: Int, yPx: Int, size: CarPlayClusterDisplay.OverlaySize) {
-        turnCardView?.setLayout(xPx, yPx, size)
+    fun setTurnCardOverlay(xPx: Int, yPx: Int, scalePercent: Int) {
+        turnCardView?.setLayout(xPx, yPx, scalePercent)
     }
 
     /**
@@ -345,7 +345,7 @@ internal class ClusterMapPresentation(
         turnCardView?.setLayout(
             AirPlayPersistence.loadClusterTurnCardX(context),
             AirPlayPersistence.loadClusterTurnCardY(context),
-            AirPlayPersistence.loadClusterTurnCardOverlaySize(context),
+            AirPlayPersistence.loadClusterCardScalePercent(context, "turn"),
         )
         // Drop each card's cached position so the next draw reloads the saved coordinates.
         etaCardView?.notifyPositionChanged()

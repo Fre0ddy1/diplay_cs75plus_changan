@@ -511,12 +511,8 @@
     <string name="center_map_no_permission_screen">Esta unidad principal no tiene pantalla de ajustes para este permiso. Permítelo por ADB.</string>
     <string name="launcher_map_sharing">Compartir el mapa en vivo con otros launchers</string>
     <string name="launcher_map_sharing_description">Los launchers compatibles con DiPlay pueden mostrar el mapa en vivo del panel de instrumentos en su propia pantalla de inicio. Desactivado por defecto, porque entonces cualquier aplicación de la unidad principal podría pedir el mapa. Consulta docs/LAUNCHER_INTEGRATION.md.</string>
-    <string name="turn_card_overlay_size">Tamaño de la tarjeta personalizada</string>
     <string name="turn_card_overlay_horizontal">Tarjeta personalizada · izquierda / derecha</string>
     <string name="turn_card_overlay_vertical">Tarjeta personalizada · arriba / abajo</string>
-    <string name="turn_card_overlay_small">Pequeño</string>
-    <string name="turn_card_overlay_medium">Mediano</string>
-    <string name="turn_card_overlay_large">Grande</string>
     <string name="reset_turn_card_overlay">Restablecer posición de la tarjeta personalizada</string>
     <string name="turn_card_overlay_note">DiPlay dibuja esta tarjeta sobre el mapa. Escribe las coordenadas absolutas en píxeles en los campos X/Y para previsualizar el movimiento; solo se guarda al pulsar «Aplicar y guardar», que actualiza la tarjeta en el panel al instante. La tarjeta de cristal de iOS no se puede mover por sí sola. La tarjeta sigue visible al ir recto.</string>
     <string name="turn_card_now">Ahora</string>

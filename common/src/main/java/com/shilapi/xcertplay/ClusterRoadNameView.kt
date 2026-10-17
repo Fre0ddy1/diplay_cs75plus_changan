@@ -24,6 +24,8 @@ internal class ClusterRoadNameView(context: Context) : View(context) {
     // data changes. SharedPreferences is never touched on the hot draw path.
     private var posX = Float.NaN
     private var posY = Float.NaN
+    /** Card size scale, cached like the position; NaN means "reload from the setting". */
+    private var overlayScale = Float.NaN
     private var lastPrimary = ""
     private var lastPrimarySize = 0f
     private var lastSecondary = ""
@@ -35,6 +37,7 @@ internal class ClusterRoadNameView(context: Context) : View(context) {
     fun notifyPositionChanged() {
         posX = Float.NaN
         posY = Float.NaN
+        overlayScale = Float.NaN
         invalidate()
     }
 
@@ -64,7 +67,10 @@ internal class ClusterRoadNameView(context: Context) : View(context) {
     override fun onDraw(canvas: Canvas) {
         super.onDraw(canvas)
         val next = guidance ?: return
-        val unit = minOf(width, height).coerceAtLeast(1)
+        if (overlayScale.isNaN()) {
+            overlayScale = AirPlayPersistence.clusterCardScale(context, "road")
+        }
+        val unit = minOf(width, height).coerceAtLeast(1) * overlayScale
         val margin = unit * 0.030f
         val radius = unit * 0.039f
         // Card size adapts to its text: width follows the longer of the two road names,

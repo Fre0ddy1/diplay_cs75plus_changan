@@ -455,12 +455,12 @@
     <string name="turn_card_horizontal">转向提示卡 · 水平位置</string>
     <string name="turn_card_vertical">转向提示卡 · 垂直位置</string>
     <string name="reset_turn_card_to_centre">将转向提示卡重置到中央</string>
-    <string name="turn_card_overlay_size">自定义转向卡大小</string>
+    <string name="card_scale_turn">转向卡大小</string>
+    <string name="card_scale_eta">到达卡大小</string>
+    <string name="card_scale_lane">车道卡大小</string>
+    <string name="card_scale_road">路名卡大小</string>
     <string name="turn_card_overlay_horizontal">自定义转向卡 · 左右</string>
     <string name="turn_card_overlay_vertical">自定义转向卡 · 上下</string>
-    <string name="turn_card_overlay_small">小</string>
-    <string name="turn_card_overlay_medium">中</string>
-    <string name="turn_card_overlay_large">大</string>
     <string name="reset_turn_card_overlay">重置自定义转向卡位置</string>
     <string name="turn_card_overlay_note">此卡由 DiPlay 叠在地图上。在下方 X/Y 输入框键入绝对像素坐标可预览移动，点击「应用并保存」才写入并立即刷新仪表盘。iOS 玻璃卡无法单独挪动。有导航时直行也会显示。</string>
     <string name="turn_card_now">即将转向</string>

@@ -37,11 +37,14 @@ internal class ClusterLaneGuidanceView(context: Context) : View(context) {
     // SharedPreferences; refreshed by notifyPositionChanged() on settings Apply.
     private var posX = Float.NaN
     private var posY = Float.NaN
+    /** Card size scale, cached like the position; NaN means "reload from the setting". */
+    private var overlayScale = Float.NaN
 
     /** External position change (settings Apply) — drop the cached position so the next draw reloads it. */
     fun notifyPositionChanged() {
         posX = Float.NaN
         posY = Float.NaN
+        overlayScale = Float.NaN
         invalidate()
     }
 
@@ -69,7 +72,10 @@ internal class ClusterLaneGuidanceView(context: Context) : View(context) {
         val laneMasks = guidance.lanes
         if (laneMasks.isEmpty()) return
 
-        val unit = minOf(width, height).coerceAtLeast(1)
+        if (overlayScale.isNaN()) {
+            overlayScale = AirPlayPersistence.clusterCardScale(context, "lane")
+        }
+        val unit = minOf(width, height).coerceAtLeast(1) * overlayScale
         val margin = unit * 0.045f
         val cardH = unit * 0.12f
         val laneW = cardH * 1.35f

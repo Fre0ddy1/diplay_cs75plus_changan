@@ -76,6 +76,10 @@ object AirPlayPersistence {
     private const val KEY_CLUSTER_FULL_SAFE_AREA = "cluster_full_safe_area"
     private const val KEY_CLUSTER_TURN_CARD_OVERLAY_POSITION = "cluster_turn_card_overlay_position"
     private const val KEY_CLUSTER_TURN_CARD_OVERLAY_SIZE = "cluster_turn_card_overlay_size"
+    /** Bounds for the per-card size percentage (see loadClusterCardScalePercent). */
+    const val CLUSTER_CARD_SCALE_MIN = 60
+    const val CLUSTER_CARD_SCALE_MAX = 160
+    const val CLUSTER_CARD_SCALE_DEFAULT = 100
     private const val KEY_CLUSTER_TURN_CARD_OVERLAY_X = "cluster_turn_card_overlay_x_percent"
     private const val KEY_CLUSTER_TURN_CARD_OVERLAY_Y = "cluster_turn_card_overlay_y_percent"
     private const val KEY_CLUSTER_TURN_CARD_X_PX = "cluster_turn_card_x_px"
@@ -809,6 +813,44 @@ object AirPlayPersistence {
         context.getSharedPreferences(PREFS, Context.MODE_PRIVATE).edit()
             .putBoolean(KEY_CENTER_MAP_FOLLOWS_DASHBOARD, enabled).apply()
     }
+
+    /**
+     * Per-card size as a percentage of its designed size.
+     *
+     * These replace the old SMALL/MEDIUM/LARGE preset: three steps were never enough to fit four
+     * different cards on one dashboard, and a driver who wanted "a bit smaller than medium" had no
+     * way to ask for it. 100 % is exactly the old MEDIUM, so nobody's layout moves until they touch
+     * the control. Cards are keyed the same way as their positions ("turn", "eta", "lane", "road").
+     */
+    fun loadClusterCardScalePercent(context: Context, card: String): Int =
+        context.getSharedPreferences(PREFS, Context.MODE_PRIVATE)
+            .getInt("cluster_card_scale_$card", 100).coerceIn(CLUSTER_CARD_SCALE_MIN, CLUSTER_CARD_SCALE_MAX)
+
+    fun saveClusterCardScalePercent(context: Context, card: String, percent: Int) {
+        val clamped = percent.coerceIn(CLUSTER_CARD_SCALE_MIN, CLUSTER_CARD_SCALE_MAX)
+        context.getSharedPreferences(PREFS, Context.MODE_PRIVATE).edit()
+            .putInt("cluster_card_scale_$card", clamped)
+            // The centre-screen overlay still speaks the old enum; keep it following the turn card
+            // so that removing the preset row does not silently freeze that surface at MEDIUM.
+            .apply {
+                if (card == "turn") {
+                    putString(
+                        KEY_CLUSTER_TURN_CARD_OVERLAY_SIZE,
+                        when {
+                            clamped < 90 -> CarPlayClusterDisplay.OverlaySize.SMALL.name
+                            clamped > 110 -> CarPlayClusterDisplay.OverlaySize.LARGE.name
+                            else -> CarPlayClusterDisplay.OverlaySize.MEDIUM.name
+                        },
+                    )
+                }
+            }
+            .apply()
+        overlaySettingsListener?.invoke()
+    }
+
+    /** Scale factor for [loadClusterCardScalePercent]; 1.0 is the designed size. */
+    fun clusterCardScale(context: Context, card: String): Float =
+        loadClusterCardScalePercent(context, card) / 100f
 
     fun loadClusterTurnCardOverlaySize(context: Context): CarPlayClusterDisplay.OverlaySize =
         context.getSharedPreferences(PREFS, Context.MODE_PRIVATE)

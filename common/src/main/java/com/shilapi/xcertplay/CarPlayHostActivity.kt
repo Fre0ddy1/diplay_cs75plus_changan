@@ -1295,7 +1295,7 @@ class CarPlayHostActivity : ComponentActivity() {
             presentation.setTurnCardOverlay(
                 AirPlayPersistence.loadClusterTurnCardX(this),
                 AirPlayPersistence.loadClusterTurnCardY(this),
-                AirPlayPersistence.loadClusterTurnCardOverlaySize(this),
+                AirPlayPersistence.loadClusterCardScalePercent(this, "turn"),
             )
             if (changanCards) {
                 presentation.setTurnCardGuidance(clusterTurnGuidance)

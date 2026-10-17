@@ -775,14 +775,11 @@ class DiPlayActivity : ComponentActivity() {
                 card.addView(positionPreview, LinearLayout.LayoutParams(ViewGroup.LayoutParams.MATCH_PARENT, dp(170)).apply { topMargin = dp(10) })
                 card.addView(label(getString(R.string.cluster_card_position_preview), 14, MUTED))
                 if (customCard) {
-                    val overlaySizes = CarPlayClusterDisplay.OverlaySize.entries
-                    choice(card, getString(R.string.turn_card_overlay_size), listOf(
-                        getString(R.string.turn_card_overlay_small),
-                        getString(R.string.turn_card_overlay_medium),
-                        getString(R.string.turn_card_overlay_large),
-                    ), overlaySizes.indexOf(AirPlayPersistence.loadClusterTurnCardOverlaySize(this)).coerceAtLeast(0), reconnects = false) {
-                        AirPlayPersistence.saveClusterTurnCardOverlaySize(this, overlaySizes[it])
-                    }
+                    // Per-card size as a percentage, replacing the old three-step preset: three
+                    // steps never fit four different cards, and "a bit smaller than medium" had
+                    // no way to be expressed. Applied immediately - the dashboard refreshes
+                    // without a reconnect, so the driver sees the result while dragging.
+                    cardScaleRow(card, getString(R.string.card_scale_turn), "turn")
                     // The custom turn card uses the same absolute pixel coordinates as the
                     // other four cards: top-left corner of the full 1920x720 dashboard panel.
                     toggle(card, getString(R.string.turn_card_show),
@@ -825,6 +822,9 @@ class DiPlayActivity : ComponentActivity() {
                     card.addView(label(getString(R.string.turn_card_overlay_note), 14, MUTED))
                 }
                 card.addView(label(getString(R.string.cluster_card_position_preview_note), 14, MUTED))
+                cardScaleRow(card, getString(R.string.card_scale_eta), "eta")
+                cardScaleRow(card, getString(R.string.card_scale_lane), "lane")
+                cardScaleRow(card, getString(R.string.card_scale_road), "road")
                 // Per-card absolute position (x, y), origin = top-left of the full dashboard
                 // panel (1920x720 canvas == display). Direct numeric input (not a slider —
                 // sliders are easy to mis-touch on the head unit). Typing only previews into
@@ -1465,6 +1465,45 @@ class DiPlayActivity : ComponentActivity() {
      * (pendingXY); the caller persists on Apply. [initial] is the current value, [max] the
      * inclusive upper bound (X 1920 / Y 720).
      */
+    /**
+     * One labelled slider for a card's size, 60-160 % of the size it was designed at.
+     *
+     * Applied while dragging: saving calls the overlay listener, which refreshes the dashboard
+     * cards in place without a reconnect, so the driver sizes a card against the real panel instead
+     * of guessing a number and applying it blind.
+     */
+    private fun cardScaleRow(parent: LinearLayout, title: String, card: String) {
+        val current = AirPlayPersistence.loadClusterCardScalePercent(this, card)
+        val value = label("$current%", 15, ACCENT, true)
+        val head = LinearLayout(this).apply {
+            orientation = LinearLayout.HORIZONTAL
+            gravity = Gravity.CENTER_VERTICAL
+            setPadding(0, dp(12), 0, 0)
+        }
+        head.addView(label(title, 15, TEXT, true), LinearLayout.LayoutParams(0, -2, 1f))
+        head.addView(value)
+        parent.addView(head, LinearLayout.LayoutParams(-1, -2))
+        parent.addView(SeekBar(this).apply {
+            val step = 5
+            val min = AirPlayPersistence.CLUSTER_CARD_SCALE_MIN
+            max = (AirPlayPersistence.CLUSTER_CARD_SCALE_MAX - min) / step
+            progress = ((current - min) / step).coerceIn(0, max)
+            // No setMinHeight: this head-unit ROM strips SeekBar#setMinHeight and throws
+            // NoSuchMethodError, which would kill the whole settings page.
+            setOnSeekBarChangeListener(object : SeekBar.OnSeekBarChangeListener {
+                override fun onProgressChanged(seek: SeekBar?, progress: Int, fromUser: Boolean) {
+                    val percent = min + progress * step
+                    value.text = "$percent%"
+                    if (fromUser) {
+                        AirPlayPersistence.saveClusterCardScalePercent(this@DiPlayActivity, card, percent)
+                    }
+                }
+                override fun onStartTrackingTouch(seek: SeekBar?) = Unit
+                override fun onStopTrackingTouch(seek: SeekBar?) = Unit
+            })
+        }, LinearLayout.LayoutParams(-1, dp(44)))
+    }
+
     private fun numberInput(initial: Int, max: Int, onChange: (Int) -> Unit): EditText =
         EditText(this).apply {
             setText(initial.toString())

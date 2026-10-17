@@ -524,12 +524,8 @@
     <string name="widget_no_route">Немає маршруту</string>
     <string name="widget_not_connected">CarPlay не підключено</string>
     <string name="dashboard_content_map_with_custom_turn_card">Карта з власною карткою маневру</string>
-    <string name="turn_card_overlay_size">Розмір власної картки</string>
     <string name="turn_card_overlay_horizontal">Власна картка · ліворуч / праворуч</string>
     <string name="turn_card_overlay_vertical">Власна картка · вгору / вниз</string>
-    <string name="turn_card_overlay_small">Мала</string>
-    <string name="turn_card_overlay_medium">Середня</string>
-    <string name="turn_card_overlay_large">Велика</string>
     <string name="reset_turn_card_overlay">Скинути положення власної картки</string>
     <string name="turn_card_overlay_note">DiPlay малює цю картку поверх карти. Введіть абсолютні координати в пікселях у поля X/Y, щоб переглянути переміщення; зберігається лише після натискання «Застосувати та зберегти», яке одразу оновлює картку на панелі. Скляну картку iOS не можна рухати окремо. Картка лишається й під час руху прямо.</string>
     <string name="turn_card_now">Зараз</string>

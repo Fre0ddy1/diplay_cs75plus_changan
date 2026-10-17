@@ -457,12 +457,12 @@
     <string name="turn_card_horizontal">Turn card · horizontal</string>
     <string name="turn_card_vertical">Turn card · vertical</string>
     <string name="reset_turn_card_to_centre">Reset turn card to centre</string>
-    <string name="turn_card_overlay_size">Custom turn card size</string>
+    <string name="card_scale_turn">Turn card size</string>
+    <string name="card_scale_eta">Arrival card size</string>
+    <string name="card_scale_lane">Lane card size</string>
+    <string name="card_scale_road">Road name card size</string>
     <string name="turn_card_overlay_horizontal">Custom turn card · left / right</string>
     <string name="turn_card_overlay_vertical">Custom turn card · up / down</string>
-    <string name="turn_card_overlay_small">Small</string>
-    <string name="turn_card_overlay_medium">Medium</string>
-    <string name="turn_card_overlay_large">Large</string>
     <string name="reset_turn_card_overlay">Reset custom turn card position</string>
     <string name="turn_card_overlay_note">DiPlay draws this card on the map. Type absolute pixel coordinates into the X/Y boxes to preview the move — it is persisted and applied only after you press Apply &amp; save, which refreshes the dashboard card immediately. The iOS glass card cannot be moved on its own. The custom card stays on for straight-ahead as well as turns.</string>
     <string name="cluster_card_position_preview">Card position preview (approximate)</string>

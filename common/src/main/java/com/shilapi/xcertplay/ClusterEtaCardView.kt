@@ -33,6 +33,8 @@ internal class ClusterEtaCardView(context: Context) : View(context) {
     // SharedPreferences is never touched on the hot draw path.
     private var posX = Float.NaN
     private var posY = Float.NaN
+    /** Card size scale, cached like the position; NaN means "reload from the setting". */
+    private var overlayScale = Float.NaN
     private var lastArrivalLine = ""
     private var lastArrivalSize = 0f
     private var lastSubLine = ""
@@ -45,6 +47,7 @@ internal class ClusterEtaCardView(context: Context) : View(context) {
     fun notifyPositionChanged() {
         posX = Float.NaN
         posY = Float.NaN
+        overlayScale = Float.NaN
         invalidate()
     }
 
@@ -77,7 +80,10 @@ internal class ClusterEtaCardView(context: Context) : View(context) {
         val remainingM = next.remainingMeters
         if (arrival == null && remainingSec == null) return
 
-        val unit = minOf(width, height).coerceAtLeast(1)
+        if (overlayScale.isNaN()) {
+            overlayScale = AirPlayPersistence.clusterCardScale(context, "eta")
+        }
+        val unit = minOf(width, height).coerceAtLeast(1) * overlayScale
         val padX = unit * 0.030f
         val padY = unit * 0.026f
         arrivalPaint.textSize = unit * 0.050f

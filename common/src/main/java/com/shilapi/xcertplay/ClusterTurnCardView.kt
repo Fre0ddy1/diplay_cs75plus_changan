@@ -25,7 +25,8 @@ internal class ClusterTurnCardView(context: Context) : View(context) {
     private var guidance: ClusterTurnGuidance? = null
     private var xPx = AirPlayPersistence.DEFAULT_CLUSTER_TURN_CARD_X_PX
     private var yPx = AirPlayPersistence.DEFAULT_CLUSTER_TURN_CARD_Y_PX
-    private var size = CarPlayClusterDisplay.OverlaySize.MEDIUM
+    /** Size in percent of the designed card (100 = the old MEDIUM preset). */
+    private var scalePercent = AirPlayPersistence.CLUSTER_CARD_SCALE_DEFAULT
 
     private val accent = Color.rgb(10, 132, 255)
     private val badgePaint = Paint(Paint.ANTI_ALIAS_FLAG).apply { color = accent }
@@ -53,10 +54,10 @@ internal class ClusterTurnCardView(context: Context) : View(context) {
     private var wDistance = 0f
     private var wRoad = 0f
 
-    fun setLayout(xPx: Int, yPx: Int, size: CarPlayClusterDisplay.OverlaySize) {
+    fun setLayout(xPx: Int, yPx: Int, scalePercent: Int) {
         this.xPx = xPx.coerceIn(0, 1920)
         this.yPx = yPx.coerceIn(0, 720)
-        this.size = size
+        this.scalePercent = scalePercent
         invalidate()
     }
 
@@ -86,11 +87,9 @@ internal class ClusterTurnCardView(context: Context) : View(context) {
         val next = guidance ?: return
         val panelW = width.toFloat()
         val panelH = height.toFloat()
-        val heightFraction = when (size) {
-            CarPlayClusterDisplay.OverlaySize.SMALL -> 0.22f
-            CarPlayClusterDisplay.OverlaySize.MEDIUM -> 0.28f
-            CarPlayClusterDisplay.OverlaySize.LARGE -> 0.34f
-        }
+        // 28 % of the panel is the designed height; the driver's percentage scales from there,
+        // so 100 % is exactly what the old MEDIUM preset drew.
+        val heightFraction = 0.28f * (scalePercent / 100f)
         val h = (panelH * heightFraction).coerceAtLeast(72f).coerceAtMost(panelH)
         val radius = h * 0.30f
         val chip = h * 0.76f
