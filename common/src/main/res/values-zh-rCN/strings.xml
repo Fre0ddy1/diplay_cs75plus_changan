@@ -591,7 +591,7 @@
     <string name="navigation_volume_keys_focus">方向盘键调节导航播报音量</string>
     <string name="navigation_volume_keys_focus_description">导航播报时短暂获取音频焦点，让车机把方向盘音量键路由到导航通道而非媒体。播报期间音乐会自动压低（与原厂 CarPlay 一致）。</string>
     <string name="block_wheel_track_change">屏蔽方向盘切歌</string>
-    <string name="block_wheel_track_change_description">默认开启。开启后仅方向盘上的上一首/下一首键被忽略；界面上的切歌按钮、播放/暂停与 Siri 不受影响。</string>
+    <string name="block_wheel_track_change_description">默认关闭。开启后仅方向盘上的上一首/下一首键被忽略；界面上的切歌按钮、播放/暂停与 Siri 不受影响。</string>
     <string name="dashboard_detailed_map">仪表盘显示详细地图</string>
     <string name="dashboard_detailed_map_description">把整个仪表盘面板声明为安全区，让 iPhone 在仪表盘上直接渲染详细跟随地图（和其他 CarPlay 盒子一致）。关闭则恢复旧的居中安全区，高德会显示全览路线，此时“车辆标记”滑块可移动车标位置。</string>
     <string name="cluster_card_position_preview">卡片位置预览（示意）</string>

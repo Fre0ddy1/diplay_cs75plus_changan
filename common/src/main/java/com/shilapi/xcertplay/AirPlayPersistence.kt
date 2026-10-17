@@ -198,10 +198,10 @@ object AirPlayPersistence {
             .apply()
     }
 
-    /** Default on: a wheel track change is ignored unless the driver turns this off. */
+    /** Default off: the wheel keeps changing tracks unless the driver turns the block on. */
     fun loadBlockWheelTrackChange(context: Context): Boolean =
         context.getSharedPreferences(PREFS, Context.MODE_PRIVATE)
-            .getBoolean(KEY_BLOCK_WHEEL_TRACK_CHANGE, true)
+            .getBoolean(KEY_BLOCK_WHEEL_TRACK_CHANGE, false)
 
     fun saveBlockWheelTrackChange(context: Context, enabled: Boolean) {
         context.getSharedPreferences(PREFS, Context.MODE_PRIVATE).edit()

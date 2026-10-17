@@ -605,7 +605,7 @@
     <string name="navigation_volume_keys_focus">Steering-wheel keys adjust guidance volume</string>
     <string name="navigation_volume_keys_focus_description">While navigation guidance is playing, DiPlay briefly takes audio focus so the head unit routes the volume keys to the guidance channel instead of media. Music is ducked during prompts, like factory CarPlay.</string>
     <string name="block_wheel_track_change">Block steering-wheel track change</string>
-    <string name="block_wheel_track_change_description">On by default. Only previous/next on the steering wheel is ignored: neither the iPhone nor the car player changes tracks. On-screen buttons, play/pause and Siri still work.</string>
+    <string name="block_wheel_track_change_description">Off by default. When on, only previous/next on the steering wheel is ignored: neither the iPhone nor the car player changes tracks. On-screen buttons, play/pause and Siri still work.</string>
     <string name="dashboard_detailed_map">Detailed dashboard map</string>
     <string name="dashboard_detailed_map_description">Declares the whole dashboard panel as safe area so the iPhone renders the detailed follow map on the dashboard, like other CarPlay boxes. Off restores the old centred safe area, which makes Amap show an overview and lets the car-marker sliders move the marker.</string>
 </resources>
