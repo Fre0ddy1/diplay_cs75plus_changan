@@ -349,6 +349,14 @@ class CarPlayHostActivity : ComponentActivity() {
             applyClusterTurnOverlay()
         }
     }
+    /** Song now playing (title/artist from iAP2 NowPlayingUpdate), shown top centre. */
+    private var clusterSong: com.shilapi.xcertplay.hud.ClusterSong? = null
+    private val clusterSongListener: (com.shilapi.xcertplay.hud.ClusterSong?) -> Unit = { song ->
+        runOnUiThread {
+            clusterSong = song
+            applyClusterTurnOverlay()
+        }
+    }
     private var clusterLaneGuidance: com.shilapi.xcertplay.hud.BydLaneGuidance? = null
     private val clusterLaneOverlayListener: (com.shilapi.xcertplay.hud.BydLaneGuidance?) -> Unit = { guidance ->
         runOnUiThread {
@@ -1058,6 +1066,7 @@ class CarPlayHostActivity : ComponentActivity() {
             }
         }
         com.shilapi.xcertplay.hud.BydNavigationOutputs.setTurnOverlayListener(clusterTurnOverlayListener)
+        com.shilapi.xcertplay.hud.BydNavigationOutputs.setSongListener(clusterSongListener)
         com.shilapi.xcertplay.hud.BydNavigationOutputs.setLaneOverlayListener(clusterLaneOverlayListener)
         com.shilapi.xcertplay.hud.BydNavigationOutputs.routeTraceListener = routeTraceListener
         mainHandler.removeCallbacks(refreshTurnOverlay)
@@ -1297,6 +1306,7 @@ class CarPlayHostActivity : ComponentActivity() {
                 AirPlayPersistence.loadClusterTurnCardY(this),
                 AirPlayPersistence.loadClusterCardScalePercent(this, "turn"),
             )
+            presentation.setSong(clusterSong)
             if (changanCards) {
                 presentation.setTurnCardGuidance(clusterTurnGuidance)
                 presentation.setEtaGuidance(clusterTurnGuidance)
@@ -1590,6 +1600,7 @@ class CarPlayHostActivity : ComponentActivity() {
         mainHandler.removeCallbacks(refreshTurnOverlay)
         AirPlayPersistence.overlaySettingsListener = null
         com.shilapi.xcertplay.hud.BydNavigationOutputs.setTurnOverlayListener(null)
+        com.shilapi.xcertplay.hud.BydNavigationOutputs.setSongListener(null)
         clusterMonitor?.stop()
         mainHandler.removeCallbacks(hideIdleCenterMap)
         homeMonitor?.stop()

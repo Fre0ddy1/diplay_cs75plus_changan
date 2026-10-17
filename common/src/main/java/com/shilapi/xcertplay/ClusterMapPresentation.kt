@@ -1,6 +1,7 @@
 package com.shilapi.xcertplay
 
 import android.app.Presentation
+import com.shilapi.xcertplay.hud.ClusterSong
 import android.content.Context
 import android.graphics.Color
 import android.graphics.Canvas
@@ -50,6 +51,8 @@ internal class ClusterMapPresentation(
     private var etaCardView: ClusterEtaCardView? = null
     private var laneCardView: ClusterLaneGuidanceView? = null
     private var roadNameCardView: ClusterRoadNameView? = null
+    /** Song now playing, top centre. Title/artist only - the protocol carries no lyrics. */
+    private var songView: ClusterSongView? = null
     private var exitBadgeView: ClusterExitBadgeView? = null
     private var genericTextureView: TextureView? = null
     private var navTextureView: TextureView? = null
@@ -294,6 +297,9 @@ internal class ClusterMapPresentation(
         root.addView(laneCardView, FrameLayout.LayoutParams(-1, -1))
         roadNameCardView = ClusterRoadNameView(context).apply { visibility = View.GONE }
         root.addView(roadNameCardView, FrameLayout.LayoutParams(-1, -1))
+        // Added last so it draws above the guidance cards.
+        songView = ClusterSongView(context).apply { visibility = View.GONE }
+        root.addView(songView, FrameLayout.LayoutParams(-1, -1))
         exitBadgeView = ClusterExitBadgeView(context).apply { visibility = View.GONE }
         root.addView(exitBadgeView, FrameLayout.LayoutParams(-1, -1))
         setContentView(root)
@@ -355,6 +361,11 @@ internal class ClusterMapPresentation(
         // Reload the show/hide switches, then a saved switch change re-applies visibility right away.
         reloadCardVisibilityCache()
         if (navOnlyCards) applyCardsVisibility()
+    }
+
+    /** The song now playing. Null clears the card. */
+    fun setSong(song: ClusterSong?) {
+        songView?.setSong(song)
     }
 
     fun setTurnCardGuidance(guidance: ClusterTurnGuidance?) {

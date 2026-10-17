@@ -15,6 +15,9 @@ object BydNavigationOutputs {
     @Volatile private var useStandalone = false
     @Volatile private var overlayListener: ((ClusterTurnGuidance?) -> Unit)? = null
     @Volatile private var laneOverlayListener: ((BydLaneGuidance?) -> Unit)? = null
+    @Volatile private var songListener: ((ClusterSong?) -> Unit)? = null
+    private val songState = ClusterSongState()
+    @Volatile private var publishedSong: ClusterSong? = null
     @Volatile var routeTraceListener: ((String) -> Unit)? = null
     private val overlayLock = Any()
     private var publishedLane: BydLaneGuidance? = null
@@ -65,6 +68,16 @@ object BydNavigationOutputs {
     internal fun onFrame(frame: Iap2Frame) {
         if (frame.messageId == ClusterSongState.NOW_PLAYING_UPDATE) {
             BydClusterSong.onFrame(frame)
+            // The dashboard card reads the same frames: the BYD writer above only targets the
+            // BYD HUD, so nothing else published the title/artist for our own cluster overlay.
+            val next = synchronized(songState) {
+                songState.accept(frame)
+                songState.current()
+            }
+            if (next != publishedSong) {
+                publishedSong = next
+                songListener?.invoke(next)
+            }
             return
         }
         // Route-guidance family (0x5201/0x5202/0x5204): forward a raw TLV trace to the host
@@ -99,6 +112,12 @@ object BydNavigationOutputs {
         val next = currentOverlay()
         synchronized(overlayLock) { publishedOverlay = next }
         listener?.invoke(next)
+    }
+
+    /** The song now playing, for the dashboard card. Called from the iAP2 thread. */
+    fun setSongListener(listener: ((ClusterSong?) -> Unit)?) {
+        songListener = listener
+        listener?.invoke(publishedSong)
     }
 
     /** Live lane guidance for the dashboard overlay. Called from the iAP2 thread. */

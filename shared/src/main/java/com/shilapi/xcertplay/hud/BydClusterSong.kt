@@ -11,7 +11,7 @@ import java.lang.reflect.InvocationTargetException
 import java.util.concurrent.Executors
 
 /** What the dashboard's music card shows. */
-internal data class ClusterSong(val text: String, val playing: Boolean)
+data class ClusterSong(val text: String, val playing: Boolean)
 
 /**
  * The CarPlay song for the dashboard, from iAP2 NowPlayingUpdate (0x5001): title (1) and artist (12)
