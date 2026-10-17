@@ -1342,9 +1342,14 @@ class CarPlayHostActivity : ComponentActivity() {
      * or touch the binder - the full close sequence is known to tear down the head unit's projection
      * session, after which every later open is ignored.
      */
-    private fun releaseDashboardForDisconnect() {
+    /**
+     * @param immediate true for a disconnect the driver asked for, which must not wait out the
+     * delay: there is no reconnect coming, and the activity is about to finish with the
+     * ext-screen still in our hands - which leaves the dashboard black rather than blank.
+     */
+    private fun releaseDashboardForDisconnect(immediate: Boolean = false) {
         if (shuttingDown.get() || isFinishing || isDestroyed) return
-        if (activeAirPlaySession != null) return
+        if (activeAirPlaySession != null && !immediate) return
         if (clusterExtScreenReleased) return
         if (!AirPlayPersistence.loadClusterReleaseOnClose(this)) {
             appendLog("Disconnect: 仪表盘归还已关闭（设置），保持等待画面")
@@ -4345,6 +4350,13 @@ class CarPlayHostActivity : ComponentActivity() {
         CarPlayBackgroundSession.store(snapshot.controller, snapshot.sink, snapshot.width, snapshot.height,
             this, snapshot.display) { completion ->
             runOnUiThread {
+                // Hand the dashboard back before shutting down, not after. shutdown() only
+                // closes the controller and finish() then destroys the presentation, so without
+                // this the ext-screen stays in our hands and the cluster goes black instead of
+                // returning to the car's own dials. A deliberate disconnect has nothing to wait
+                // for, so it bypasses the 20 s debounce that exists for reconnecting sessions.
+                releaseDashboardForDisconnect(immediate = true)
+                mainHandler.removeCallbacks(releaseDashboardAfterDisconnect)
                 shutdown(false, "DiPlay disconnect", completion)
                 finish()
             }
