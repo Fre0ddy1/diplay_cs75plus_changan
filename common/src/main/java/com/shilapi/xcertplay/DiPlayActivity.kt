@@ -765,6 +765,10 @@ class DiPlayActivity : ComponentActivity() {
                         AirPlayPersistence.loadClusterTurnCardX(this),
                         AirPlayPersistence.loadClusterTurnCardY(this),
                     ),
+                    "song" to Pair(
+                        AirPlayPersistence.loadClusterCardX(this, "song"),
+                        AirPlayPersistence.loadClusterCardY(this, "song"),
+                    ),
                 )
                 val positionPreview = CardPositionPreviewView(this).apply {
                     setTurnOffset(
@@ -825,6 +829,7 @@ class DiPlayActivity : ComponentActivity() {
                 cardScaleRow(card, getString(R.string.card_scale_eta), "eta")
                 cardScaleRow(card, getString(R.string.card_scale_lane), "lane")
                 cardScaleRow(card, getString(R.string.card_scale_road), "road")
+                cardScaleRow(card, getString(R.string.card_scale_song), "song")
                 // Per-card absolute position (x, y), origin = top-left of the full dashboard
                 // panel (1920x720 canvas == display). Direct numeric input (not a slider —
                 // sliders are easy to mis-touch on the head unit). Typing only previews into
@@ -867,6 +872,7 @@ class DiPlayActivity : ComponentActivity() {
                 addCardOffsetInputs(getString(R.string.cluster_card_eta_title), "eta") { id, x, y -> positionPreview.setOffset(id, x, y) }
                 addCardOffsetInputs(getString(R.string.cluster_card_road_title), "road") { id, x, y -> positionPreview.setOffset(id, x, y) }
                 addCardOffsetInputs(getString(R.string.cluster_card_exit_title), "exit") { id, x, y -> positionPreview.setOffset(id, x, y) }
+                addCardOffsetInputs(getString(R.string.cluster_card_song_title), "song") { id, x, y -> positionPreview.setOffset(id, x, y) }
                 card.addView(button(getString(R.string.cluster_card_position_apply), false) {
                     pendingXY.forEach { (id, pair) ->
                         if (id == "turn") {

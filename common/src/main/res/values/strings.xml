@@ -461,6 +461,8 @@
     <string name="card_scale_eta">Arrival card size</string>
     <string name="card_scale_lane">Lane card size</string>
     <string name="card_scale_road">Road name card size</string>
+    <string name="card_scale_song">Song card size</string>
+    <string name="cluster_card_song_title">Song card</string>
     <string name="turn_card_overlay_horizontal">Custom turn card · left / right</string>
     <string name="turn_card_overlay_vertical">Custom turn card · up / down</string>
     <string name="reset_turn_card_overlay">Reset custom turn card position</string>

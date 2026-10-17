@@ -357,6 +357,8 @@ internal class ClusterMapPresentation(
         etaCardView?.notifyPositionChanged()
         laneCardView?.notifyPositionChanged()
         roadNameCardView?.notifyPositionChanged()
+        // Deliberately outside the nav-only group: the mirror mode shows it as well.
+        songView?.notifyPositionChanged()
         exitBadgeView?.notifyPositionChanged()
         // Reload the show/hide switches, then a saved switch change re-applies visibility right away.
         reloadCardVisibilityCache()

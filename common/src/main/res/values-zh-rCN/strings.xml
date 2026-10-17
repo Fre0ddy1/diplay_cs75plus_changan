@@ -459,6 +459,8 @@
     <string name="card_scale_eta">到达卡大小</string>
     <string name="card_scale_lane">车道卡大小</string>
     <string name="card_scale_road">路名卡大小</string>
+    <string name="card_scale_song">歌曲卡大小</string>
+    <string name="cluster_card_song_title">歌曲信息卡</string>
     <string name="turn_card_overlay_horizontal">自定义转向卡 · 左右</string>
     <string name="turn_card_overlay_vertical">自定义转向卡 · 上下</string>
     <string name="reset_turn_card_overlay">重置自定义转向卡位置</string>

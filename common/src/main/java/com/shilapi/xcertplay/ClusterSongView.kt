@@ -7,21 +7,26 @@ import android.view.View
 import com.shilapi.xcertplay.hud.ClusterSong
 
 /**
- * The song now playing, as a slim glass capsule centred at the top of the dashboard.
+ * The song now playing, as a slim glass capsule on the dashboard.
  *
  * Title and artist only. CarPlay's iAP2 NowPlayingUpdate (0x5001) carries MediaItemAttributes -
  * title (1) and artist (12) - and the protocol has no lyric attribute at all: the lyrics a phone
- * displays are drawn by the music app itself as pixels on the centre screen, so there is nothing
- * for us to project. Stated plainly rather than shipped as a card that silently never shows them.
+ * displays are drawn by the music app itself as pixels on the centre screen, so there is no text
+ * stream to forward. The field logs show exactly that and nothing more - 0x5001 frames plus artwork
+ * transfers, no lyric field.
  *
- * Placed at the top centre for now, per the request. Width follows the text so the glass always
- * wraps the label, and it is clamped to a share of the panel with a clip so a long title is cut
- * instead of running off the edge.
+ * Positioned and scaled exactly like the guidance cards (absolute canvas coordinates plus a
+ * percentage), so it takes the same two controls instead of being pinned to one spot. Unlike those
+ * cards it is not part of the nav-only group: the whole-screen mirror can carry a song card too, and
+ * ClusterMapPresentation.applyCardsVisibility deliberately leaves this view alone.
  */
 internal class ClusterSongView(context: Context) : View(context) {
     private val rect = RectF()
     private val textPaint = GlassCardStyle.labelPaint(0f, 235, true)
     private var song: ClusterSong? = null
+    private var posX = Float.NaN
+    private var posY = Float.NaN
+    private var overlayScale = Float.NaN
     private var lastText = ""
     private var lastSize = 0f
     private var measured = 0f
@@ -33,8 +38,15 @@ internal class ClusterSongView(context: Context) : View(context) {
         }
         song = next
         visibility = if (next == null) GONE else VISIBLE
-        // Paused music keeps its title up: the card is an information overlay, not a play indicator,
-        // and the driver reads it between turns. [ClusterSong.playing] is available if that changes.
+        // Paused music keeps its title up: the card is an information overlay, not a play indicator.
+        invalidate()
+    }
+
+    /** External position or size change (settings Apply) - drop the caches so the next draw reloads. */
+    fun notifyPositionChanged() {
+        posX = Float.NaN
+        posY = Float.NaN
+        overlayScale = Float.NaN
         invalidate()
     }
 
@@ -48,8 +60,14 @@ internal class ClusterSongView(context: Context) : View(context) {
     override fun onDraw(canvas: Canvas) {
         super.onDraw(canvas)
         val next = song ?: return
-        val panelW = width.toFloat()
-        val unit = minOf(width, height).coerceAtLeast(1).toFloat()
+        if (posX.isNaN()) {
+            posX = AirPlayPersistence.loadClusterCardX(context, CARD).toFloat()
+            posY = AirPlayPersistence.loadClusterCardY(context, CARD).toFloat()
+        }
+        if (overlayScale.isNaN()) {
+            overlayScale = AirPlayPersistence.clusterCardScale(context, CARD)
+        }
+        val unit = minOf(width, height).coerceAtLeast(1).toFloat() * overlayScale
         val h = unit * 0.095f
         val radius = h * 0.5f
         textPaint.textSize = h * 0.42f
@@ -62,16 +80,17 @@ internal class ClusterSongView(context: Context) : View(context) {
             measured = textPaint.measureText(label)
         }
         val padH = h * 0.55f
-        val w = (measured + padH * 2f).coerceAtMost(panelW * 0.86f)
-        val left = (panelW - w) / 2f
-        val top = unit * 0.030f
+        val w = measured + padH * 2f
+        val left = posX.coerceIn(0f, (width - w).coerceAtLeast(0f))
+        val top = posY.coerceIn(0f, (height - h).coerceAtLeast(0f))
         rect.set(left, top, left + w, top + h)
         GlassCardStyle.drawCapsule(canvas, rect, radius)
         val metrics = textPaint.fontMetrics
         val baseline = rect.centerY() - (metrics.ascent + metrics.descent) / 2f
-        canvas.save()
-        canvas.clipRect(rect.left + padH * 0.5f, rect.top, rect.right - padH * 0.5f, rect.bottom)
-        canvas.drawText(label, rect.centerX() - measured / 2f, baseline, textPaint)
-        canvas.restore()
+        canvas.drawText(label, rect.left + padH, baseline, textPaint)
+    }
+
+    private companion object {
+        const val CARD = "song"
     }
 }

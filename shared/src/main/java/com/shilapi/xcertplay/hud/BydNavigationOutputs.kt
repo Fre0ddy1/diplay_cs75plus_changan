@@ -16,6 +16,8 @@ object BydNavigationOutputs {
     @Volatile private var overlayListener: ((ClusterTurnGuidance?) -> Unit)? = null
     @Volatile private var laneOverlayListener: ((BydLaneGuidance?) -> Unit)? = null
     @Volatile private var songListener: ((ClusterSong?) -> Unit)? = null
+    /** One raw dump per process is enough to see whether the phone ever sends lyric text. */
+    private var songDumped = false
     private val songState = ClusterSongState()
     @Volatile private var publishedSong: ClusterSong? = null
     @Volatile var routeTraceListener: ((String) -> Unit)? = null
@@ -70,6 +72,12 @@ object BydNavigationOutputs {
             BydClusterSong.onFrame(frame)
             // The dashboard card reads the same frames: the BYD writer above only targets the
             // BYD HUD, so nothing else published the title/artist for our own cluster overlay.
+            if (!songDumped) {
+                songDumped = true
+                routeTraceListener?.invoke(
+                    "NowPlaying raw ${frame.payload.size}B: " + hexPreview(frame.payload),
+                )
+            }
             val next = synchronized(songState) {
                 songState.accept(frame)
                 songState.current()
@@ -126,6 +134,14 @@ object BydNavigationOutputs {
         val next = currentLane()
         synchronized(overlayLock) { publishedLane = next }
         listener?.invoke(next)
+    }
+
+    /** Hex preview so a UTF-8 title in the dump can be decoded offline; ASCII would lose it. */
+    private fun hexPreview(bytes: ByteArray): String {
+        val n = minOf(bytes.size, 400)
+        val sb = StringBuilder(n * 2)
+        for (i in 0 until n) sb.append(String.format("%02x", bytes[i]))
+        return sb.toString()
     }
 
     private fun updateLaneOverlay(frame: Iap2Frame) {

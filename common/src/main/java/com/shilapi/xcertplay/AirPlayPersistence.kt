@@ -970,6 +970,8 @@ object AirPlayPersistence {
         // edge, eta to the right, road upper-right, exit at the top-right (matching the
         // position preview; the old left-edge default put the badge under the turn card,
         // which looked like a stray number on the left side of the cluster).
+        // Song card: left edge of a text-sized capsule; 780 centres a typical title on 1920.
+        "song" -> 780
         "lane" -> 0
         "eta" -> 1600
         "road" -> 1400
@@ -978,6 +980,7 @@ object AirPlayPersistence {
     }
 
     private fun clusterCardDefaultY(card: String): Int = when (card) {
+        "song" -> 20
         "lane" -> 300
         "eta" -> 500
         "road" -> 100
