@@ -460,6 +460,7 @@
     <string name="card_scale_lane">车道卡大小</string>
     <string name="card_scale_road">路名卡大小</string>
     <string name="card_scale_song">歌曲卡大小</string>
+    <string name="cluster_turn_card_controls_hidden">转向卡的位置与大小仅在「仪表盘显示」选择「地图 + 自绘转向卡」时显示，切换到该选项后即可调整。</string>
     <string name="cluster_card_song_title">歌曲信息卡</string>
     <string name="turn_card_overlay_horizontal">自定义转向卡 · 左右</string>
     <string name="turn_card_overlay_vertical">自定义转向卡 · 上下</string>

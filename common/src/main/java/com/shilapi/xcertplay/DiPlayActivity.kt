@@ -829,6 +829,11 @@ class DiPlayActivity : ComponentActivity() {
                         render()
                     }, matchButton(10, 56))
                     card.addView(label(getString(R.string.turn_card_overlay_note), 14, MUTED))
+                } else {
+                    // The turn card's position and size live inside the customCard branch, so with any
+                    // other "仪表盘显示" they used to vanish without a word - which reads as a bug rather
+                    // than a mode the driver is in. Say what to switch to instead.
+                    card.addView(label(getString(R.string.cluster_turn_card_controls_hidden), 14, MUTED))
                 }
                 card.addView(label(getString(R.string.cluster_card_position_preview_note), 14, MUTED))
                 cardScaleRow(card, getString(R.string.card_scale_eta), "eta")

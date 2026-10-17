@@ -462,6 +462,7 @@
     <string name="card_scale_lane">Lane card size</string>
     <string name="card_scale_road">Road name card size</string>
     <string name="card_scale_song">Song card size</string>
+    <string name="cluster_turn_card_controls_hidden">Turn card position and size are only shown when "仪表盘显示" is set to "地图 + 自绘转向卡" - switch that option above to adjust them.</string>
     <string name="cluster_card_song_title">Song card</string>
     <string name="turn_card_overlay_horizontal">Custom turn card · left / right</string>
     <string name="turn_card_overlay_vertical">Custom turn card · up / down</string>
