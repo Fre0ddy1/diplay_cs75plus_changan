@@ -1455,6 +1455,7 @@ class CarPlayHostActivity : ComponentActivity() {
         if (!AirPlayPersistence.loadClusterMapEnabled(this)) return
         val presentations = (clusterLayers.values + listOfNotNull(clusterPresentation)).distinct()
         presentations.forEach { runCatching { it.refreshCrop() } }
+        presentations.forEach { runCatching { it.refreshNavOffset() } }
     }
 
     private fun clusterDisplayConfig(): AirPlayDisplayConfig? {

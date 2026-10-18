@@ -75,6 +75,7 @@ object AirPlayPersistence {
     private const val KEY_CLUSTER_CONTENT = "cluster_content"
     private const val KEY_CLUSTER_MARKER_X = "cluster_marker_horizontal_step"
     private const val KEY_CLUSTER_MARKER_Y = "cluster_marker_vertical_step"
+    private const val KEY_CLUSTER_NAV_OFFSET = "cluster_nav_offset_percent"
     private const val KEY_CLUSTER_FULL_SAFE_AREA = "cluster_full_safe_area"
     private const val KEY_CLUSTER_TURN_CARD_OVERLAY_POSITION = "cluster_turn_card_overlay_position"
     private const val KEY_CLUSTER_TURN_CARD_OVERLAY_SIZE = "cluster_turn_card_overlay_size"
@@ -1107,6 +1108,23 @@ object AirPlayPersistence {
     fun saveClusterMarkerVerticalStep(context: Context, step: Int) {
         context.getSharedPreferences(PREFS, Context.MODE_PRIVATE).edit()
             .putInt(KEY_CLUSTER_MARKER_Y, step.coerceIn(CarPlayClusterDisplay.verticalSteps)).apply()
+    }
+
+    /** Horizontal correction for the nav-only picture, in percent of the panel width. */
+    const val NAV_OFFSET_MIN = -20
+    const val NAV_OFFSET_MAX = 20
+
+    fun loadClusterNavOffsetPercent(context: Context): Int =
+        context.getSharedPreferences(PREFS, Context.MODE_PRIVATE)
+            .getInt(KEY_CLUSTER_NAV_OFFSET, 0)
+            .coerceIn(NAV_OFFSET_MIN, NAV_OFFSET_MAX)
+
+    fun saveClusterNavOffsetPercent(context: Context, percent: Int) {
+        context.getSharedPreferences(PREFS, Context.MODE_PRIVATE).edit()
+            .putInt(KEY_CLUSTER_NAV_OFFSET, percent.coerceIn(NAV_OFFSET_MIN, NAV_OFFSET_MAX))
+            .apply()
+        // A local TextureView transform: no reconnect, so the 111 stream is not re-announced.
+        overlaySettingsListener?.invoke()
     }
 
     /**

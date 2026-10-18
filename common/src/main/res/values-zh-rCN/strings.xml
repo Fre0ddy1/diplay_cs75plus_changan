@@ -593,6 +593,9 @@
     <string name="nav_duck_percent_title">导航播报时音乐音量</string>
     <string name="nav_duck_percent_value">%1$d%%</string>
     <string name="nav_duck_percent_hint">播报期间音乐降到该比例，播报结束自动恢复；通话音频不受影响。改动在下一次播报即生效。</string>
+    <string name="nav_offset_title">仅导航画面水平校正</string>
+    <string name="nav_offset_value">%1$d%%</string>
+    <string name="nav_offset_hint">左右平移仪表盘地图，无需重连。仪表盘导航流会给右侧信息栏留位，车标可能偏左或偏右，用这里把它和车道条调回中间。</string>
     <string name="block_wheel_track_change">屏蔽方向盘切歌</string>
     <string name="block_wheel_track_change_description">默认关闭。开启后仅方向盘上的上一首/下一首键被忽略；界面上的切歌按钮、播放/暂停与 Siri 不受影响。</string>
     <string name="dashboard_detailed_map">仪表盘显示详细地图</string>

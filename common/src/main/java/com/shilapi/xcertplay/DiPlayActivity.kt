@@ -924,6 +924,7 @@ class DiPlayActivity : ComponentActivity() {
                     // No reconnect: the marker offset is a local overlay transform, applied on
                     // the next overlay refresh. Reconnecting here only re-announced the voice.
                 }, matchButton(10, 56))
+                if (!DiLink51ClusterLayout.supported()) navOffsetControl(card)
                 toggle(card, getString(R.string.dashboard_detailed_map),
                     getString(R.string.dashboard_detailed_map_description),
                     AirPlayPersistence.loadClusterFullSafeArea(this)) {
@@ -1558,6 +1559,41 @@ class DiPlayActivity : ComponentActivity() {
             })
         }, LinearLayout.LayoutParams(-1, dp(44)))
         parent.addView(label(getString(R.string.nav_duck_percent_hint), 14, MUTED).apply {
+            setPadding(0, dp(4), 0, dp(12))
+        })
+    }
+
+    /**
+     * Horizontal correction for the nav-only picture: the cluster stream keeps a right-hand
+     * column free, so its marker can sit off centre on some head units.
+     */
+    private fun navOffsetControl(parent: LinearLayout) {
+        val current = AirPlayPersistence.loadClusterNavOffsetPercent(this)
+        val value = label(getString(R.string.nav_offset_value, current), 15, ACCENT, true)
+        val head = row().apply { setPadding(0, dp(12), 0, 0) }
+        head.addView(label(getString(R.string.nav_offset_title), 15, TEXT, true),
+            LinearLayout.LayoutParams(0, -2, 1f))
+        head.addView(value)
+        parent.addView(head, LinearLayout.LayoutParams(-1, -2))
+        parent.addView(SeekBar(this).apply {
+            val step = 1
+            val min = AirPlayPersistence.NAV_OFFSET_MIN
+            max = (AirPlayPersistence.NAV_OFFSET_MAX - min) / step
+            progress = (current - min) / step
+            // No setMinHeight: this head-unit ROM strips SeekBar#setMinHeight and throws.
+            setOnSeekBarChangeListener(object : SeekBar.OnSeekBarChangeListener {
+                override fun onProgressChanged(seek: SeekBar?, progress: Int, fromUser: Boolean) {
+                    val percent = min + progress * step
+                    value.text = getString(R.string.nav_offset_value, percent)
+                    if (fromUser) {
+                        AirPlayPersistence.saveClusterNavOffsetPercent(this@DiPlayActivity, percent)
+                    }
+                }
+                override fun onStartTrackingTouch(seek: SeekBar?) = Unit
+                override fun onStopTrackingTouch(seek: SeekBar?) = Unit
+            })
+        }, LinearLayout.LayoutParams(-1, dp(44)))
+        parent.addView(label(getString(R.string.nav_offset_hint), 14, MUTED).apply {
             setPadding(0, dp(4), 0, dp(12))
         })
     }
