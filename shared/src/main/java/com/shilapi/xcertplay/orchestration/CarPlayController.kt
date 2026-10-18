@@ -186,6 +186,9 @@ class CarPlayController(
         },
     )
     private val executor: ExecutorService = Executors.newSingleThreadExecutor()
+    private val wiredStartTimer: java.util.concurrent.ScheduledExecutorService =
+        Executors.newSingleThreadScheduledExecutor()
+    @Volatile private var wiredStartWatchdog: WiredStartWatchdog? = null
     private val touchExecutor: ExecutorService = Executors.newSingleThreadExecutor()
     private val tunnelExecutor: ExecutorService = Executors.newSingleThreadExecutor()
     private val mainHandler = Handler(Looper.getMainLooper())
@@ -279,6 +282,7 @@ class CarPlayController(
                 }
             }
             activeSession = session
+            wiredStartWatchdog?.sessionActive()
             debugLog(
                 "AirPlay session active controller=${session.controllerId ?: "unknown"} " +
                     "peer=${session.host}",
@@ -479,6 +483,8 @@ class CarPlayController(
             if (closed) return
             closed = true
         }
+        wiredStartWatchdog?.terminate()
+        wiredStartTimer.shutdownNow()
         val teardownStarted = System.nanoTime()
         connectionDiagnostic("teardown begin transport=${config.transport}")
         videoGate?.close()
@@ -1862,6 +1868,26 @@ class CarPlayController(
                     "location=${config.identification.locationInformationEnabled} " +
                     "vehicleStatus=${config.identification.vehicleStatusEnabled}",
             )
+            lateinit var startWatchdog: WiredStartWatchdog
+            startWatchdog = WiredStartWatchdog(
+                schedule = { delay, action ->
+                    val future = runCatching {
+                        wiredStartTimer.schedule({ action() }, delay, TimeUnit.MILLISECONDS)
+                    }.getOrNull()
+                    val cancel: () -> Unit = { future?.cancel(false); Unit }
+                    cancel
+                },
+                onTimeout = {
+                    if (!closed && wiredStartWatchdog === startWatchdog) {
+                        debugLog(
+                            "wired start: no AirPlay session ${WiredStartWatchdog.TIMEOUT_MILLIS / 1000} s " +
+                                "after carplay-start-session",
+                        )
+                        fail(IphoneUsbException.TimedOut("The iPhone did not open CarPlay over USB in time"))
+                    }
+                },
+            )
+            wiredStartWatchdog = startWatchdog
             val result = Iap2WiredControlClient(csm, Iap2MfiAuthenticationClient(mfi)).run(
                 identification = config.identification,
                 endpoint = endpoint,
@@ -1871,7 +1897,9 @@ class CarPlayController(
                 vehicleStatusProvider = vehicleStatusProvider,
                 onIncoming = ::onRouteFrame,
                 onProgress = { message -> debugLog("wired $message") },
+                onStartSessionSent = { startWatchdog.startSessionSent() },
             )
+            startWatchdog.terminate()
             onStatus(
                 when (result.terminal) {
                     Iap2WiredControlTerminal.TIMED_OUT -> CarPlayStatus.ControlEnded
@@ -1880,6 +1908,7 @@ class CarPlayController(
                 },
             )
         } catch (error: Throwable) {
+            wiredStartWatchdog?.terminate()
             debugLog("wired bring-up failed", error)
             if (!ncmOwnedLocally) vpnService?.detach()
             fail(error)
