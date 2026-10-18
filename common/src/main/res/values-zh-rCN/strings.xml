@@ -596,8 +596,8 @@
     <string name="nav_offset_title">仅导航画面水平校正</string>
     <string name="nav_offset_value">%1$d%%</string>
     <string name="nav_offset_hint">左右平移仪表盘地图，无需重连。仪表盘导航流会给右侧信息栏留位，车标可能偏左或偏右，用这里把它和车道条调回中间。</string>
-    <string name="block_wheel_track_change">屏蔽方向盘切歌</string>
-    <string name="block_wheel_track_change_description">默认关闭。开启后仅方向盘上的上一首/下一首键被忽略；界面上的切歌按钮、播放/暂停与 Siri 不受影响。</string>
+    <string name="block_wheel_track_change">屏蔽方向盘媒体键</string>
+    <string name="block_wheel_track_change_description">默认关闭。开启后方向盘上的上一首/下一首与播放/暂停键都被忽略，iPhone 和车机自带播放器都不会响应；界面上的按钮与 Siri 不受影响。</string>
     <string name="dashboard_detailed_map">仪表盘显示详细地图</string>
     <string name="dashboard_detailed_map_description">把整个仪表盘面板声明为安全区，让 iPhone 在仪表盘上直接渲染详细跟随地图（和其他 CarPlay 盒子一致）。关闭则恢复旧的居中安全区，高德会显示全览路线，此时“车辆标记”滑块可移动车标位置。</string>
     <string name="cluster_card_position_preview">卡片位置预览（示意）</string>

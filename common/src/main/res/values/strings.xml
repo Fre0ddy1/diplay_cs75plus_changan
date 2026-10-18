@@ -610,8 +610,8 @@
     <string name="nav_offset_title">Nav-only picture horizontal correction</string>
     <string name="nav_offset_value">%1$d%%</string>
     <string name="nav_offset_hint">Moves the dashboard map left or right without reconnecting. The cluster stream keeps a right-hand column free, so its marker can sit off centre; use this to put the car and lane bar back in the middle.</string>
-    <string name="block_wheel_track_change">Block steering-wheel track change</string>
-    <string name="block_wheel_track_change_description">Off by default. When on, only previous/next on the steering wheel is ignored: neither the iPhone nor the car player changes tracks. On-screen buttons, play/pause and Siri still work.</string>
+    <string name="block_wheel_track_change">Block steering-wheel media keys</string>
+    <string name="block_wheel_track_change_description">Off by default. When on, previous/next AND play/pause on the steering wheel are ignored: neither the iPhone nor the car player reacts to them. On-screen buttons and Siri still work.</string>
     <string name="dashboard_detailed_map">Detailed dashboard map</string>
     <string name="dashboard_detailed_map_description">Declares the whole dashboard panel as safe area so the iPhone renders the detailed follow map on the dashboard, like other CarPlay boxes. Off restores the old centred safe area, which makes Amap show an overview and lets the car-marker sliders move the marker.</string>
 </resources>

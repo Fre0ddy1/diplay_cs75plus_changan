@@ -250,13 +250,19 @@ internal object CarPlayMediaKeys {
             Log.i(TAG, "media key $source -> car video player $index")
             return
         }
-        // Only hardware keys, i.e. the steering wheel, are dropped. A skip from a media
-        // controller is the head unit's own on-screen control and must keep working.
+        // Only hardware keys, i.e. the steering wheel, are dropped. A skip or a play/pause from a
+        // media controller is the head unit's own on-screen control and must keep working.
+        // Track change and play/pause share the switch (driver request 2026-10-18). Hardware maps
+        // every play/pause key (MEDIA_PLAY, MEDIA_PAUSE, PLAY_PAUSE, HEADSETHOOK) to the toggle, so
+        // PLAY_PAUSE is the only index the wheel produces here; PLAY and PAUSE only ever arrive
+        // from a controller, i.e. with fromWheel = false.
         if (fromWheel &&
-            (index == CarPlayMediaButton.NEXT || index == CarPlayMediaButton.PREVIOUS) &&
+            (index == CarPlayMediaButton.NEXT ||
+                index == CarPlayMediaButton.PREVIOUS ||
+                index == CarPlayMediaButton.PLAY_PAUSE) &&
             appContext?.let { AirPlayPersistence.loadBlockWheelTrackChange(it) } == true
         ) {
-            Log.i(TAG, "media key $source -> blocked (steering-wheel track change disabled)")
+            Log.i(TAG, "media key $source -> blocked (steering-wheel media keys disabled)")
             return
         }
         val sent = synchronized(this) { controller }?.sendMediaButton(index) ?: false

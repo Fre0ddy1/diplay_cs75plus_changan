@@ -496,16 +496,25 @@ class CarPlayHostActivity : ComponentActivity() {
     // quiet hot-switch, which would only make our (hidden) window visible on a display the
     // head-unit is not showing.
     private var clusterExtScreenReleased = false
+    // True once this activity has sent the projection open sequence at all. The disconnect
+    // hand-back refuses to run without it: sending the ext-screen release (r0) to a head unit that
+    // never projected would switch it out of a mode it is not in.
+    private var clusterProjectionStarted = false
     /**
-     * How long a disconnect is tolerated before the dashboard is handed back to the head unit.
-     * Without this the projection window stayed up with the waiting label, so a phone that never
-     * came back left the driver with an instrument cluster showing "waiting" instead of the car's
-     * own dials. The delay means a transient drop - which reconnects in seconds - does not flash the
-     * dashboard back and forth or force a fresh open sequence (which can make incall announce once).
-     * 20 s is longer than any reconnect observed here and short enough that real departures restore
-     * the cluster quickly.
+     * How long the dashboard picture may stay frozen before it is handed back to the head unit.
+     *
+     * Without this the projection window stayed up with the waiting label (and the last decoded
+     * frame behind it), so a phone that never came back left the driver with an instrument cluster
+     * showing a stale picture instead of the car's own dials. The delay keeps a transient drop -
+     * which reconnects in seconds - from flashing the dashboard back and forth and forcing a fresh
+     * open sequence (which can make incall announce once).
+     *
+     * 20 s (the previous value) was chosen before the trigger moved off the session clock; it meant
+     * the driver stared at a frozen map for twenty seconds after every real departure. Five seconds
+     * is short enough to read as "the dashboard came back by itself" and still longer than the
+     * sub-second stream hiccups seen on this car.
      */
-    private val disconnectReleaseDelayMs = 20_000L
+    private val disconnectReleaseDelayMs = 5_000L
     private val releaseDashboardAfterDisconnect = Runnable { releaseDashboardForDisconnect() }
 
     private var gestureStartX = 0f
@@ -1337,29 +1346,43 @@ class CarPlayHostActivity : ComponentActivity() {
 
     /**
      * Gives the instrument cluster back to the head unit after a disconnect that did not recover.
+     *
      * Mirrors the three-finger close, the path field-tested to restore the car's own dials: hide our
      * window and send the ext-screen release (r0). It deliberately does NOT dismiss the presentation
      * or touch the binder - the full close sequence is known to tear down the head unit's projection
      * session, after which every later open is ignored.
-     */
-    /**
+     *
+     * The test is the STREAM, not the session. A reconnect brings iAP2 back within a few seconds
+     * while the dashboard picture stays frozen on the last decoded frame, and the old session check
+     * read that as "still connected" and never handed the panel back - field report 2026-10-18:
+     * "断开连接没有第一时间归还仪表，仪表上还是显示的之前的投屏画面". [clusterStreamActive] is
+     * false in exactly that state, so frames decide, not the session.
+     *
+     * The 关闭时归还仪表盘 switch is deliberately NOT consulted here. Its own name is about closing
+     * (the three-finger close, the app being closed); a dropped connection is not a close, and
+     * honouring the switch made the hand-back unreachable exactly when it is needed - the driver
+     * was left with a frozen picture and no way back to the car's dials except closing by hand.
+     *
      * @param immediate true for a disconnect the driver asked for, which must not wait out the
      * delay: there is no reconnect coming, and the activity is about to finish with the
      * ext-screen still in our hands - which leaves the dashboard black rather than blank.
      */
     private fun releaseDashboardForDisconnect(immediate: Boolean = false) {
         if (shuttingDown.get() || isFinishing || isDestroyed) return
-        if (activeAirPlaySession != null && !immediate) return
+        if (!clusterProjectionStarted) return
+        // A live stream means the phone is still driving the dashboard: leave it alone. Only a
+        // disconnect the driver asked for may override that.
+        if (!immediate && clusterStreamActive()) return
         if (clusterExtScreenReleased) return
-        if (!AirPlayPersistence.loadClusterReleaseOnClose(this)) {
-            appendLog("Disconnect: 仪表盘归还已关闭（设置），保持等待画面")
-            return
-        }
         val presentation = clusterPresentation ?: return
         presentation.setMapVisible(false)
         InCallClusterBridge.releaseExternalScreen(this)
         clusterExtScreenReleased = true
-        appendLog("Disconnect: 已归还原车仪表画面（${disconnectReleaseDelayMs}ms 未重连）")
+        clusterProjectionStarted = false
+        appendLog(
+            "Disconnect: 已归还原车仪表画面" +
+                if (immediate) "（司机主动断开）" else "（${disconnectReleaseDelayMs}ms 无画面）",
+        )
     }
 
     private fun dismissClusterPresentation() {
@@ -1490,6 +1513,20 @@ class CarPlayHostActivity : ComponentActivity() {
         }
     }
 
+    /**
+     * The media keys the steering wheel sends once CarPlay holds the audio focus: track change and
+     * play/pause. KEYCODE_HEADSETHOOK is deliberately absent - some ROMs deliver the wheel's voice
+     * key through it, and swallowing that would kill Siri instead of the music.
+     */
+    private fun isWheelMediaKey(keyCode: Int): Boolean = when (keyCode) {
+        KeyEvent.KEYCODE_MEDIA_NEXT,
+        KeyEvent.KEYCODE_MEDIA_PREVIOUS,
+        KeyEvent.KEYCODE_MEDIA_PLAY,
+        KeyEvent.KEYCODE_MEDIA_PAUSE,
+        KeyEvent.KEYCODE_MEDIA_PLAY_PAUSE -> true
+        else -> false
+    }
+
     // Hardware navigation belongs to the iPhone-rendered CarPlay UI, not Android View focus.
     override fun dispatchKeyEvent(event: KeyEvent): Boolean {
         // While navigation guidance plays, steer the steering-wheel volume keys to the
@@ -1521,16 +1558,22 @@ class CarPlayHostActivity : ComponentActivity() {
             return true
         }
 
-        // The driver may switch the wheel's track keys off. Swallow them so neither the
-        // iPhone nor the car's own player changes tracks.
+        // The driver may switch the wheel's media keys off. Play/pause belongs to the same switch
+        // (driver request 2026-10-18): a CarPlay screen that answers the wheel makes the car's own
+        // audio controls useless, and stopping at "track change" left the wheel able to start and
+        // pause the iPhone's music. Swallowing the key here also keeps it from reaching the car's
+        // own player, which would pause the radio instead. Voice keys are handled above and stay
+        // live - Siri must still open.
         if (activeAirPlaySession != null &&
             CarPlayVideo.activity == null &&
-            (event.keyCode == KeyEvent.KEYCODE_MEDIA_NEXT ||
-                event.keyCode == KeyEvent.KEYCODE_MEDIA_PREVIOUS) &&
+            isWheelMediaKey(event.keyCode) &&
             AirPlayPersistence.loadBlockWheelTrackChange(this)
         ) {
             if (event.action == KeyEvent.ACTION_DOWN && event.repeatCount == 0) {
-                appendLog("Media: wheel key ${event.keyCode} blocked (steering-wheel track change disabled)")
+                appendLog(
+                    "Media: wheel key ${KeyEvent.keyCodeToString(event.keyCode)} blocked " +
+                        "(steering-wheel media keys disabled)",
+                )
             }
             return true
         }
@@ -4227,7 +4270,14 @@ class CarPlayHostActivity : ComponentActivity() {
                     }
                     activeAirPlaySession = session
                     CarPlayBackgroundSession.active = true
+                    // A new session is NOT proof that the dashboard picture is back: iAP2 comes up
+                    // seconds before any video flows, and a reconnect that never delivers frames
+                    // left the panel frozen on the previous picture. Restart the hand-back timer
+                    // instead of cancelling it; the 111 stream coming back cancels it for real.
                     mainHandler.removeCallbacks(releaseDashboardAfterDisconnect)
+                    if (clusterProjectionStarted) {
+                        mainHandler.postDelayed(releaseDashboardAfterDisconnect, disconnectReleaseDelayMs)
+                    }
                     reconnectAttempts = 0
                     logThemeState(ThemeModeDiagnostics.Source.SESSION_ACTIVE, resources.configuration)
                     syncAirPlayDarkMode(ThemeModeDiagnostics.Source.SESSION_ACTIVE)
@@ -4370,7 +4420,7 @@ class CarPlayHostActivity : ComponentActivity() {
                 // closes the controller and finish() then destroys the presentation, so without
                 // this the ext-screen stays in our hands and the cluster goes black instead of
                 // returning to the car's own dials. A deliberate disconnect has nothing to wait
-                // for, so it bypasses the 20 s debounce that exists for reconnecting sessions.
+                // for, so it bypasses the delay that exists for reconnecting sessions.
                 releaseDashboardForDisconnect(immediate = true)
                 mainHandler.removeCallbacks(releaseDashboardAfterDisconnect)
                 shutdown(false, "DiPlay disconnect", completion)
@@ -5233,6 +5283,9 @@ class CarPlayHostActivity : ComponentActivity() {
             if (AirPlayPersistence.loadClusterReleaseOnClose(this)) {
                 InCallClusterBridge.releaseExternalScreen(this)
                 clusterExtScreenReleased = true
+                // The panel is the head unit's again, so a later disconnect has nothing to hand
+                // back until the next projection.
+                clusterProjectionStarted = false
                 // The head unit is out of projection mode now, so the next open is a real open:
                 // it must re-send the full sequence (which re-grabs the ext-screen) instead of the
                 // quiet hot-switch. This may make incall announce "全屏镜像/导航已开启" once per
@@ -5362,6 +5415,15 @@ class CarPlayHostActivity : ComponentActivity() {
     // AUTONAVI 10019/10116/10117 broadcasts + tx21/8/1/2 + CarProperty). Retries
     // findDisplay a few times in case the display registers asynchronously.
     private fun tryActivateClusterProjection(mirror: Boolean, direction: String, keepWindow: Boolean = false) {
+        // We are about to send the full open sequence, which takes the ext-screen back. If a
+        // disconnect had handed it to the head unit, the flag must be dropped here or every later
+        // "released?" check would think the panel is still the head unit's and re-run this sequence
+        // again on the next swipe.
+        if (clusterExtScreenReleased) {
+            appendLog("Cluster activation: 仪表盘曾归还车机，重发完整激活序列重新接管")
+            clusterExtScreenReleased = false
+        }
+        clusterProjectionStarted = true
         // Drop any window that was created on the pre-activation display: until the head-unit
         // switches to projection mode that display shows nothing on the physical dashboard, and
         // keeping the old window would let later hot-swaps reuse it instead of the activated one.
@@ -5452,6 +5514,14 @@ class CarPlayHostActivity : ComponentActivity() {
                 Log.i(ClusterMapPresentation.TAG, "cluster stream active=$active")
                 appendLog("Cluster map: stream active=$active")
                 clusterPresentation?.setStreamActive(active)
+                // Frames are the only truthful "the phone is still here" signal: while they flow the
+                // hand-back is cancelled, and when they stop it is scheduled. The session callbacks
+                // alone could not see this - iAP2 reconnects in seconds while the picture stays
+                // frozen on the last decoded frame (field report 2026-10-18).
+                mainHandler.removeCallbacks(releaseDashboardAfterDisconnect)
+                if (!active && clusterProjectionStarted) {
+                    mainHandler.postDelayed(releaseDashboardAfterDisconnect, disconnectReleaseDelayMs)
+                }
                 // Centre-card and launcher mirrors track the navigation cluster stream only.
                 if (!AirPlayPersistence.loadClusterMirrorMain(this)) {
                     MapMirrors.setStreamActive(active)
