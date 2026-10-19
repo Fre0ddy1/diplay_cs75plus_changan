@@ -600,13 +600,11 @@
     <string name="hotspot_control_failed">The car could not start its hotspot. Open the hotspot in car settings.</string>
     <string name="byd_adb_features">BYD features · needs ADB</string>
     <string name="location_reporting_reconnects">Changing this setting reconnects an active CarPlay session.</string>
-    <string name="navigation_volume_keys_focus">Steering-wheel keys adjust guidance volume</string>
-    <string name="navigation_volume_keys_focus_description">While navigation guidance is playing, DiPlay briefly takes audio focus so the head unit routes the volume keys to the guidance channel instead of media. Music is ducked during prompts, like factory CarPlay.</string>
     <string name="nav_duck_percent_title">Music level during navigation prompts</string>
     <string name="nav_duck_percent_value">%1$d%%</string>
     <string name="nav_duck_percent_hint">Music drops to this level while a prompt plays and comes back when it ends. Calls are never lowered; changes apply from the next prompt.</string>
-    <string name="media_audio_via_bluetooth">Music and wheel keys via car Bluetooth</string>
-    <string name="media_audio_via_bluetooth_description">Off by default: music plays over CarPlay. When on, no CarPlay audio is announced on connect, so music and the wheel keys move to the car Bluetooth (A2DP/AVRCP); CarPlay then stays silent and guidance and calls also use the car Bluetooth. Reconnect to apply.</string>
+    <string name="media_audio_via_bluetooth">Wheel media keys via car Bluetooth</string>
+    <string name="media_audio_via_bluetooth_description">Music always plays over CarPlay. When on, play/pause and track keys from the wheel are not forwarded to CarPlay and are left to the car Bluetooth (AVRCP) to control the phone, so one press is not answered twice. During a guidance prompt the volume keys still adjust guidance volume here. Reconnect to apply.</string>
     <string name="settings_group_frequent">Frequent</string>
     <string name="settings_group_connect">Connection</string>
     <string name="settings_group_display">Picture</string>

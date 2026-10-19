@@ -635,19 +635,14 @@ class DiPlayActivity : ComponentActivity() {
             }
             mediaChannelControl(card)
             navigationChannelControl(card)
-            toggle(card, getString(R.string.navigation_volume_keys_focus),
-                getString(R.string.navigation_volume_keys_focus_description),
-                AirPlayPersistence.loadNavigationFocusEnabled(this)) {
-                AirPlayPersistence.saveNavigationFocusEnabled(this, it)
-            }
-            // One switch for music AND the wheel's media keys: they cannot be independent (with
-            // the CarPlay media session gone the wheel keys fall through to the car's Bluetooth
-            // app, and claiming them for CarPlay as well skipped two tracks per press), so the
-            // old "block steering-wheel media keys" toggle is gone as of 2026-10-18.
+            // Audio always stays on CarPlay; the switch only decides who answers the wheel's
+            // media keys. With it on, this app swallows them so the car's Bluetooth (AVRCP)
+            // controls the phone once instead of the press being handled twice.
             toggle(card, getString(R.string.media_audio_via_bluetooth),
                 getString(R.string.media_audio_via_bluetooth_description),
                 AirPlayPersistence.loadMediaViaCarBluetooth(this)) {
                 AirPlayPersistence.saveMediaViaCarBluetooth(this, it)
+                render()
             }
             navDuckPercentControl(card)
         }
@@ -2787,6 +2782,11 @@ class DiPlayActivity : ComponentActivity() {
         appendLine("Saved video preference (may differ from active session): ${if (AirPlayPersistence.loadHevcEnabled(appContext)) "HEVC" else "H.264"}; ${AirPlayPersistence.loadFps(appContext)} fps")
         appendLine("CarPlay size: ${com.shilapi.xcertplay.airplay.CarPlaySize.fromWidthMillimeters(AirPlayPersistence.loadWidthPhysicalMm(appContext)).label}")
         appendLine("Saved resolution preference (may differ from active session): ${AirPlayPersistence.loadDisplayScaleTenths(appContext) * 10}%")
+        appendLine(
+            "Saved audio routing: mediaViaCarBluetooth=${AirPlayPersistence.loadMediaViaCarBluetooth(appContext)} " +
+                "duckPercent=${AirPlayPersistence.loadNavDuckPercent(appContext)} " +
+                "audioFocus=${AirPlayPersistence.loadAudioFocusEnabled(appContext)}",
+        )
         appendLine("Session: ${if (CarPlayBackgroundSession.active) "active" else if (CarPlayBackgroundSession.hasSession()) "connecting" else "stopped"}")
         appendLine("Head-unit board: ${Build.BOARD}; hardware: ${Build.HARDWARE}; build: ${Build.DISPLAY}")
         // The version number does not change between test builds, so name the installed package:

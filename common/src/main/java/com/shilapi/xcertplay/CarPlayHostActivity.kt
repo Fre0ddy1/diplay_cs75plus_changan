@@ -1573,6 +1573,9 @@ class CarPlayHostActivity : ComponentActivity() {
         // While navigation guidance plays, steer the steering-wheel volume keys to the
         // guidance stream. Head units route the keys to media whenever music holds focus,
         // even during prompts; the stock Amap works because it intercepts the keys itself.
+        // The guidance stream lives on CarPlay audio, which is always declared now, so this is
+        // the exact "a prompt is playing" signal. Do not widen it to "a route is active": that
+        // stays true for the whole drive and would leave the keys on guidance between prompts.
         if (navigationGuidanceActive && event.action == KeyEvent.ACTION_DOWN &&
             (event.keyCode == KeyEvent.KEYCODE_VOLUME_UP || event.keyCode == KeyEvent.KEYCODE_VOLUME_DOWN)) {
             val dir = if (event.keyCode == KeyEvent.KEYCODE_VOLUME_UP) 1 else -1
@@ -3792,16 +3795,16 @@ class CarPlayHostActivity : ComponentActivity() {
             oemLabel = oemLabel,
             icons = listOf(loadAirPlayIcon()),
             videoInCar = com.shilapi.xcertplay.hud.BydOutputSettings.videoWhileParkedActive(this),
-            // "音乐与方向盘媒体键走车机蓝牙": while the switch is on, /info advertises NO audio at
-            // all, so the iPhone has no CarPlay audio route and sends music over the paired head
-            // unit's Bluetooth instead. Field-verified 2026-10-18 (version B): features lost the
-            // audio bits (418060152546 -> 417987798242), audioFormats went 9 -> 0, no stream 102
-            // was ever opened and the head unit reported musicActive=true with streamMusic=15/15 -
-            // the music really plays on the car's own Bluetooth. Consequence, by design: CarPlay
-            // itself is silent, so guidance prompts, calls and Siri come out of the car's own
-            // Bluetooth/HFP instead. Takes effect on the next connection; with the switch off this
-            // is false and the accessory behaves like factory CarPlay.
-            disableAudioOutput = AirPlayPersistence.loadMediaViaCarBluetooth(this),
+            // Audio always stays on CarPlay, whatever the wheel-key switch says.
+            //
+            // Driver's design (2026-10-19): the head unit sends a steering-wheel media key twice -
+            // once to this app, once over Bluetooth AVRCP to the phone - so with both paths live a
+            // single press skipped two tracks. Dropping the audio route here (the earlier "B"
+            // build) silenced CarPlay and moved guidance to the car's Bluetooth, which cost the
+            // navigation duck and the volume-key routing for no reason: the duplicate is the key,
+            // not the audio. Keeping the audio declared means music, ducking and guidance volume
+            // all behave like factory CarPlay, and the switch only stops us forwarding the key.
+            disableAudioOutput = false,
         )
     }
 
@@ -3969,7 +3972,6 @@ class CarPlayHostActivity : ComponentActivity() {
             audioFocusEnabled = AirPlayPersistence.loadAudioFocusEnabled(this),
             mediaChannel = AirPlayPersistence.loadMediaAudioChannel(this),
             navigationChannel = AirPlayPersistence.loadNavigationAudioChannel(this),
-            navigationFocusEnabled = AirPlayPersistence.loadNavigationFocusEnabled(this),
             navDuckPercent = { AirPlayPersistence.loadNavDuckPercent(this) },
             context = this,
             navigationStreamType = navigationStreamType,

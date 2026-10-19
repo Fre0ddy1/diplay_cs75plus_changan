@@ -251,8 +251,6 @@ class AndroidMediaSink(
     private val onMediaAudioChanged: (Boolean) -> Unit = {},
     /** True while any navigation-guidance stream is playing; called from media threads. */
     private val onNavigationGuidanceChanged: (Boolean) -> Unit = {},
-    /** Take transient audio focus during guidance prompts so head-unit volume keys hit guidance. */
-    private val navigationFocusEnabled: Boolean = true,
     /** Music level (percent) while a prompt plays or the phone asks us to duck. */
     private val navDuckPercent: () -> Int = { AudioFocusCoordinator.DEFAULT_DUCK_PERCENT },
 ) : MediaSink {
@@ -463,7 +461,7 @@ class AndroidMediaSink(
 
     private fun requestNavigationFocus() {
         val manager = audioManager ?: return
-        if (!navigationFocusEnabled || Build.VERSION.SDK_INT < Build.VERSION_CODES.O) return
+        if (Build.VERSION.SDK_INT < Build.VERSION_CODES.O) return
         if (navigationFocusRequest != null) return
         // Pure navigation usage, matching how the stock car Amap routes guidance with its
         // "high-level audio API". A legacy stream type here would reclassify the focus as

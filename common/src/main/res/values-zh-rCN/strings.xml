@@ -586,13 +586,11 @@
     <string name="hotspot_control_failed">车机热点开启失败，请在车机设置中开启。</string>
     <string name="byd_adb_features">比亚迪功能 · 需要 ADB</string>
     <string name="location_reporting_reconnects">更改此设置会重新连接当前 CarPlay 会话。</string>
-    <string name="navigation_volume_keys_focus">方向盘键调节导航播报音量</string>
-    <string name="navigation_volume_keys_focus_description">导航播报时短暂获取音频焦点，让车机把方向盘音量键路由到导航通道而非媒体。播报期间音乐会自动压低（与原厂 CarPlay 一致）。</string>
     <string name="nav_duck_percent_title">导航播报时音乐音量</string>
     <string name="nav_duck_percent_value">%1$d%%</string>
     <string name="nav_duck_percent_hint">播报期间音乐降到该比例，播报结束自动恢复；通话音频不受影响。改动在下一次播报即生效。</string>
-    <string name="media_audio_via_bluetooth">音乐与方向盘媒体键走车机蓝牙</string>
-    <string name="media_audio_via_bluetooth_description">默认关闭：音乐走 CarPlay。开启后连接时不再宣告 CarPlay 音频，音乐与方向盘播放/切歌交给车机蓝牙；代价是 CarPlay 不出声、导航与通话也走车机蓝牙。需断开重连生效。</string>
+    <string name="media_audio_via_bluetooth">方向盘媒体键交给车机蓝牙</string>
+    <string name="media_audio_via_bluetooth_description">音乐始终走 CarPlay。开启后，方向盘上的播放/暂停与切歌不再转发给 CarPlay，只由车机蓝牙（AVRCP）控制手机，避免一次按键被响应两次。导航播报时音量键仍由 DiPlay 调导航音量。需断开重连生效。</string>
     <string name="cluster_card_position_preview">卡片位置预览（示意）</string>
     <string name="cluster_card_position_preview_note">原点为整个仪表盘投屏画面左上角 (0,0)（1920x720），X 向右、Y 向下，坐标即卡片左上角位置（px）。直接在 X/Y 输入框键入数字预览移动，点击“应用并保存”才会写入并立即刷新仪表盘上的卡片；卡片自适应后若越出屏幕会自动收回边界并保存修正坐标。</string>
     <string name="cluster_card_position_apply">应用并保存</string>

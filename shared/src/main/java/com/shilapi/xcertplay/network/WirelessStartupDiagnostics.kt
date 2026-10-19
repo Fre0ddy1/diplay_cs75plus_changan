@@ -17,8 +17,6 @@ internal class WirelessStartupDiagnostics(
     private val log: (String) -> Unit,
     private val intervalMillis: Long = 10_000,
     private val nowNs: () -> Long = System::nanoTime,
-    /** Fired once when the phone was asked to start CarPlay but never opened AirPlay. */
-    private val onStall: (() -> Unit)? = null,
 ) : Closeable {
     private val closed = AtomicBoolean(false)
     private val startedNanos = nowNs()
@@ -115,7 +113,6 @@ internal class WirelessStartupDiagnostics(
         if (closed.get() || tcpAccepted > 0 || startRequests == 0) return
         if (!stallReported && (firstStartRequestNs?.let(::elapsedMillis) ?: 0) >= STALL_REPORT_MILLIS) {
             stallReported = true
-            onStall?.invoke()
         }
         val now = nowNs()
         if (now - lastStallNs < STALL_INTERVAL_NS) return
