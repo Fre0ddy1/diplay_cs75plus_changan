@@ -4,6 +4,7 @@ import android.content.ComponentName
 import android.content.Context
 import android.content.Intent
 import android.content.ServiceConnection
+import android.content.SharedPreferences
 import android.os.Binder
 import android.os.Build
 import android.os.Handler
@@ -88,6 +89,29 @@ import android.util.Log
  * not. openProjection() reads it before sending anything and takes the silent path when it already
  * reports projecting.
  *
+ * Across a process restart that signal is gone: lastCallbackValue starts empty, so a fresh
+ * process used to send the full sequence even when the projection was still warm (field report
+ * 2026-10-18: "又出现了全屏导航已开启的播报" after every app restart / reconnect). Two things close
+ * that gap. First, incall reports its state proactively when the callback is registered - observed
+ * within ~20 ms in three of four cold starts - so a fresh process usually hears the truth before
+ * auto-project fires. Second, the last known state is persisted: a fresh process that has heard
+ * nothing yet can still take the silent half when the projection was warm because we never handed
+ * the ext-screen back (force-kill or crash mid-projection). The silent half stays bounded: if
+ * incall does not confirm within SILENT_CONFIRM_MS the full sequence runs anyway, because a
+ * dashboard stuck on the head unit's own screen is worse than the one announcement a genuine
+ * re-open makes. A proactive report always outranks the persisted state - it is incall's own word
+ * about right now.
+ *
+ * After our own r0 hand-back the word is filtered, not trusted: incall answers the hand-back with
+ * "value 3" (+30-43 ms measured) - that is the projection mode still being on, but the ext-screen
+ * being the head unit's own screen again, NOT us being projected. So for
+ * [R0_ANSWER_WINDOW_MS] after a r0 we send, a "projecting" report is ignored for the open decision
+ * (logged), and the persisted flag [KEY_EXT_SCREEN_RELEASED_BY_US] keeps the silent half closed
+ * until incall genuinely reports us again (the driver enabling the channel by hand, observed
+ * +125 s later) or we take it back ourselves. Without that filter the r0 answer read as "still
+ * projecting" and every reconnect after a close sent the silent half, which field-measured cannot
+ * re-grab the ext-screen (2026-10-18: "关闭投影三指滑动无法投屏,需要在车机上手动开启投影通道").
+ *
  * Still unproven, and deliberately left alone rather than "fixed" by guesswork: which single send
  * among (1)-(3) produces the one announcement a genuine cold-start switch still makes.
  *
@@ -150,6 +174,38 @@ object InCallClusterBridge {
     // half of the open sequence (cold boot: the service can take a while to come up).
     private const val SERVICE_WAIT_FALLBACK_MS = 4_000L
 
+    // ---- persisted projection state (survives a process restart) ----
+    private const val PREFS_NAME = "InCallClusterBridge"
+    private const val KEY_INCALL_PROJECTING = "incallProjecting"
+    private const val KEY_EXT_SCREEN_RELEASED = "extScreenReleased"
+    /**
+     * We handed the ext-screen back ourselves (r0) and have not taken it back since.
+     *
+     * Unlike [KEY_EXT_SCREEN_RELEASED] this flag is cleared only by our own next full open, never
+     * by an incall report. The head unit answers our r0 with "projecting" for ITS OWN screen
+     * within tens of milliseconds (measured 30 ms and 43 ms in the field), and letting that answer
+     * look like a projection to us is what kept the next open on the silent half - which never
+     * re-grabs the ext-screen we just gave away. Field 2026-10-18: after a close swipe the
+     * dashboard stayed on the head unit's own screen until the driver re-enabled the projection
+     * channel by hand, and a plain reconnect after a disconnect had the same silent-half open and
+     * the same blank dashboard.
+     */
+    private const val KEY_EXT_SCREEN_RELEASED_BY_US = "extScreenReleasedByUs"
+    /**
+     * How long a value-3 report after our own r0 still counts as the head unit answering that
+     * hand-back rather than as "projecting to us again". Observed answers arrive in tens of
+     * milliseconds; the next genuine "ours again" in the field logs came 125 s later (the driver
+     * enabling the projection channel by hand after a close swipe).
+     */
+    private const val R0_ANSWER_WINDOW_MS = 2_000L
+    /** Callback code that carries incall's projecting state (value 3 = projecting, 0 = not). */
+    private const val CALLBACK_CODE_STATE = 2
+    /**
+     * How long the fresh-process silent open has to be confirmed by incall before the full open
+     * sequence - the one that makes the head unit announce - runs anyway.
+     */
+    private const val SILENT_CONFIRM_MS = 4_000L
+
     private var contextRef: Context? = null
     private var bound = false
     private var binder: IBinder? = null
@@ -158,6 +214,14 @@ object InCallClusterBridge {
     private var observeCallbackRequested = false
     /** Last callback value reported per code, so only transitions reach the exported log. */
     private val lastCallbackValue = java.util.concurrent.ConcurrentHashMap<Int, Int>()
+
+    /**
+     * Set on the binder thread the first time incall calls back in this process. Binder liveness
+     * only - it says nothing about the projection state, but it does separate a head unit that is
+     * silent because it has nothing to say from one whose projection service is gone (adb mode).
+     */
+    @Volatile
+    private var callbackHeard = false
 
     /**
      * What incall reports on callback code 2 once the cluster is being driven by us. Measured twice:
@@ -174,6 +238,77 @@ object InCallClusterBridge {
      * so only incall can say whether it is currently routing the cluster to us.
      */
     private fun incallReportsProjecting(): Boolean = lastCallbackValue[2] == CALLBACK_PROJECTING
+
+    /**
+     * incall's report, as the UI may act on it: projecting AND we have not handed the ext-screen
+     * back since. The three-finger swipe uses it to choose between the quiet hot-switch and a real
+     * re-open - a hot-switch onto a session the head unit no longer projects changes nothing on the
+     * dashboard (field 2026-10-18 14:25: incall reported value 0, the left swipe logged
+     * "已激活，热切换" and the cluster stayed on the head unit's own screen).
+     */
+    fun reportsProjecting(): Boolean = incallReportsProjecting() && !releasedByUs()
+
+    /**
+     * incall has said anything at all in this process (any callback code). False means the binder
+     * has not produced a single word - a dead session (field: adb mode) or a head unit that is
+     * simply quiet, which cannot be told apart, so callers must not treat it as "not projecting".
+     */
+    fun heardFromIncall(): Boolean = callbackHeard
+
+    // ---- persisted projection state ----
+
+    private fun prefs(): SharedPreferences? =
+        contextRef?.getSharedPreferences(PREFS_NAME, Context.MODE_PRIVATE)
+
+    /** incall was routing the cluster to us the last time we heard from it (callback value 3). */
+    private fun persistedProjecting(): Boolean =
+        prefs()?.getBoolean(KEY_INCALL_PROJECTING, false) ?: false
+
+    /** We handed the ext-screen back ourselves (r0) and the binder session was never torn down. */
+    private fun persistedReleased(): Boolean =
+        prefs()?.getBoolean(KEY_EXT_SCREEN_RELEASED, false) ?: false
+
+    /**
+     * We handed the ext-screen back ourselves and have not taken it back since - so incall is NOT
+     * projecting to us right now, whatever it last reported. Persisted, because the flag has to
+     * outlive both the process (force-kill right after a disconnect) and the head unit's own answer
+     * to our r0, which reports "projecting" for the screen it just took back.
+     */
+    private fun releasedByUs(): Boolean =
+        prefs()?.getBoolean(KEY_EXT_SCREEN_RELEASED_BY_US, false) ?: false
+
+    private fun setReleasedByUs(value: Boolean) {
+        prefs()?.edit()?.putBoolean(KEY_EXT_SCREEN_RELEASED_BY_US, value)?.apply()
+    }
+
+    /**
+     * Uptime of our own last r0 hand-back, 0 when this process never sent one. In-process only: it
+     * exists to tell the head unit's answer to OUR r0 apart from a later report that means the
+     * projection is ours again (the driver enabling the channel by hand, or the head unit
+     * re-projecting us after it comes back from a dead state such as adb mode).
+     */
+    private var r0SentAtUptimeMs = 0L
+
+    private fun withinR0AnswerWindow(): Boolean =
+        r0SentAtUptimeMs > 0 && SystemClock.uptimeMillis() - r0SentAtUptimeMs <= R0_ANSWER_WINDOW_MS
+
+    private fun persistProjecting(projecting: Boolean) {
+        val editor = prefs()?.edit() ?: return
+        editor.putBoolean(KEY_INCALL_PROJECTING, projecting)
+        // incall reporting "projecting" is also the proof that our r0 hand-back has been undone.
+        if (projecting) editor.putBoolean(KEY_EXT_SCREEN_RELEASED, false)
+        editor.apply()
+    }
+
+    /**
+     * True when this process has not heard from incall yet but the persisted state says the
+     * projection is still warm because we never handed the ext-screen back: incall was routing the
+     * cluster to us when we last knew (value 3 - a force-kill or crash during an active
+     * projection). The full sequence's source switch would announce for nothing in that case, so
+     * the silent half goes first. Deliberately NOT true after our own r0: there the ext-screen is
+     * the head unit's again and the silent half has been measured not to take it back.
+     */
+    private fun warmStart(): Boolean = persistedProjecting()
     private var openState = false      // f5349k (open in progress / active)
     private var broadcastHalfSent = false
     /**
@@ -208,7 +343,32 @@ object InCallClusterBridge {
                 1, 2 -> {
                     data.enforceInterface(CALLBACK_TOKEN)
                     val value = data.readInt()
+                    callbackHeard = true
                     Log.i(TAG, "INavigateCallback code=$code value=$value")
+                    // Persist the projecting state so a fresh process can tell a warm projection
+                    // from a cold one without announcing (see the class doc).
+                    if (code == CALLBACK_CODE_STATE) {
+                        val projecting = value == CALLBACK_PROJECTING
+                        if (projecting && releasedByUs() && withinR0AnswerWindow()) {
+                            // The head unit answering our own r0 reports "projecting" for ITS OWN
+                            // screen - the ext-screen is the head unit's again the moment the
+                            // hand-back lands. Recording this as a projection to us is what kept
+                            // the next open on the silent half, which never re-grabs what we just
+                            // gave away (field 2026-10-18: blank dashboard after every reconnect
+                            // and after every close swipe, until the driver re-enabled the
+                            // projection channel on the head unit by hand).
+                            Log.i(
+                                TAG,
+                                "r0 answer ignored for the open decision: value=3 " +
+                                    "${SystemClock.uptimeMillis() - r0SentAtUptimeMs}ms after our hand-back",
+                            )
+                        } else {
+                            // A projecting report outside that window means the projection is ours
+                            // again by some other means, so the released belief ends here.
+                            if (projecting && releasedByUs()) setReleasedByUs(false)
+                            persistProjecting(projecting)
+                        }
+                    }
                     // The head unit calling back is the only channel through which it can tell the
                     // app anything about the projection. Only transitions reach the exported log:
                     // during a state ladder the head unit answers every broadcast, and with the
@@ -269,6 +429,12 @@ object InCallClusterBridge {
         contextRef = context.applicationContext
         if (observeCallbackRequested) return
         observeCallbackRequested = true
+        logSeq(
+            generation,
+            "observe: persisted state projecting=${persistedProjecting()} " +
+                "released=${persistedReleased()} releasedByUs=${releasedByUs()} " +
+                "heard=${callbackHeard}",
+        )
         val existing = binder
         if (existing != null) {
             val ok = runCatching { registerCallback(existing) }.getOrDefault(false)
@@ -312,16 +478,40 @@ object InCallClusterBridge {
         // Read incall's own report before we send anything: if the driver has already brought
         // projection up (the cluster shows "等待 CarPlay 连接"), the source is already ours and the
         // open sequence's switch would be a switch to the same source - which is what makes incall
-        // announce "全屏导航已开启" for nothing.
-        val alreadyProjecting = incallReportsProjecting()
+        // announce "全屏导航已开启" for nothing. Our OWN r0 outranks any report: after a hand-back
+        // the ext-screen is the head unit's, and a value-3 that arrived inside the r0 answer
+        // window is the head unit describing its own screen, not ours.
+        val alreadyProjecting = incallReportsProjecting() && !releasedByUs()
         openState = true
         broadcastHalfSent = false
         sourceEnterSent = false
+        silentHoldScheduled = false
         silentOpenOnly = alreadyProjecting
         ensureBound(ctx)
         if (alreadyProjecting) {
             logSeq(generation, "open: incall already reports projecting; silent half only, no source switch")
             runSilentOpen()
+            return
+        }
+        // No report from incall in this process yet. Only the force-kill warm case - we never
+        // handed the ext-screen back - may try the silent half first: there the ext-screen is
+        // (probably) still ours and a re-assert is all that is needed. After our OWN r0 the
+        // ext-screen belongs to the head unit, and the silent half has been measured NOT to take
+        // it back (field 2026-10-18: the dashboard stayed on the head unit's own screen until the
+        // driver re-enabled the projection channel by hand), so that case must fall through to the
+        // full sequence. A proactive report (value 0, like a head unit that dropped the projection
+        // while we were dead) outranks the persisted state and lands in the branch above, so only a
+        // truly unheard-from process gets here.
+        if (!lastCallbackValue.containsKey(CALLBACK_CODE_STATE) && warmStart() && !releasedByUs()) {
+            silentOpenOnly = true
+            logSeq(
+                generation,
+                "open: fresh process, persisted state projecting=${persistedProjecting()} " +
+                    "released=${persistedReleased()}; silent half first, full sequence in " +
+                    "${SILENT_CONFIRM_MS}ms unless incall confirms",
+            )
+            runSilentOpen()
+            armSilentOpenFallback()
             return
         }
         if (binder != null) {
@@ -388,6 +578,20 @@ object InCallClusterBridge {
         openState = false
         generation++
         mainHandler.removeCallbacksAndMessages(token)
+        // Our own belief of incall's state is stale the moment we hand the ext-screen back: the
+        // next openProjection() in THIS process must not read the old value 3 and take the silent
+        // half, which never re-grabs the ext-screen we just gave away. Persist the hand-back too,
+        // so a fresh process knows the binder session is still warm. What the persisted state must
+        // NOT do is route the next open to the silent half: only a force-kill mid-projection (the
+        // ext-screen never left us) is a silent-half case, and after our own r0 the ext-screen is
+        // the head unit's, so only the full sequence's source switch takes it back.
+        lastCallbackValue[CALLBACK_CODE_STATE] = 0
+        r0SentAtUptimeMs = SystemClock.uptimeMillis()
+        prefs()?.edit()
+            ?.putBoolean(KEY_INCALL_PROJECTING, false)
+            ?.putBoolean(KEY_EXT_SCREEN_RELEASED, true)
+            ?.putBoolean(KEY_EXT_SCREEN_RELEASED_BY_US, true)
+            ?.apply()
         broadcastOperateAll(2, 2)
         broadcastStatusAll(2, 2)
         broadcastOperateTo(PKG_INCALL, 0, 1)
@@ -395,6 +599,11 @@ object InCallClusterBridge {
     }
 
     private fun runFullOpenSequence() {
+        // We are taking the ext-screen back from the head unit, so the released belief ends here:
+        // from now on a value-3 report is a projection to us again, and the r0 answer window
+        // closes with it.
+        r0SentAtUptimeMs = 0L
+        setReleasedByUs(false)
         runBroadcastHalf()
         runOpenLocked()
     }
@@ -410,9 +619,17 @@ object InCallClusterBridge {
      * while the code still sends it - so no path here had actually been verified silent. This one is
      * built from the broadcasts alone, which are the parts the box itself repeats many times.
      *
-     * Used only when incall reports it is already projecting, so there is no source to switch; the
-     * worst case is a cluster that keeps showing the head unit's own screen, which the driver
-     * recovers with a swipe (a swipe always sends the full sequence).
+     * Used in two cases: when incall reports it is already projecting (no source to switch), and
+     * on a fresh process whose persisted state says the projection is still warm - a force-kill or
+     * crash mid-projection, i.e. we never handed the ext-screen back. In the second case the
+     * attempt is bounded by [armSilentOpenFallback]; the worst case of a
+     * silent half that does not take is a cluster that keeps showing the head unit's own screen,
+     * which the fallback (or the driver's swipe, which always sends the full sequence) recovers.
+     *
+     * Deliberately NOT used after our own r0 hand-back: field-measured (2026-10-18, previous-2
+     * 13:26:23) the silent half never re-grabs the ext-screen once r0 gave it away - only the full
+     * sequence's source switch takes it back - so a r0'ed session goes straight to
+     * [runFullOpenSequence] instead. See [releasedByUs].
      */
     private fun runSilentOpen() {
         broadcastHalfSent = true   // the broadcast ladder half is exactly what is being skipped
@@ -432,6 +649,34 @@ object InCallClusterBridge {
                 setCarProperties()
             }, token, SystemClock.uptimeMillis() + at)
         }
+    }
+
+    /**
+     * Bounded fallback for the fresh-process silent open: if incall has not confirmed it is
+     * projecting within [SILENT_CONFIRM_MS], the silent half did not take - the head unit may have
+     * dropped the projection while our process was dead, or the warm session is gone - so the full
+     * open sequence runs after all. The announcement that costs is the same one a cold open makes;
+     * the alternative, never falling back, risks a dashboard stuck on the head unit's own screen.
+     *
+     * Only the persisted-state path arms this. When incall itself reported value 3 the silent half
+     * is certainly correct and needs no fallback.
+     */
+    private fun armSilentOpenFallback() {
+        val gen = generation
+        mainHandler.postAtTime({
+            if (gen != generation || !openState) return@postAtTime
+            if (incallReportsProjecting()) {
+                logSeq(gen, "silent open confirmed by incall (projecting); no full sequence needed")
+                return@postAtTime
+            }
+            logSeq(gen, "silent open not confirmed within ${SILENT_CONFIRM_MS}ms; running the full open sequence")
+            // The silent path marked the broadcast half as sent and consumed the source-enter;
+            // clear both so the fallback is a complete open, not a binder-only half.
+            silentOpenOnly = false
+            broadcastHalfSent = false
+            sourceEnterSent = false
+            runFullOpenSequence()
+        }, token, SystemClock.uptimeMillis() + SILENT_CONFIRM_MS)
     }
 
     private fun runBroadcastHalf() {

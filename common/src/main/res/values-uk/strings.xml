@@ -18,9 +18,9 @@
     <string name="hotspot_hint_manual">Вбудована точка доступу · Тримайте точку доступу автомобіля, Bluetooth і Wi-Fi на iPhone увімкненими.</string>
     <string name="hotspot_hint_local">Відкрийте налаштування підключення, щоб зберегти дані вбудованої точки доступу.</string>
     <string name="hotspot_hint_p2p">Wi-Fi Direct · Тримайте Wi-Fi автомобіля, Bluetooth і Wi-Fi на iPhone увімкненими.</string>
-    <string name="cluster_size_standard">Стандартний · найчіткіший</string>
-    <string name="cluster_size_larger">Більший · типовий</string>
-    <string name="cluster_size_largest">Найбільший</string>
+
+
+
     <string name="marker_left">Ліворуч</string>
     <string name="marker_right">Праворуч</string>
     <string name="marker_up">Угору</string>
@@ -140,7 +140,7 @@
     <string name="carplay_control_running">Керування CarPlay працює</string>
     <string name="carplay_control_window_ended">Вікно керування CarPlay завершилося</string>
     <string name="carplay_icon">Значок CarPlay</string>
-    <string name="carplay_map_on_instrument_cluster_experimental">Карта CarPlay на приборці · експериментально</string>
+
     <string name="carplay_service_already_running">Служба CarPlay уже працює</string>
     <string name="carplay_session_already_running">Сеанс CarPlay уже триває</string>
     <string name="carplay_session_ended_reconnecting">Сеанс CarPlay завершився; повторне підключення</string>
@@ -160,7 +160,7 @@
     <string name="choose_where_to_save_your_report">Виберіть, куди зберегти звіт.\u0020</string>
     <string name="choose_your_iphone">Виберіть свій iPhone</string>
     <string name="close">Закрити</string>
-    <string name="cluster_map_size">Розмір карти на приборці</string>
+
     <string name="connect">Підключити</string>
     <string name="connect_phone">Підключити телефон</string>
     <string name="connect_when_diplay_opens">Підключати під час відкриття DiPlay</string>
@@ -352,7 +352,7 @@
     <string name="show_password">Показати пароль</string>
     <string name="show_phone_navigation_arrows_distance_and_street_names_on">Показувати стрілки навігації, відстань і назви вулиць із телефона на підтримуваних екранах BYD. Сумісність залежить від автомобіля.</string>
     <string name="show_the_side_map_only_when_its_card_is_open_and_switch_to">Показувати карту збоку, лише коли відкрито її картку, та переходити до повної карти в темі «Карта». Зміна теми чи картки не перериває CarPlay.</string>
-    <string name="shows_the_iphone_s_cluster_map_on_the_instrument_cluster_c">Показує карту iPhone на приборці. У меню приборки на кермі виберіть «Мала навігація» або «Повноекранна навігація».</string>
+
     <string name="start_carplay_automatically_after_device_boot">Автоматично запускати CarPlay після завантаження пристрою</string>
     <string name="starting">Запуск</string>
     <string name="starting_airplay_service">Запуск служби AirPlay</string>
@@ -362,7 +362,7 @@
     <string name="tap_a_number_to_test_14_driver_speaker_on_byd">Торкніться числа для перевірки. 14 = динамік водія в BYD.</string>
     <string name="the_head_unit_couldn_t_start_carplay_wi_fi_check_wi_fi_and">Головний пристрій не зміг запустити Wi-Fi CarPlay. Перевірте Wi-Fi й закрийте інші застосунки проєкції. Повторна спроба…</string>
     <string name="this_ends_the_existing_wi_fi_direct_connection_including_o">Це розірве наявне з’єднання Wi-Fi Direct, зокрема те, що залишилося після перевстановлення. Спочатку закрийте інші застосунки проєкції. Звичайний Wi-Fi автомобіля для інтернету залишиться увімкненим.</string>
-    <string name="this_head_unit_cannot_use_the_smaller_size_at_this_resolut">Цей головний пристрій не підтримує менший розмір за такої роздільної здатності. Використовується типовий.</string>
+
     <string name="this_head_unit_could_not_open_a_save_location_please_try_s">Головний пристрій не зміг відкрити місце збереження. Спробуйте знову зберегти в «Завантаження».</string>
     <string name="this_head_unit_does_not_support_wi_fi_direct">Цей головний пристрій не підтримує Wi-Fi Direct.</string>
     <string name="this_head_unit_has_no_available_file_picker_to_save_the_re">На цьому головному пристрої немає доступного файлового менеджера для збереження звіту.</string>
@@ -426,12 +426,12 @@
     <string name="dashboard_content_map">Карту · типово</string>
     <string name="dashboard_content_turn_card">Картку маневру</string>
     <string name="dashboard_content_map_with_turn_card">Карту з карткою маневру</string>
-    <string name="turn_card_size">Розмір картки маневру</string>
+
     <string name="turn_card_horizontal">Картка маневру · горизонтально</string>
     <string name="turn_card_vertical">Картка маневру · вертикально</string>
     <string name="reset_turn_card_to_centre">Повернути картку маневру до центру</string>
-    <string name="dashboard_map_only_in_small_and_full_navi">Карта на приборці лише в малому й повноекранному режимах навігації</string>
-    <string name="dashboard_map_only_in_small_and_full_navi_description">DiPlay визначає режим навігації, вибраний на кермі. У режимах «Вимкнено» та «Вмикати під час навігації» приборка показує лише стрілки, тому iPhone не надсилає карту. У малому й повноекранному режимах навігації iPhone надсилає карту через одну-дві секунди після перемикання. Потрібен ADB через мережу на головному пристрої.</string>
+
+
     <string name="check_adb_access">Перевірити доступ ADB</string>
     <string name="adb_checking">Перевірка доступу ADB…</string>
     <string name="adb_checking_may_ask">Перевірка доступу ADB… Якщо автомобіль запитає, дозвольте DiPlay та позначте «Завжди дозволяти».</string>

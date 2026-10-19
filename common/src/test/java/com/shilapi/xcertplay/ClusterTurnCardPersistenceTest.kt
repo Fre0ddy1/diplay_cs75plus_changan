@@ -1,7 +1,5 @@
 package com.shilapi.xcertplay
 
-import com.shilapi.xcertplay.airplay.CarPlayClusterDisplay
-import com.shilapi.xcertplay.airplay.ClusterTurnCardOverlay
 import org.junit.Assert.assertEquals
 import org.junit.Before
 import org.junit.Test
@@ -10,6 +8,7 @@ import org.robolectric.RobolectricTestRunner
 import org.robolectric.RuntimeEnvironment
 import org.robolectric.annotation.Config
 
+/** Custom turn card: absolute pixel position on the 1920x720 panel. */
 @RunWith(RobolectricTestRunner::class)
 @Config(sdk = [33], manifest = Config.NONE)
 class ClusterTurnCardPersistenceTest {
@@ -20,37 +19,42 @@ class ClusterTurnCardPersistenceTest {
         AirPlayPersistence.overlaySettingsListener = null
     }
 
-    @Test fun overlayDefaultsToRightOfCentre() {
-        assertEquals(ClusterTurnCardOverlay.DEFAULT_X_PERCENT, AirPlayPersistence.loadClusterTurnCardOverlayXPercent(context))
-        assertEquals(ClusterTurnCardOverlay.DEFAULT_Y_PERCENT, AirPlayPersistence.loadClusterTurnCardOverlayYPercent(context))
-        assertEquals(CarPlayClusterDisplay.OverlaySize.MEDIUM, AirPlayPersistence.loadClusterTurnCardOverlaySize(context))
+    @Test fun defaultsAreInsideThePanel() {
+        val x = AirPlayPersistence.loadClusterTurnCardX(context)
+        val y = AirPlayPersistence.loadClusterTurnCardY(context)
+        assert(x in 0..1920) { "x=$x" }
+        assert(y in 0..720) { "y=$y" }
     }
 
-    @Test fun overlayOffsetsRoundTrip() {
-        AirPlayPersistence.saveClusterTurnCardOverlayXPercent(context, 90)
-        AirPlayPersistence.saveClusterTurnCardOverlayYPercent(context, 16)
-        AirPlayPersistence.saveClusterTurnCardOverlaySize(context, CarPlayClusterDisplay.OverlaySize.SMALL)
-        assertEquals(90, AirPlayPersistence.loadClusterTurnCardOverlayXPercent(context))
-        assertEquals(16, AirPlayPersistence.loadClusterTurnCardOverlayYPercent(context))
-        assertEquals(CarPlayClusterDisplay.OverlaySize.SMALL, AirPlayPersistence.loadClusterTurnCardOverlaySize(context))
+    @Test fun offsetsRoundTrip() {
+        AirPlayPersistence.saveClusterTurnCardX(context, 640)
+        AirPlayPersistence.saveClusterTurnCardY(context, 210)
+        assertEquals(640, AirPlayPersistence.loadClusterTurnCardX(context))
+        assertEquals(210, AirPlayPersistence.loadClusterTurnCardY(context))
     }
 
-    @Test fun legacyLeftCentreRightMigrateToPercents() {
-        val prefs = context.getSharedPreferences("xcertplay_airplay", 0)
-        prefs.edit().putString("cluster_turn_card_overlay_position", "LEFT").apply()
-        assertEquals(20, AirPlayPersistence.loadClusterTurnCardOverlayXPercent(context))
-        prefs.edit().putString("cluster_turn_card_overlay_position", "CENTER").apply()
-        assertEquals(50, AirPlayPersistence.loadClusterTurnCardOverlayXPercent(context))
-        prefs.edit().putString("cluster_turn_card_overlay_position", "RIGHT").apply()
-        assertEquals(76, AirPlayPersistence.loadClusterTurnCardOverlayXPercent(context))
+    @Test fun offsetsAreClampedToThePanel() {
+        AirPlayPersistence.saveClusterTurnCardX(context, 5000)
+        AirPlayPersistence.saveClusterTurnCardY(context, -40)
+        assertEquals(1920, AirPlayPersistence.loadClusterTurnCardX(context))
+        assertEquals(0, AirPlayPersistence.loadClusterTurnCardY(context))
     }
 
-    @Test fun overlaySaveNotifiesTheHostWithoutReconnecting() {
+    @Test fun saveNotifiesTheHostOncePerCall() {
         var noticed = 0
         AirPlayPersistence.overlaySettingsListener = { noticed++ }
-        AirPlayPersistence.saveClusterTurnCardOverlayXPercent(context, 20)
-        AirPlayPersistence.saveClusterTurnCardOverlayYPercent(context, 50)
-        AirPlayPersistence.saveClusterTurnCardOverlaySize(context, CarPlayClusterDisplay.OverlaySize.LARGE)
-        assertEquals(3, noticed)
+        AirPlayPersistence.saveClusterTurnCardX(context, 300)
+        AirPlayPersistence.saveClusterTurnCardY(context, 120)
+        assertEquals(2, noticed)
+    }
+
+    @Test fun silentSaveDoesNotNotifyTheHost() {
+        var noticed = 0
+        AirPlayPersistence.overlaySettingsListener = { noticed++ }
+        AirPlayPersistence.saveClusterTurnCardXSilent(context, 300)
+        AirPlayPersistence.saveClusterTurnCardYSilent(context, 120)
+        assertEquals(0, noticed)
+        assertEquals(300, AirPlayPersistence.loadClusterTurnCardX(context))
+        assertEquals(120, AirPlayPersistence.loadClusterTurnCardY(context))
     }
 }

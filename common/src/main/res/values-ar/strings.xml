@@ -17,9 +17,9 @@
     <string name="hotspot_hint_manual">نقطة اتصال السيارة المدمجة · أبقِ نقطة الاتصال والبلوتوث وواي فاي iPhone مُفعّلة.</string>
     <string name="hotspot_hint_local">افتح إعداد الاتصال لحفظ بيانات نقطة اتصال السيارة المدمجة.</string>
     <string name="hotspot_hint_p2p">Wi-Fi Direct · أبقِ مفتاح واي فاي السيارة والبلوتوث وواي فاي iPhone مُفعّلة.</string>
-    <string name="cluster_size_standard">قياسي · أوضح صورة</string>
-    <string name="cluster_size_larger">أكبر · الافتراضي</string>
-    <string name="cluster_size_largest">الأكبر</string>
+
+
+
     <string name="marker_left">يسار</string>
     <string name="marker_right">يمين</string>
     <string name="marker_up">أعلى</string>
@@ -136,7 +136,7 @@
     <string name="carplay_control_running">التحكم في CarPlay قيد التشغيل</string>
     <string name="carplay_control_window_ended">انتهت نافذة التحكم في CarPlay</string>
     <string name="carplay_icon">أيقونة CarPlay</string>
-    <string name="carplay_map_on_instrument_cluster_experimental">خريطة CarPlay على لوحة العدادات · تجريبي</string>
+
     <string name="carplay_service_already_running">خدمة CarPlay قيد التشغيل بالفعل</string>
     <string name="carplay_session_already_running">جلسة CarPlay قيد التشغيل بالفعل</string>
     <string name="carplay_session_ended_reconnecting">انتهت جلسة CarPlay؛ إعادة الاتصال</string>
@@ -156,7 +156,7 @@
     <string name="choose_where_to_save_your_report">اختر أين تحفظ تقريرك.\u0020</string>
     <string name="choose_your_iphone">اختر iPhone الخاص بك</string>
     <string name="close">إغلاق</string>
-    <string name="cluster_map_size">حجم خريطة لوحة العدادات</string>
+
     <string name="connect">اتصال</string>
     <string name="connect_phone">اتصال بالهاتف</string>
     <string name="connect_when_diplay_opens">الاتصال عند فتح DiPlay</string>
@@ -341,7 +341,7 @@
     <string name="show_password">إظهار كلمة المرور</string>
     <string name="show_phone_navigation_arrows_distance_and_street_names_on">إظهار أسهم الملاحة والمسافة وأسماء الشوارع من الهاتف على شاشات BYD المدعومة. تختلف توافقية المركبة.</string>
     <string name="show_the_side_map_only_when_its_card_is_open_and_switch_to">إظهار الخريطة الجانبية فقط عند فتح بطاقتها، والتبديل إلى الخريطة الكاملة في سمة الخريطة. تغييرات السمة والبطاقة تُبقي CarPlay متصلاً.</string>
-    <string name="shows_the_iphone_s_cluster_map_on_the_instrument_cluster_c">يعرض خريطة iPhone على لوحة العدادات. اختر عرض الملاحة المصغّر أو الكامل من قائمة لوحة العدادات باستخدام أزرار المقود.</string>
+
     <string name="start_carplay_automatically_after_device_boot">بدء CarPlay تلقائياً بعد إقلاع الجهاز</string>
     <string name="starting">جارٍ البدء</string>
     <string name="starting_airplay_service">جارٍ بدء خدمة AirPlay</string>
@@ -351,7 +351,7 @@
     <string name="tap_a_number_to_test_14_driver_speaker_on_byd">اضغط رقماً للاختبار. 14 = مكبر صوت السائق في BYD.</string>
     <string name="the_head_unit_couldn_t_start_carplay_wi_fi_check_wi_fi_and">تعذّر على وحدة القيادة بدء واي فاي CarPlay. تحقق من واي فاي وأغلق تطبيقات العرض الأخرى. إعادة المحاولة…</string>
     <string name="this_ends_the_existing_wi_fi_direct_connection_including_o">ينهي هذا اتصال Wi-Fi Direct القائم، بما في ذلك ما تركه إعادة التثبيت. أغلق تطبيقات العرض الأخرى أولاً. يبقى واي فاي الإنترنت لسيارتك مُفعّلاً.</string>
-    <string name="this_head_unit_cannot_use_the_smaller_size_at_this_resolut">لا تستطيع وحدة القيادة هذه استخدام الحجم الأصغر عند هذه الدقة. سيُستخدم الافتراضي.</string>
+
     <string name="this_head_unit_could_not_open_a_save_location_please_try_s">تعذّر على وحدة القيادة هذه فتح موضع حفظ. يرجى محاولة الحفظ في Downloads مجدداً.</string>
     <string name="this_head_unit_does_not_support_wi_fi_direct">لا تدعم وحدة القيادة هذه Wi-Fi Direct.</string>
     <string name="this_head_unit_has_no_available_file_picker_to_save_the_re">لا تملك وحدة القيادة هذه منتقي ملفات لحفظ التقرير.</string>
@@ -414,12 +414,12 @@
     <string name="dashboard_content_turn_card">بطاقة الانعطاف</string>
     <string name="dashboard_content_map_with_turn_card">خريطة مع بطاقة الانعطاف</string>
     <string name="dashboard_content_map_with_custom_turn_card">خريطة مع بطاقة انعطاف مخصصة</string>
-    <string name="turn_card_size">حجم بطاقة الانعطاف</string>
+
     <string name="turn_card_horizontal">بطاقة الانعطاف · أفقيًا</string>
     <string name="turn_card_vertical">بطاقة الانعطاف · عموديًا</string>
     <string name="reset_turn_card_to_centre">إعادة بطاقة الانعطاف إلى الوسط</string>
-    <string name="dashboard_map_only_in_small_and_full_navi">خريطة لوحة العدادات فقط في عرض الملاحة المصغّر والكامل</string>
-    <string name="dashboard_map_only_in_small_and_full_navi_description">يقرأ DiPlay وضع الملاحة الذي تختاره من أزرار المقود. في وضعي «إيقاف» و«التشغيل عند الملاحة» تعرض لوحة العدادات الأسهم فقط، لذا لا يرسل iPhone الخريطة؛ أما في عرض الملاحة المصغّر والكامل فيرسلها خلال ثانية أو ثانيتين من التبديل. يتطلب ADB عبر الشبكة على وحدة القيادة.</string>
+
+
     <string name="check_adb_access">التحقق من الوصول عبر ADB</string>
     <string name="adb_checking">جارٍ التحقق من الوصول عبر ADB…</string>
     <string name="adb_checking_may_ask">جارٍ التحقق من الوصول عبر ADB… إذا طلبت السيارة، فاسمح لـ DiPlay وحدّد «السماح دائمًا».</string>

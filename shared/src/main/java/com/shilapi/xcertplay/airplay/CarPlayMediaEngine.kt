@@ -127,6 +127,16 @@ class CarPlayMediaEngine(
         if (pendingMicrophone.remove(streamKey) != null) sink.onMicrophoneStopped(streamId)
         sink.onAudioStopped(streamId)
 
+        // NOTE (2026-10-18, do not repeat): refusing the media SETUP here (`return null` for
+        // audioType == "media") is NOT a way to push music onto the head unit's Bluetooth. The
+        // phone treats a partially granted SETUP as an error and re-requests it in a tight loop -
+        // 67 refusals in 40 s in the field log, with the media remote churning through skip
+        // commands ("疯狂切歌"), an unusable CarPlay screen and iOS reporting
+        // "这项操作无法完成，发生未知错误 (1852797029)" until the session was dropped. Music audio
+        // is therefore still accepted and dropped at the sink (see AndroidMediaSink), which is
+        // silent for the cabin but stable; making iOS really use A2DP needs a consistent
+        // no-audio advertisement in /info (AirPlayConfig.disableAudioOutput), not a refusal here.
+
         val key = outputKey(session, stream) ?: return null
         val format = AudioStreamCodec.fromFormatBits(
             (stream["audioFormat"] as? Number)?.toLong() ?: 0L,

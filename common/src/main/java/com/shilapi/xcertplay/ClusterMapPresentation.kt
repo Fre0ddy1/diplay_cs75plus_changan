@@ -170,38 +170,6 @@ internal class ClusterMapPresentation(
         )
     }
 
-    /**
-     * Horizontal correction for the nav-only picture.
-     *
-     * The iPhone's instrument-cluster stream keeps a right-hand column free, so its car marker
-     * and lane bar can sit left of the panel centre (or right, depending on how the head unit
-     * places the projection window). Panning the picture puts them back in the middle without
-     * touching the phone's layout; the slight zoom keeps the panel covered, so no black band
-     * appears.
-     */
-    fun refreshNavOffset() = refreshNavTransform()
-
-    private fun refreshNavTransform() {
-        val view = navTextureView ?: return
-        val w = if (view.width > 0) view.width else projectionSize.x
-        val h = if (view.height > 0) view.height else projectionSize.y
-        val percent = AirPlayPersistence.loadClusterNavOffsetPercent(context)
-        if (percent == 0) {
-            view.setTransform(Matrix())
-            view.invalidate()
-            return
-        }
-        val dx = w * percent / 100f
-        val scale = 1f + 2f * Math.abs(dx) / w
-        view.setTransform(Matrix().apply {
-            setScale(scale, scale, w / 2f, h / 2f)
-            postTranslate(dx, 0f)
-        })
-        view.invalidate()
-        view.postInvalidateOnAnimation()
-        Log.i(TAG, "nav-only offset ${percent}% dx=$dx scale=$scale on ${w}x${h}")
-    }
-
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
         val size = projectionSize
@@ -291,7 +259,6 @@ internal class ClusterMapPresentation(
                 override fun onSurfaceTextureAvailable(texture: SurfaceTexture, width: Int, height: Int) {
                     Log.i(TAG, "cluster nav surface created")
                     texture.setDefaultBufferSize(size.x, size.y)
-                    refreshNavTransform()
                     navOutputSurface = Surface(texture).also(onNavSurface)
                     // The TextureViews are created asynchronously, so a setMode() issued while
                     // they were still null would have been lost (e.g. cold-start auto-project to
@@ -300,7 +267,7 @@ internal class ClusterMapPresentation(
                     setMode(AirPlayPersistence.loadClusterMirrorMain(context))
                 }
 
-                override fun onSurfaceTextureSizeChanged(texture: SurfaceTexture, width: Int, height: Int) = refreshNavTransform()
+                override fun onSurfaceTextureSizeChanged(texture: SurfaceTexture, width: Int, height: Int) = Unit
 
                 override fun onSurfaceTextureUpdated(texture: SurfaceTexture) = Unit
 

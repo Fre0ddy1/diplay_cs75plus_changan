@@ -92,6 +92,9 @@ object AirPlayInfoPlist {
 
     private fun modes(): Map<String, Any?> = linkedMapOf(
         "resources" to listOf(resource(RESOURCE_SCREEN), resource(RESOURCE_AUDIO)),
+        // Declared again after the A/B test of 2026-10-19: removing appStates did not shorten the
+        // two-second blank before an app appears (the phone simply sends no frames while it
+        // launches the app), so this stays as upstream declares it.
         "appStates" to listOf(
             linkedMapOf("appStateID" to 2, "state" to false),
             linkedMapOf("appStateID" to 1, "speechMode" to -1),

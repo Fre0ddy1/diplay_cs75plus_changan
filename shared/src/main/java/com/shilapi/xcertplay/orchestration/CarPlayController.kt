@@ -51,6 +51,7 @@ import com.shilapi.xcertplay.network.WirelessHotspotBackend
 import com.shilapi.xcertplay.network.WirelessHotspotManager
 import com.shilapi.xcertplay.network.WirelessInterfaceDiagnostics
 import com.shilapi.xcertplay.network.WirelessReceiveDiagnostics
+import com.shilapi.xcertplay.network.P2pTwoGhzFallback
 import com.shilapi.xcertplay.network.WirelessStartupDiagnostics
 import com.shilapi.xcertplay.transport.BlockingDuplexByteStream
 import com.shilapi.xcertplay.transport.BluetoothRfcommDuplexStream
@@ -1020,6 +1021,17 @@ class CarPlayController(
                         receiveDiagnostics.snapshot()
                 },
                 log = { message -> if (!isStaleWirelessRun(generation)) debugLog(message) },
+                onStall = {
+                    // The group accepted the phone but carried no AirPlay: retry once on 2.4 GHz,
+                    // which runs beside a 5 GHz station instead of fighting it for the radio.
+                    if (hotspotInfo.backend == WirelessHotspotBackend.WIFI_P2P &&
+                        !P2pTwoGhzFallback.requested && !isStaleWirelessRun(generation)
+                    ) {
+                        P2pTwoGhzFallback.requested = true
+                        debugLog("wireless stall: retrying Wi-Fi Direct on 2.4 GHz")
+                        restartWireless()
+                    }
+                },
             )
             wirelessDiagnostics = diagnostics
             onStatus(
@@ -1108,6 +1120,9 @@ class CarPlayController(
                 "wireless RFCOMM connecting address=${device.address} " +
                     "uuid=$IAP2_IPHONE_UUID",
             )
+            // The iPhone unbonds when its CarPlay entry is forgotten, then bonds again while we
+            // are already connecting. Connecting mid-pairing just times out, so wait it out first.
+            awaitBluetoothBond(device)
             val socket = device
                     .createRfcommSocketToServiceRecord(UUID.fromString(IAP2_IPHONE_UUID))
                     .also { bluetoothSocket = it }
@@ -1317,6 +1332,7 @@ class CarPlayController(
         object : AirPlaySessionListener by sessionListener {
             override fun onSessionActive(session: AirPlaySession) {
                 if (isStaleWirelessRun(generation)) return
+                P2pTwoGhzFallback.requested = false
                 wirelessDiagnostics?.let {
                     it.sessionActive()
                     it.close()
@@ -2059,6 +2075,17 @@ class CarPlayController(
         )
     }
 
+    /** Blocks the wireless worker, never the main thread, while the phone finishes pairing. */
+    private fun awaitBluetoothBond(device: BluetoothDevice) {
+        if (device.bondState != BluetoothDevice.BOND_BONDING) return
+        debugLog("wireless RFCOMM pairing in progress; waiting before connecting")
+        val deadline = System.nanoTime() + RFCOMM_BOND_WAIT_MILLIS * 1_000_000
+        while (device.bondState == BluetoothDevice.BOND_BONDING && System.nanoTime() < deadline) {
+            runCatching { Thread.sleep(250) }
+        }
+        debugLog("wireless RFCOMM pairing wait finished bondState=${device.bondState}")
+    }
+
     private fun connectBluetoothSocket(socket: BluetoothSocket, address: String) {
         val result = AtomicReference<Throwable?>()
         val connected = CountDownLatch(1)
@@ -2476,7 +2503,10 @@ class CarPlayController(
         // yet and a 15 s block just stalls the whole bring-up before the first retry. Bluetooth
         // RFCOMM normally connects in well under a second once the peer is responsive, so an
         // 8 s cap fails fast and the exponential-backoff retry lands on a warmed-up stack.
-        private const val RFCOMM_CONNECT_TIMEOUT_MILLIS = 8_000L
+        // A phone that just forgot this head unit re-pairs during the connect; 8 s cut that
+        // off and the session then looped on "RFCOMM connect timed out" (field 2026-10-19).
+        private const val RFCOMM_CONNECT_TIMEOUT_MILLIS = 25_000L
+        private const val RFCOMM_BOND_WAIT_MILLIS = 20_000L
         private const val MAXIMUM_REENUMERATION_ATTEMPTS = 2
         private const val EXECUTOR_CLOSE_TIMEOUT_MILLIS = 2_000L
         private const val ADAPTER_ADDRESS_PLACEHOLDER = "02:00:00:00:00:00"

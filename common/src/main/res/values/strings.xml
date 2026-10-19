@@ -18,9 +18,9 @@
     <string name="hotspot_hint_manual">Built-in car hotspot · Keep the car hotspot, Bluetooth and your iPhone’s Wi-Fi on.</string>
     <string name="hotspot_hint_local">Open Connection setup to save your built-in car hotspot details.</string>
     <string name="hotspot_hint_p2p">Wi-Fi Direct · Keep the car’s Wi-Fi switch, Bluetooth and your iPhone’s Wi-Fi on.</string>
-    <string name="cluster_size_standard">Standard · sharpest</string>
-    <string name="cluster_size_larger">Larger · default</string>
-    <string name="cluster_size_largest">Largest</string>
+
+
+
     <string name="marker_left">Left</string>
     <string name="marker_right">Right</string>
     <string name="marker_up">Up</string>
@@ -119,8 +119,6 @@
     <string name="audio_routing">Audio routing</string>
     <string name="auto">Auto</string>
     <string name="auto_start_on_boot">Auto-start on boot</string>
-    <string name="auto_start_car_amap">Open stock Amap after launch</string>
-    <string name="auto_start_car_amap_description">After DiPlay starts, launches the head unit\'s built-in Amap (dashboard projection needs it running) and immediately returns to DiPlay. No effect if no car Amap is detected.</string>
     <string name="automatic_cluster_map_setup">Automatic cluster map setup</string>
     <string name="automatic_connection">Automatic connection</string>
     <string name="automatic_map_enabled_open_the_cluster_map_card_or_select">Automatic map enabled. Open the cluster map card or select Map theme.</string>
@@ -144,7 +142,7 @@
     <string name="carplay_control_running">CarPlay control running</string>
     <string name="carplay_control_window_ended">CarPlay control window ended</string>
     <string name="carplay_icon">CarPlay icon</string>
-    <string name="carplay_map_on_instrument_cluster_experimental">CarPlay map on dashboard · experimental</string>
+
     <string name="carplay_service_already_running">CarPlay service already running</string>
     <string name="carplay_session_already_running">CarPlay session already running</string>
     <string name="carplay_session_ended_reconnecting">CarPlay session ended; reconnecting</string>
@@ -164,7 +162,7 @@
     <string name="choose_where_to_save_your_report">Choose where to save your report.\u0020</string>
     <string name="choose_your_iphone">Choose your iPhone</string>
     <string name="close">Close</string>
-    <string name="cluster_map_size">Dashboard map size</string>
+
     <string name="connect">Connect</string>
     <string name="connect_phone">Connect phone</string>
     <string name="connect_when_diplay_opens">Connect when DiPlay opens</string>
@@ -193,7 +191,7 @@
     <string name="diagnostic_report_saved_in_app">Your report was saved privately in DiPlay because a public save location was unavailable. Share it or view it here. Nothing is sent automatically.</string>
     <string name="diagnostic_report_saved_to_path">Your report was saved to:\n%1$s\n\nYou can also share it or view it here. Nothing is sent automatically.</string>
     <string name="diagnostics">Diagnostics</string>
-    <string name="diplay">DiPlay</string>
+    <string name="diplay">DiPlay HUD Changan</string>
     <string name="discard_changes_and_exit_settings">Discard changes and exit settings</string>
     <string name="disconnect">Disconnect</string>
     <string name="discovering_iphone">Discovering iPhone</string>
@@ -370,7 +368,7 @@
     <string name="show_password">Show password</string>
     <string name="show_phone_navigation_arrows_distance_and_street_names_on">Show phone navigation arrows, distance and street names on supported BYD displays. Vehicle compatibility varies.</string>
     <string name="show_the_side_map_only_when_its_card_is_open_and_switch_to">Show the side map only when its card is open, and switch to the full map in Map theme. Theme and card changes keep CarPlay connected.</string>
-    <string name="shows_the_iphone_s_cluster_map_on_the_instrument_cluster_c">Shows the iPhone\'s map on the dashboard. Choose Small or Full screen navi in the dashboard\'s steering-wheel menu.</string>
+
     <string name="instrument_cluster_content">Dashboard content</string>
     <string name="instrument_cluster_entire_interface">Entire CarPlay screen (mirror, stays in sync)</string>
     <string name="instrument_cluster_navigation_stream">Navigation cluster stream (guidance only)</string>
@@ -383,7 +381,7 @@
     <string name="tap_a_number_to_test_14_driver_speaker_on_byd">Tap a number to test. 14 = driver speaker on BYD.</string>
     <string name="the_head_unit_couldn_t_start_carplay_wi_fi_check_wi_fi_and">The head unit couldn’t start CarPlay Wi-Fi. Check Wi-Fi and close other projection apps. Retrying…</string>
     <string name="this_ends_the_existing_wi_fi_direct_connection_including_o">This ends the existing Wi-Fi Direct connection, including one left behind after reinstalling. Close other projection apps first. Your car’s internet Wi-Fi stays on.</string>
-    <string name="this_head_unit_cannot_use_the_smaller_size_at_this_resolut">This head unit cannot use the smaller size at this resolution. Using Default.</string>
+
     <string name="this_head_unit_could_not_open_a_save_location_please_try_s">This head unit could not open a save location. Please try saving to Downloads again.</string>
     <string name="this_head_unit_does_not_support_wi_fi_direct">This head unit does not support Wi-Fi Direct.</string>
     <string name="this_head_unit_has_no_available_file_picker_to_save_the_re">This head unit has no available file picker to save the report.</string>
@@ -453,7 +451,7 @@
     <string name="dashboard_content_turn_card">Turn card</string>
     <string name="dashboard_content_map_with_turn_card">Map with official turn card</string>
     <string name="dashboard_content_map_with_custom_turn_card">Map with custom turn card</string>
-    <string name="turn_card_size">Turn card size</string>
+
     <string name="turn_card_horizontal">Turn card · horizontal</string>
     <string name="turn_card_vertical">Turn card · vertical</string>
     <string name="reset_turn_card_to_centre">Reset turn card to centre</string>
@@ -495,8 +493,8 @@
     <string name="cluster_eta_m">%1$d m</string>
     <string name="center_map_follows_dashboard">Keep the home-screen map in sync with the dashboard</string>
     <string name="center_map_follows_dashboard_description">On: the home-screen card mirrors the dashboard map. Off: hide the home-screen card so only the instrument cluster shows that map. This does not change CarPlay’s own main screen.</string>
-    <string name="dashboard_map_only_in_small_and_full_navi">Dashboard map only in Small and Full navi</string>
-    <string name="dashboard_map_only_in_small_and_full_navi_description">DiPlay reads the navi mode you pick on the steering wheel. In Off and Turn on by navi the dashboard shows arrows only, so the iPhone does not send the map; in Small and Full screen navi it does, within a second or two of the switch. Needs ADB over network on the head unit.</string>
+
+
     <string name="check_adb_access">Check ADB access</string>
     <string name="adb_checking">Checking ADB access…</string>
     <string name="adb_checking_may_ask">Checking ADB access… If the car asks, allow DiPlay and tick “Always allow”.</string>
@@ -607,11 +605,18 @@
     <string name="nav_duck_percent_title">Music level during navigation prompts</string>
     <string name="nav_duck_percent_value">%1$d%%</string>
     <string name="nav_duck_percent_hint">Music drops to this level while a prompt plays and comes back when it ends. Calls are never lowered; changes apply from the next prompt.</string>
-    <string name="nav_offset_title">Nav-only picture horizontal correction</string>
-    <string name="nav_offset_value">%1$d%%</string>
-    <string name="nav_offset_hint">Moves the dashboard map left or right without reconnecting. The cluster stream keeps a right-hand column free, so its marker can sit off centre; use this to put the car and lane bar back in the middle.</string>
-    <string name="block_wheel_track_change">Block steering-wheel media keys</string>
-    <string name="block_wheel_track_change_description">Off by default. When on, previous/next AND play/pause on the steering wheel are ignored: neither the iPhone nor the car player reacts to them. On-screen buttons and Siri still work.</string>
-    <string name="dashboard_detailed_map">Detailed dashboard map</string>
-    <string name="dashboard_detailed_map_description">Declares the whole dashboard panel as safe area so the iPhone renders the detailed follow map on the dashboard, like other CarPlay boxes. Off restores the old centred safe area, which makes Amap show an overview and lets the car-marker sliders move the marker.</string>
+    <string name="media_audio_via_bluetooth">Music and wheel keys via car Bluetooth</string>
+    <string name="media_audio_via_bluetooth_description">Off by default: music plays over CarPlay. When on, no CarPlay audio is announced on connect, so music and the wheel keys move to the car Bluetooth (A2DP/AVRCP); CarPlay then stays silent and guidance and calls also use the car Bluetooth. Reconnect to apply.</string>
+    <string name="settings_group_frequent">Frequent</string>
+    <string name="settings_group_connect">Connection</string>
+    <string name="settings_group_display">Picture</string>
+    <string name="settings_group_sound">Sound</string>
+    <string name="settings_group_cluster">Cluster</string>
+    <string name="settings_group_system">Diagnostics and about</string>
+    <string name="settings_setting_details">Show the full description</string>
+    <string name="cluster_card_turn_title">Turn card</string>
+    <string name="settings_developer_options">Show developer options</string>
+    <string name="settings_developer_options_hint">USB diagnostics, VPN root grant, on-screen diagnostics and log clearing.</string>
+    <string name="iphone_accepted_but_did_not_start_carplay">The iPhone accepted the connection but never started CarPlay. On the iPhone open Settings → General → CarPlay, forget this vehicle, then pair again.</string>
+    <string name="resolution_percent_value">%1$d%% (lighter still)</string>
 </resources>

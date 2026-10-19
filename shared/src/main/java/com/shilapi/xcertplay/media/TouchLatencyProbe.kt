@@ -1,6 +1,11 @@
 package com.shilapi.xcertplay.media
 
-/** Diagnostic link between the touch uplink and the next video frame, read by [VideoStats]. */
+/**
+ * Diagnostic link between the touch uplink and the video stream, read by [VideoStats].
+ *
+ * Answers one question: how long the first frame after a touch takes ([onFrame] return value,
+ * printed as touch2frame).
+ */
 internal object TouchLatencyProbe {
     @Volatile private var pendingTouchNs = 0L
     @Volatile var maxSendNs = 0L

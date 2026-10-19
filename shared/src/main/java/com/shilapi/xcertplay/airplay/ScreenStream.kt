@@ -107,7 +107,7 @@ class ScreenStream(private val key: ByteArray, private val onDiagnostic: (String
             }
             OP_VIDEO_CONFIG -> {
                 val (codec, codecData) = ScreenCodec.detectConfig(body)
-                Log.i(TAG, "video codec config codec=$codec body=${body.size} data=${codecData.size}")
+                Log.i(TAG, "video codec config codec=$codec bytes=${body.size} data=${codecData.size}")
                 listener.onCodec(codec)
                 listener.onConfig(codecData)
             }
@@ -138,6 +138,7 @@ class ScreenStream(private val key: ByteArray, private val onDiagnostic: (String
 
 private fun ByteArray.hexPrefix(length: Int): String =
     take(length).joinToString("") { "%02x".format(it.toInt() and 0xff) }
+
 
 /** Extracts the avcC/hvcC codec-data record from a VideoConfig payload. */
 object ScreenCodec {

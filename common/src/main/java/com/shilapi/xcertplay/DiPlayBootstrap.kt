@@ -59,4 +59,15 @@ internal object DiPlayPreferences {
     fun saveAutoConnect(context: Context, value: Boolean) {
         prefs(context).edit().putBoolean("auto_connect", value).apply()
     }
+
+    /**
+     * Developer rows (USB diagnostics, VPN root grant, on-screen diagnostics, clear logs) stay
+     * collapsed by default: the driver only needs "save diagnostic report" in normal use.
+     */
+    fun showDeveloperOptions(context: Context) =
+        prefs(context).getBoolean("show_developer_options", false)
+
+    fun saveShowDeveloperOptions(context: Context, value: Boolean) {
+        prefs(context).edit().putBoolean("show_developer_options", value).apply()
+    }
 }

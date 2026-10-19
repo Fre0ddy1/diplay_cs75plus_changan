@@ -337,7 +337,8 @@ class AirPlaySession(
                         !path.endsWith("/feedback") &&
                             !(request.method == "POST" && path.endsWith("/command"))
                     debugLog(
-                        "airplay rx ${request.method} ${request.path} cseq=$cseq body=${request.body.size}",
+                        "airplay rx ${request.method} ${request.path} cseq=$cseq " +
+                            "bytes=${request.body.size}",
                         showInDebugOverlay,
                     )
                     if (showInDebugOverlay) debugLog(
@@ -359,7 +360,8 @@ class AirPlaySession(
                         RtspMessage.Response(status = 500)
                     }
                     debugLog(
-                        "airplay tx status=${response.status ?: 200} cseq=$cseq body=${response.body.size}",
+                        "airplay tx status=${response.status ?: 200} cseq=$cseq " +
+                            "bytes=${response.body.size}",
                         showInDebugOverlay,
                     )
                     if (showInDebugOverlay) debugLog(
@@ -424,6 +426,13 @@ class AirPlaySession(
                 }
                 Log.i(
                     TAG,
+                    "airplay /info features=${info["features"]} " +
+                        "audioFormats=${(info["audioFormats"] as? List<*>)?.size ?: 0} " +
+                        "audioLatencies=${(info["audioLatencies"] as? List<*>)?.size ?: 0}",
+                )
+                // Also into the exported session log: the features bitmask / audio format count is
+                // how an audio-less advertisement (disableAudioOutput) is recognised after the fact.
+                debugLog(
                     "airplay /info features=${info["features"]} " +
                         "audioFormats=${(info["audioFormats"] as? List<*>)?.size ?: 0} " +
                         "audioLatencies=${(info["audioLatencies"] as? List<*>)?.size ?: 0}",
@@ -531,7 +540,7 @@ class AirPlaySession(
         for (entry in streams) {
             val stream = asMap(entry) ?: continue
             val type = long(stream["type"])?.toInt() ?: continue
-            debugLog("airplay SETUP stream type=$type payload=$stream")
+            debugLog("airplay SETUP stream type=$type request=$stream")
             when (type) {
                 STREAM_TYPE_MAIN_SCREEN, STREAM_TYPE_ALT_SCREEN -> {
                     val port = media.onScreen(this, type, stream)
@@ -539,7 +548,7 @@ class AirPlaySession(
                     if (port != null) {
                         activeStreams.add(type)
                         if (type == STREAM_TYPE_ALT_SCREEN) clusterStream = ++clusterStreamSetups
-                        result.add(linkedMapOf("type" to type, "dataPort" to port))
+                        result.add(linkedMapOf<String, Any?>("type" to type, "dataPort" to port))
                     }
                 }
                 STREAM_TYPE_MAIN_AUDIO, STREAM_TYPE_ALT_AUDIO, STREAM_TYPE_MAIN_HIGH_AUDIO -> {
@@ -571,6 +580,16 @@ class AirPlaySession(
         return result
     }
 
+    /** Short rendering of a modesChanged body. Never uses "payload=", which the report strips. */
+    private fun compact(value: Any?, depth: Int = 0): String = when {
+        value == null -> "null"
+        value is Map<*, *> && depth < 3 ->
+            value.entries.joinToString(",", "{", "}") { "${it.key}:${compact(it.value, depth + 1)}" }
+        value is List<*> && depth < 3 -> value.joinToString(",", "[", "]") { compact(it, depth + 1) }
+        value is ByteArray -> "bytes(${value.size})"
+        else -> value.toString()
+    }.take(300)
+
     private fun handleCommand(request: RtspMessage.Request): RtspMessage.Response {
         val body = try {
             asMap(BplistCodec.decode(request.body)) ?: emptyMap()
@@ -580,6 +599,9 @@ class AirPlaySession(
         val type = string(body["type"])
         val params = asMap(body["params"]) ?: emptyMap()
         debugLog("airplay command type=$type keys=${params.keys.sorted()}")
+        if (type == "modesChanged") {
+            debugLog("airplay modesChanged detail=${compact(params)}")
+        }
         val streamId = request.headers["x-apple-streamid"]?.toLongOrNull()
         val data = params["data"] as? ByteArray
         if (streamId != null && data != null) {
@@ -606,7 +628,7 @@ class AirPlaySession(
 
         debugLog(
             "airplay TEARDOWN types=${types ?: "all"} activeBefore=$activeStreams " +
-                "body=${request.body.size} bytes payload=$decodedBody",
+                "bytes=${request.body.size} detail=$decodedBody",
         )
         trace("airplay TEARDOWN raw${request.body.size}Hex=${request.body.toHex()}")
 
@@ -738,7 +760,8 @@ class AirPlaySession(
                 for (message in parsed.messages) {
                     if (message.method.startsWith("RTSP/") || message.method.startsWith("HTTP/")) continue
                     debugLog(
-                        "airplay event rx ${message.method} ${message.path} cseq=${message.headers["cseq"] ?: "-"} body=${message.body.size}",
+                        "airplay event rx ${message.method} ${message.path} " +
+                            "cseq=${message.headers["cseq"] ?: "-"} bytes=${message.body.size}",
                     )
                     val response = RtspMessage.buildResponse(message, RtspMessage.Response(status = 200))
                     trace(

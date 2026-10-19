@@ -66,12 +66,13 @@ class CarPlayClusterDisplayTest {
 
     @Test
     fun scaledStreamsKeepThePanelAspect() {
-        val sizes = (CarPlayClusterDisplay.scalePresets + 50).map {
+        // The scale is fixed at the panel size (no settings row any more), but the maths must keep
+        // the aspect when a caller passes one explicitly.
+        val sizes = listOf(100, 83, 67, 50).map {
             CarPlayClusterDisplay.config(1920, 720, scalePercent = it).let { c -> c.widthPixels to c.heightPixels }
         }
 
         assertEquals(listOf(1920 to 720, 1600 to 600, 1280 to 480, 960 to 360), sizes)
-        assertTrue(CarPlayClusterDisplay.STREAM_SCALE_PERCENT in CarPlayClusterDisplay.scalePresets)
     }
 
     @Test

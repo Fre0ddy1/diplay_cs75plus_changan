@@ -23,7 +23,6 @@ object CarPlayClusterDisplay {
         MAP_WITH_CUSTOM_CARD(MAP_URL),
     }
 
-    enum class OverlaySize { SMALL, MEDIUM, LARGE }
 
     fun usesCustomTurnCard(content: Content): Boolean = content == Content.MAP_WITH_CUSTOM_CARD
 
@@ -62,7 +61,6 @@ object CarPlayClusterDisplay {
      * settings for head units that do scale up.
      */
     const val STREAM_SCALE_PERCENT = 100
-    val scalePresets = listOf(100, STREAM_SCALE_PERCENT, 67)
 
     private const val WIDTH_PHYSICAL_MM = 292 // a 12.3-inch 8:3 cluster panel; Apple Maps ignores it here
     private const val FPS = 30
@@ -74,27 +72,18 @@ object CarPlayClusterDisplay {
         horizontalStep: Int = 0,
         verticalStep: Int = 0,
         content: Content = Content.MAP,
-        fullSafeArea: Boolean = true,
-        bottomReservePx: Int = 0,
     ): AirPlayDisplayConfig {
         // Height rounds to a multiple of 8 and width follows it, so the panel's aspect is kept
         // (100 % of 1920x720 gives exactly 1920x720). The cluster scales the stream to the panel.
         val scale = scalePercent.coerceIn(25, 100)
         val height = roundTo8(heightPixels * scale / 100.0)
         val width = roundTo8(height * widthPixels.toDouble() / heightPixels)
-        // The whole panel as safe area makes Amap render the detailed follow map on the
-        // dashboard, like other CarPlay boxes. A small centred safe area (old behaviour)
-        // makes it show an overview so the route and marker fit inside it.
-        //
-        // A bottom reserve (head-unit HUD band, e.g. the UNI-V cluster's fixed readout strip)
-        // keeps the car marker inside the visible part: Amap anchors the marker near the
-        // safe-area bottom, so reserving the HUD band moves the marker up out of the
-        // cut-off zone while the map still fills the panel (safeAreaDrawOutside = true).
-        val safe = when {
-            fullSafeArea && bottomReservePx <= 0 -> AirPlayInsets()
-            fullSafeArea -> AirPlayInsets(top = 0, bottom = bottomReservePx, left = 0, right = 0)
-            else -> safeArea(width, height, horizontalStep, verticalStep)
-        }
+        // The centred safe area is the only mode left (field decision 2026-10-18): with a
+        // zero inset Amap renders its detailed follow map and puts the car marker left of
+        // centre, leaving the panel's right column to its own info strip. The centred area
+        // makes Amap show the overview with the marker dead centre, which is what the driver
+        // wants on this head unit; the marker steps still move it from there.
+        val safe = safeArea(width, height, horizontalStep, verticalStep)
         return AirPlayDisplayConfig(
             widthPixels = width,
             heightPixels = height,

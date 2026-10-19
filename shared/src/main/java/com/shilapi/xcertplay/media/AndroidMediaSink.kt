@@ -220,7 +220,7 @@ internal class AudioFocusCoordinator(
         const val FULL_VOLUME = 1f
         const val DUCK_PERCENT_MIN = 10
         const val DUCK_PERCENT_MAX = 100
-        const val DEFAULT_DUCK_PERCENT = 20
+        const val DEFAULT_DUCK_PERCENT = 60
         /** How long our own duck survives without a restore callback from the head unit. */
         const val DUCK_HOLD_MS = 12_000L
     }
@@ -277,6 +277,12 @@ class AndroidMediaSink(
     private val audioModeLock = Any()
     private var communicationModeStream: AudioStreamId? = null
     private var savedAudioMode = AudioManager.MODE_NORMAL
+    // Re-asserts the audio mode after a call; separate from AudioFocusCoordinator's handler,
+    // which only drives the media duck.
+    private val audioModeHandler = Handler(Looper.getMainLooper())
+
+    /** How long to wait before re-asserting the audio mode after a call (see restoreAudioMode). */
+    private val AUDIO_MODE_REASSERT_MS = 750L
     private val pendingVideoCodec = ConcurrentHashMap<Int, VideoCodec>()
     private val videoRecoveryHandlers = ConcurrentHashMap<Int, () -> Unit>()
     private val videoDiagnosticHandlers = ConcurrentHashMap<Int, (String) -> Unit>()
@@ -383,12 +389,21 @@ class AndroidMediaSink(
     }
 
     override fun onAudioStarted(id: AudioStreamId, format: AudioFormat, firstSample: Int) {
+        // NOTE (2026-10-18, do NOT reintroduce): the iPhone's media stream used to be dropped
+        // outright when "music via car Bluetooth" was on, on the theory that iOS would then play
+        // the music over the head unit's own A2DP. It never does: the phone keeps media inside
+        // CarPlay while the accessory advertises audio, so the cabin went silent with the head
+        // unit's volume already at maximum (field: streamMusic=15/15, musicActive=false, stream 102
+        // opened and dropped). Refusing the stream in the SETUP is worse still - iOS re-requests it
+        // in a loop and the media remote churns through skip commands. Media audio is therefore
+        // always rendered; the switch now only governs who owns the media keys and focus.
         audioRenderer(id, format).start()
         if (format.audioType == "media") updateMediaAudio(id, true)
         updateNavigationAudio(id, format, true)
     }
 
     override fun onAudioRtp(id: AudioStreamId, format: AudioFormat, rtp: ByteArray, sample: Int) {
+        if (format.audioType == "media" && !mediaAudioTypes.contains(id)) updateMediaAudio(id, true)
         audioRenderer(id, format).submit(rtp, sample)
     }
 
@@ -520,12 +535,39 @@ class AndroidMediaSink(
             val active = communicationModeStream ?: return
             if (id != null && id != active) return
             communicationModeStream = null
+            val target = savedAudioMode
             try {
-                manager.mode = savedAudioMode
+                manager.mode = target
                 Log.i("xcertplay-usb", "audio mode restored to ${manager.mode}")
             } catch (error: RuntimeException) {
-                Log.w("xcertplay-usb", "could not restore audio mode $savedAudioMode", error)
+                Log.w("xcertplay-usb", "could not restore audio mode $target", error)
+                // Some head-unit ROMs refuse the saved mode outright. MODE_NORMAL is always
+                // accepted and is what every other path expects; a call that is somehow
+                // still up keeps its own mode through the re-assert below.
+                runCatching { manager.mode = AudioManager.MODE_NORMAL }
+                    .onFailure { Log.w("xcertplay-usb", "could not force MODE_NORMAL either", it) }
             }
+            // A head unit can flip the mode back asynchronously: its own call-state callback
+            // may land after ours, leaving MODE_IN_COMMUNICATION set with the car's audio
+            // routed to the Bluetooth channel after the call ended (field report 2026-10-18).
+            // Re-assert once shortly after, but never over a mode that means a call is still
+            // active - that would cut the driver's call.
+            audioModeHandler.postDelayed({
+                synchronized(audioModeLock) {
+                    if (communicationModeStream != null) return@synchronized
+                    val current = manager.mode
+                    if (current == AudioManager.MODE_NORMAL) return@synchronized
+                    if (current == AudioManager.MODE_IN_CALL ||
+                        current == AudioManager.MODE_IN_COMMUNICATION ||
+                        current == AudioManager.MODE_RINGTONE
+                    ) {
+                        // A call is (still) up: the saved mode predates it, so hands off.
+                        return@synchronized
+                    }
+                    Log.w("xcertplay-usb", "audio mode drifted to $current after a call; re-asserting")
+                    runCatching { manager.mode = AudioManager.MODE_NORMAL }
+                }
+            }, AUDIO_MODE_REASSERT_MS)
         }
     }
 
@@ -647,7 +689,6 @@ private class VideoDecoder(
     private var failureReports = 0
     private val referenceChain = VideoReferenceChain()
     private var lastKeyFrameRequestNs = 0L
-    // The main screen keeps the historical log format; other screens are labelled.
     private val stats = VideoStats(statsLabel ?: if (streamType == 110) "" else " stream=$streamType")
     private val thread = Thread(::run, "carplay-video").apply { isDaemon = true; start() }
 

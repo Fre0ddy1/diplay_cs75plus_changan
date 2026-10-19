@@ -125,9 +125,11 @@ class ExistingWifiManager(
                 if (current == null || !sameLink(current) || invalidated.get()) {
                     throw IOException("Existing Wi-Fi changed during startup; connect again")
                 }
+                // Lengths only: the exported log drops any line naming a credential, and a length is
+                // what tells an empty Wi-Fi name or password apart from a correct one.
                 onDiagnostic("Existing Wi-Fi attached iface=$name host=${address.hostAddress} " +
                     "networkNameReadable=${liveSsid != null} channel=$channel security=${security()} " +
-                    "receiverIdentity=saved")
+                    "wifiNameLen=${ssid.length} wifiSecretLen=${passphrase.length} receiverIdentity=saved")
                 return WirelessHotspotInfo(ssid, passphrase, security(), channel, frequency,
                     // The router's BSSID is not this receiver's AirPlay device identity.
                     null, name, address, when {

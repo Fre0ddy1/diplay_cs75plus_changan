@@ -22,6 +22,7 @@ import android.os.Handler
 import android.os.Looper
 import android.provider.Settings
 import android.text.Editable
+import android.text.TextUtils
 import android.text.TextWatcher
 import android.util.Log
 import android.view.Gravity
@@ -37,7 +38,6 @@ import androidx.core.view.WindowInsetsCompat
 import androidx.core.view.WindowInsetsControllerCompat
 import com.shilapi.xcertplay.adb.LocalAdb
 import com.shilapi.xcertplay.airplay.CarPlayClusterDisplay
-import com.shilapi.xcertplay.airplay.ClusterTurnCardOverlay
 import com.shilapi.xcertplay.compat.closeCompat
 import com.shilapi.xcertplay.hud.BydAdbAccess
 import com.shilapi.xcertplay.hud.BydNavigationOutputs
@@ -82,6 +82,24 @@ class DiPlayActivity : ComponentActivity() {
     private var rootScroll: ScrollView? = null
     private var renderedPage: String? = null
     private var pendingScrollY: Int? = null
+    /** Group mask applied to sections built right now; late/async builders leave it at GROUP_ALL. */
+    private var activeSectionGroups = GROUP_ALL
+    /** Rail selection on the settings page (survives re-renders, including ADB flow re-renders). */
+    private var settingsGroup = GROUP_FREQUENT
+    /**
+     * Sections are collected here while the settings page is built and then distributed over the
+     * two content columns, so switching groups re-flows the same view objects (no duplicate
+     * widgets writing the same preference) and the layout can balance the columns by row count.
+     */
+    private var settingsSectionSink: MutableList<View>? = null
+    /** The detached column sections are built into; only its children go to [settingsSectionSink]. */
+    private var settingsStaging: LinearLayout? = null
+    private var settingsLeft: LinearLayout? = null
+    private var settingsRight: LinearLayout? = null
+    /** Settings only: the right column's own scroll view, so the rail and header stay pinned. */
+    private var settingsContentScroll: ScrollView? = null
+    /** Settings text scale: the head unit is read from arm's length, 15sp rows looked like fine print. */
+    private var textScale = 1f
     private var bydVehicleAdvancedExpanded = false
     private var adbAccessState: BydAdbAccess.State? = null
     private var adbCheckInProgress = false
@@ -176,14 +194,6 @@ class DiPlayActivity : ComponentActivity() {
         bydVehicleAdvancedExpanded = savedInstanceState?.getBoolean("byd_vehicle_advanced") ?: false
         page = savedInstanceState?.getString("page") ?: intent.getStringExtra("page") ?: "home"
         render()
-        if (!AirPlayPersistence.loadAutoFlyScreen(this)) {
-            clusterUiLog("自动飞屏未勾选，冷启动跳过车载高德处理")
-        } else if (savedInstanceState == null && AirPlayPersistence.loadAutoStartCarAmap(this)) {
-            // Cold start with the "auto-start stock Amap" toggle on: bring the car Amap up
-            // (dashboard projection needs it) and hand focus straight back to DiPlay.
-            // Gated by the "自动飞屏" master switch: unchecked => never touch the stock Amap.
-            CarAmapLauncher.launchAndReturn(this)
-        }
         scheduleAutomaticVehicleValidation()
         handleWirelessRecovery()
         onBackPressedDispatcher.addCallback(this, object : OnBackPressedCallback(true) {
@@ -273,26 +283,35 @@ class DiPlayActivity : ComponentActivity() {
         bydAdbControls = null
         adbSwitches.clear()
         adbStatus = null
+        settingsSectionSink = null
+        settingsLeft = null
+        settingsRight = null
+        settingsContentScroll = null
+        textScale = 1f
         val scroll = ScrollView(this).apply { setBackgroundColor(BG); isFillViewport = true; clipToPadding = false }
         rootScroll = scroll
         val content = column().apply { setPadding(dp(32), dp(24), dp(32), dp(32)) }
         scroll.addView(content)
         val header = row().apply { gravity = Gravity.CENTER_VERTICAL }
         header.addView(ImageView(this).apply { setImageResource(R.drawable.ic_carplay); contentDescription = getString(R.string.carplay) }, LinearLayout.LayoutParams(dp(36), dp(36)))
-        header.addView(label(getString(R.string.diplay), 26, TEXT, true).apply { setPadding(dp(12), 0, 0, 0) }, LinearLayout.LayoutParams(0, dp(56), 1f))
+        header.addView(label(getString(R.string.diplay), 23, TEXT, true).apply { setPadding(dp(12), 0, dp(16), 0) }, LinearLayout.LayoutParams(0, dp(56), 1f))
         header.addView(button(if (page == "home") getString(R.string.car_home) else getString(R.string.back), false) {
             if (page == "home") startActivity(Intent(Intent.ACTION_MAIN).addCategory(Intent.CATEGORY_HOME))
             else { page = "home"; render() }
         }, LinearLayout.LayoutParams(dp(130), dp(56)))
         content.addView(header)
         content.addView(space(24))
+        // Settings keeps its rail and page header pinned while the right column scrolls on its own.
+        // That needs the body OUTSIDE this ScrollView: nested ScrollViews would let the outer one
+        // drag the rail away, which is exactly what the driver complained about.
+        var settingsBody: LinearLayout? = null
         // Never let a single UI bug take down the whole settings/home page (the head-unit has
         // no logcat, so a crash is otherwise invisible). Render failures show a recoverable
         // error card and write the stack into the diagnostic log (exported diplay.log).
         try {
             when (page) {
                 "connection" -> connectionSetup(content)
-                "settings" -> settings(content)
+                "settings" -> settingsBody = settings(content)
                 "about" -> about(content)
                 else -> home(content)
             }
@@ -309,16 +328,28 @@ class DiPlayActivity : ComponentActivity() {
                 .apply { setPadding(0, dp(16), 0, dp(8)) })
             content.addView(label("重启 App 后导出日志即可看到具体错误位置", 14, MUTED))
         }
-        setContentView(scroll)
+        val root: ViewGroup = if (settingsBody != null) {
+            column().apply {
+                setBackgroundColor(BG)
+                addView(scroll, LinearLayout.LayoutParams(-1, -2))
+                addView(settingsBody, LinearLayout.LayoutParams(-1, 0, 1f))
+            }
+        } else {
+            scroll
+        }
+        // Scroll restore belongs to whichever view actually scrolls on this page.
+        val restoreTarget = settingsContentScroll ?: scroll
+        rootScroll = restoreTarget
+        setContentView(root)
         renderedPage = page
         refreshStatus()
         pendingScrollY = previousScrollY
         // A stopped window still dispatches pre-draw but skips layout, so wait for a real layout;
         // the listener stays on this view and goes away with it.
         previousScrollY?.let { y ->
-            scroll.doOnLayout {
-                if (rootScroll === scroll) {
-                    scroll.scrollTo(0, y)
+            restoreTarget.doOnLayout {
+                if (rootScroll === restoreTarget) {
+                    restoreTarget.scrollTo(0, y)
                     pendingScrollY = null
                 }
             }
@@ -406,9 +437,56 @@ class DiPlayActivity : ComponentActivity() {
         content.addView(body)
     }
 
-    private fun settings(content: LinearLayout) {
-        content.addView(label(getString(R.string.your_drive_your_way), 34, TEXT, true))
-        content.addView(label(getString(R.string.apply_reconnects_carplay_for_size_resolution_music_buffer), 17, MUTED).apply { setPadding(0, dp(8), 0, dp(24)) })
+    /**
+     * Builds the settings page and returns the body row, which [render] places outside the outer
+     * ScrollView: the rail and the page header stay on screen while only the right column scrolls.
+     */
+    private fun settings(host: LinearLayout): LinearLayout {
+        // Read from arm's length: 15sp row titles were fine print on a 1920x720 panel.
+        textScale = 1.22f
+        host.addView(label(getString(R.string.your_drive_your_way), 20, TEXT, true))
+        host.addView(label(getString(R.string.apply_reconnects_carplay_for_size_resolution_music_buffer), 11, MUTED).apply { setPadding(0, dp(6), 0, dp(10)) })
+        // Rail plus two content columns. Sections are collected first and distributed later, so a
+        // preference never has two widgets and the page uses the panel's width instead of leaving a
+        // third of it blank.
+        // The rail is pinned, but a short panel (or a large font scale) cannot hold six rows plus
+        // the page header, so it gets its own scroll: the rail stays put, only its own content
+        // scrolls. Never a nested scroll with the page, which would drag the rail away again.
+        val rail = column()
+        val railScroll = ScrollView(this).apply {
+            setBackgroundColor(BG)
+            clipToPadding = false
+            layoutParams = LinearLayout.LayoutParams(dp(212), -1)
+        }
+        val left = column().apply { layoutParams = LinearLayout.LayoutParams(0, -2, 1f) }
+        val right = column().apply { layoutParams = LinearLayout.LayoutParams(0, -2, 1f) }
+        settingsLeft = left
+        settingsRight = right
+        val staging = column()
+        settingsStaging = staging
+        settingsSectionSink = mutableListOf()
+        val content = staging
+        fun gap(width: Int) = View(this).apply { layoutParams = LinearLayout.LayoutParams(dp(width), -1) }
+        val rightScroll = ScrollView(this).apply {
+            setBackgroundColor(BG)
+            isFillViewport = true
+            clipToPadding = false
+            layoutParams = LinearLayout.LayoutParams(0, -1, 1f)
+        }
+        settingsContentScroll = rightScroll
+        val columns = row().apply { gravity = Gravity.TOP }
+        columns.addView(left)
+        columns.addView(gap(20))
+        columns.addView(right)
+        rightScroll.addView(columns)
+        val body = row().apply { gravity = Gravity.TOP }
+        buildSettingsRail(rail)
+        railScroll.addView(rail)
+        body.addView(railScroll)
+        body.addView(gap(20))
+        body.addView(rightScroll)
+
+        activeSectionGroups = GROUP_CONNECT
         section(content, getString(R.string.carplay_controls), R.drawable.ic_dp_display) { card ->
             val gestureFingers = listOf(3, 4, 5)
             choice(card, getString(R.string.settings_gesture_fingers_label),
@@ -421,23 +499,44 @@ class DiPlayActivity : ComponentActivity() {
                 setPadding(0, dp(10), 0, 0)
             })
         }
+        activeSectionGroups = GROUP_CONNECT
         section(content, getString(R.string.connection_setup), R.drawable.ic_dp_connection) { card ->
             card.addView(label(getString(R.string.choose_how_to_connect_follow_the_setup_steps_and_save_your), 16, MUTED))
             card.addView(button(getString(R.string.open_connection_setup), false) { page = "connection"; render() }, matchButton(12, 60))
         }
+        activeSectionGroups = GROUP_SYSTEM
         section(content, getString(R.string.diagnostics), R.drawable.ic_dp_diagnostics) { card ->
             exportButton = button(if (exportInProgress) getString(R.string.saving_report) else getString(R.string.save_diagnostic_report), false) {
                 exportDiagnostics()
             }.apply { isEnabled = !exportInProgress }
             card.addView(exportButton, matchButton(10, 60))
-            card.addView(button(getString(R.string.usb_diagnostics), false) { runUsbDiagnostics() }, matchButton(10, 60))
-            card.addView(button(getString(R.string.vpn_root_grant), false) { runVpnRootGrant() }, matchButton(10, 60))
-            card.addView(button(getString(R.string.show_diagnostics_on_screen), false) { showDiagnosticsOnScreen() }, matchButton(10, 60))
-            card.addView(button(getString(R.string.clear_logs), false) { clearDiagnosticLogs() }, matchButton(10, 60))
             card.addView(button(getString(R.string.choose_save_location), false) { chooseReportDestination() }, matchButton(10, 60))
+            // Developer rows stay folded away: the driver only needs the report and its location.
+            val developerRows = column().apply {
+                visibility = if (DiPlayPreferences.showDeveloperOptions(this@DiPlayActivity)) {
+                    View.VISIBLE
+                } else {
+                    View.GONE
+                }
+                addView(button(getString(R.string.usb_diagnostics), false) { runUsbDiagnostics() }, matchButton(10, 60))
+                addView(button(getString(R.string.vpn_root_grant), false) { runVpnRootGrant() }, matchButton(10, 60))
+                addView(button(getString(R.string.show_diagnostics_on_screen), false) { showDiagnosticsOnScreen() }, matchButton(10, 60))
+                addView(button(getString(R.string.clear_logs), false) { clearDiagnosticLogs() }, matchButton(10, 60))
+            }
+            toggle(
+                card,
+                getString(R.string.settings_developer_options),
+                getString(R.string.settings_developer_options_hint),
+                DiPlayPreferences.showDeveloperOptions(this),
+            ) { enabled ->
+                DiPlayPreferences.saveShowDeveloperOptions(this, enabled)
+                developerRows.visibility = if (enabled) View.VISIBLE else View.GONE
+            }
+            card.addView(developerRows)
             val destination = if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.Q) getString(R.string.reports_save_to_downloads_diplay) else getString(R.string.reports_save_to_app_dir)
             card.addView(label(destination + getString(R.string.nothing_is_sent_automatically_protocol_payloads_and_creden), 14, MUTED).apply { setPadding(0, dp(12), 0, 0) })
         }
+        activeSectionGroups = GROUP_FREQUENT or GROUP_CONNECT
         section(content, getString(R.string.automatic_connection), R.drawable.ic_dp_automation) { card ->
             toggle(card, getString(R.string.connect_when_diplay_opens), getString(R.string.use_your_last_connection_type_and_selected_iphone), DiPlayPreferences.autoConnect(this)) { DiPlayPreferences.saveAutoConnect(this, it) }
             adbToggle(card, R.string.open_after_the_car_starts,
@@ -448,17 +547,28 @@ class DiPlayActivity : ComponentActivity() {
                 permissions = { listOf(CarHotspotSetup.Permission.BOOT_LAUNCH) }) {
                 AirPlayPersistence.saveAutoStartOnBoot(this, it)
             }
-            toggle(card, getString(R.string.auto_start_car_amap),
-                getString(R.string.auto_start_car_amap_description),
-                AirPlayPersistence.loadAutoStartCarAmap(this)) {
-                AirPlayPersistence.saveAutoStartCarAmap(this, it)
-            }
             card.addView(button("${getString(R.string.choose_iphone_prefix)}${DiPlayPreferences.phoneName(this)}", false) { choosePhone() }, matchButton(12, 60))
         }
+        activeSectionGroups = GROUP_SYSTEM
         bydAdbSettings(content)
+        activeSectionGroups = GROUP_DISPLAY
         section(content, getString(R.string.display_and_performance), R.drawable.ic_dp_display) { card ->
             carPlaySizeControl(card)
-            choice(card, getString(R.string.resolution), listOf(getString(R.string.resolution_native), getString(R.string.s_80_lighter_load), getString(R.string.s_60_lightest_load)), listOf(10, 8, 6).indexOf(AirPlayPersistence.loadDisplayScaleTenths(this)).coerceAtLeast(0)) { AirPlayPersistence.saveDisplayScaleTenths(this, listOf(10, 8, 6)[it]) }
+            // 50 % and 40 % exist for a small-canvas A/B: a 2560x1600 panel at 50 % is 1280x800,
+            // which is where other receivers usually run and where iOS renders an app's first
+            // frame fastest.
+            val scaleSteps = listOf(10, 8, 6, 5, 4)
+            val scaleLabels = listOf(
+                getString(R.string.resolution_native),
+                getString(R.string.s_80_lighter_load),
+                getString(R.string.s_60_lightest_load),
+                getString(R.string.resolution_percent_value, 50),
+                getString(R.string.resolution_percent_value, 40),
+            )
+            choice(card, getString(R.string.resolution), scaleLabels,
+                scaleSteps.indexOf(AirPlayPersistence.loadDisplayScaleTenths(this)).coerceAtLeast(0)) {
+                AirPlayPersistence.saveDisplayScaleTenths(this, scaleSteps[it])
+            }
             val bufferPresets = com.shilapi.xcertplay.media.MediaAudioBuffer.presets
             // Labels are derived from the presets, never written out by hand: the old hard-coded
             // three labels had already drifted from the values once (a row named "500 ms" whose
@@ -485,42 +595,35 @@ class DiPlayActivity : ComponentActivity() {
                 AirPlayPersistence.saveHideTopBar(this, it); AirPlayPersistence.saveHideBottomBar(this, it)
             }
             val nightModes = CarPlayNightMode.entries
-            val nightMode = AirPlayPersistence.loadCarPlayNightMode(this)
-            val ambientControls = column().apply {
-                visibility = if (nightMode == CarPlayNightMode.AMBIENT) View.VISIBLE else View.GONE
+            // Labels follow the enum order, so adding or dropping an option can never shift a value.
+            val nightLabels = nightModes.map {
+                getString(
+                    when (it) {
+                        CarPlayNightMode.SYSTEM -> R.string.carplay_night_system
+                        CarPlayNightMode.DAY -> R.string.carplay_night_day
+                        CarPlayNightMode.NIGHT -> R.string.carplay_night_night
+                    },
+                )
             }
             choice(
                 card,
                 getString(R.string.carplay_night_mode),
-                listOf(
-                    getString(R.string.carplay_night_system),
-                    getString(R.string.carplay_night_ambient),
-                    getString(R.string.carplay_night_day),
-                    getString(R.string.carplay_night_night),
-                ),
-                nightModes.indexOf(nightMode),
+                nightLabels,
+                nightModes.indexOf(AirPlayPersistence.loadCarPlayNightMode(this)),
                 reconnects = false,
             ) { index ->
                 AirPlayPersistence.saveCarPlayNightMode(this, nightModes[index])
-                ambientControls.visibility = if (nightModes[index] == CarPlayNightMode.AMBIENT) View.VISIBLE else View.GONE
             }
             card.addView(label(getString(R.string.carplay_night_hint), 14, MUTED))
             card.addView(label(getString(R.string.carplay_night_time_note), 14, MUTED).apply {
                 setPadding(0, 0, 0, dp(18))
             })
-            ambientControls.addView(label(getString(R.string.carplay_night_ambient_hint), 14, MUTED).apply {
-                setPadding(0, 0, 0, dp(18))
-            })
-            ambientLightThresholdControl(ambientControls)
-            nightDelaySettingControl(ambientControls, R.string.ambient_delay_title, R.string.ambient_delay_hint,
-                0..60, 2, R.string.ambient_delay_summary, { AirPlayPersistence.loadAmbientDelaySeconds(this) },
-                save = { AirPlayPersistence.saveAmbientDelaySeconds(this, it) })
-            card.addView(ambientControls)
             card.addView(button(getString(R.string.picture_adjustments), false) {
                 startActivity(Intent(this, CarPlayHostActivity::class.java)
                     .putExtra("picture_controls", true).addFlags(Intent.FLAG_ACTIVITY_REORDER_TO_FRONT))
             }, matchButton(0, 56).apply { bottomMargin = dp(24) })
         }
+        activeSectionGroups = GROUP_FREQUENT or GROUP_SOUND
         section(content, getString(R.string.audio_routing)) { card ->
             toggle(card, getString(R.string.contrib_audio_home_toggle_audio_focus), getString(R.string.contrib_audio_home_toggle_audio_focus_desc), AirPlayPersistence.loadAudioFocusEnabled(this)) { AirPlayPersistence.saveAudioFocusEnabled(this, it) }
             if (resources.getBoolean(R.bool.config_advanced_audio_channel_mapping)) {
@@ -537,13 +640,18 @@ class DiPlayActivity : ComponentActivity() {
                 AirPlayPersistence.loadNavigationFocusEnabled(this)) {
                 AirPlayPersistence.saveNavigationFocusEnabled(this, it)
             }
-            toggle(card, getString(R.string.block_wheel_track_change),
-                getString(R.string.block_wheel_track_change_description),
-                AirPlayPersistence.loadBlockWheelTrackChange(this)) {
-                AirPlayPersistence.saveBlockWheelTrackChange(this, it)
+            // One switch for music AND the wheel's media keys: they cannot be independent (with
+            // the CarPlay media session gone the wheel keys fall through to the car's Bluetooth
+            // app, and claiming them for CarPlay as well skipped two tracks per press), so the
+            // old "block steering-wheel media keys" toggle is gone as of 2026-10-18.
+            toggle(card, getString(R.string.media_audio_via_bluetooth),
+                getString(R.string.media_audio_via_bluetooth_description),
+                AirPlayPersistence.loadMediaViaCarBluetooth(this)) {
+                AirPlayPersistence.saveMediaViaCarBluetooth(this, it)
             }
             navDuckPercentControl(card)
         }
+        activeSectionGroups = GROUP_CONNECT
         section(content, getString(R.string.location), R.drawable.ic_dp_navigation) { card ->
             toggle(card, getString(R.string.report_location_to_iphone),
                 getString(R.string.sends_precise_android_location_as_carplay_gps_data_when_th),
@@ -563,6 +671,7 @@ class DiPlayActivity : ComponentActivity() {
         // 仪表盘分区始终渲染：即使当前未检测到投影 display（模拟器、未连接车机），也允许
         // 预先配置裁剪、坐标、车标等；车机上连接后自动生效。全部控件包 runCatching，任一
         // 控件渲染异常仅隐藏该控件，绝不使设置页闪退。
+        activeSectionGroups = GROUP_CLUSTER
         runCatching {
             val clusterDisplayPresent = ClusterMapPresentation.findDisplay(this) != null
             section(content, getString(R.string.instrument_cluster_section), R.drawable.ic_dp_navigation) { card ->
@@ -570,12 +679,6 @@ class DiPlayActivity : ComponentActivity() {
                     card.addView(label(getString(R.string.cluster_no_display_hint), 14, MUTED).apply {
                         setPadding(0, 0, 0, dp(12))
                     })
-                }
-                toggle(card, getString(R.string.carplay_map_on_instrument_cluster_experimental),
-                    getString(R.string.shows_the_iphone_s_cluster_map_on_the_instrument_cluster_c),
-                    AirPlayPersistence.loadClusterMapEnabled(this)) {
-                    AirPlayPersistence.saveClusterMapEnabled(this, it)
-                    reconnectForClusterMap()
                 }
                 choice(card, getString(R.string.instrument_cluster_content),
                     listOf(
@@ -637,68 +740,19 @@ class DiPlayActivity : ComponentActivity() {
                 }.onFailure { e ->
                     clusterUiLog("整机镜像左侧裁剪控件渲染失败: ${e.message ?: e.javaClass.simpleName}")
                 }
-                // 导航流底部预留（px）：长安仪表盘底部 HUD 读数区不属于投屏显示区，高德
-                // 把车辆图标锚定在安全区底部附近，会有一半被切出画面。预留该区域后高德
-                // 会把车标上移，地图仍铺满仪表（仅影响仅导航模式，整机镜像不受影响）。
-                runCatching {
-                    val navReserveTitle = label(getString(R.string.cluster_nav_bottom_reserve), 16, TEXT, true)
-                    navReserveTitle.setPadding(0, dp(12), 0, 0)
-                    val navReserveValue = label(
-                        "${AirPlayPersistence.loadClusterNavBottomReservePx(this@DiPlayActivity)} px",
-                        16, ACCENT, true,
-                    )
-                    val navReserveHead = LinearLayout(this).apply {
-                        orientation = LinearLayout.HORIZONTAL
-                        gravity = Gravity.CENTER_VERTICAL
-                        addView(navReserveTitle, LinearLayout.LayoutParams(0, -2, 1f))
-                        addView(navReserveValue)
-                    }
-                    card.addView(navReserveHead, LinearLayout.LayoutParams(ViewGroup.LayoutParams.MATCH_PARENT, ViewGroup.LayoutParams.WRAP_CONTENT))
-                    val navReserveSlider = SeekBar(this).apply {
-                        max = 300
-                        progress = AirPlayPersistence.loadClusterNavBottomReservePx(this@DiPlayActivity).coerceIn(0, 300)
-                        setOnSeekBarChangeListener(object : SeekBar.OnSeekBarChangeListener {
-                            override fun onProgressChanged(seekBar: SeekBar?, progress: Int, fromUser: Boolean) {
-                                navReserveValue.text = "$progress px"
-                            }
-
-                            override fun onStartTrackingTouch(seekBar: SeekBar?) {}
-                            override fun onStopTrackingTouch(seekBar: SeekBar?) {
-                                val px = seekBar?.progress ?: 0
-                                AirPlayPersistence.saveClusterNavBottomReservePx(this@DiPlayActivity, px)
-                                // The safe area lives in the /info display negotiation, so it only
-                                // takes effect after a (re)connect. Reconnect now so the change is
-                                // visible immediately; the head unit may announce the re-join.
-                                reconnectForClusterMap()
-                            }
-                        })
-                    }
-                    card.addView(navReserveSlider, LinearLayout.LayoutParams(-1, dp(44)))
-                }.onFailure { e ->
-                    clusterUiLog("导航流底部预留控件渲染失败: ${e.message ?: e.javaClass.simpleName}")
-                }
-                // "自动飞屏" master switch: unchecked = no auto projection AND no stock-Amap
-                // handling at all (manual three-finger swipe still works).
+                // The only auto-projection switch left: the old separate "连接后自动投屏" did the
+                // same thing, so the two were merged into this one (see applyDefaultsRevision).
+                // Unchecked = no auto projection at all; the three-finger swipe still works.
                 toggle(card, getString(R.string.auto_fly_screen),
                     getString(R.string.auto_fly_screen_desc),
                     AirPlayPersistence.loadAutoFlyScreen(this)) {
                     AirPlayPersistence.saveAutoFlyScreen(this, it)
                 }
-                toggle(card, getString(R.string.auto_project_on_connect),
-                    getString(R.string.auto_project_on_connect_desc),
-                    AirPlayPersistence.loadAutoProjectOnConnect(this)) {
-                    AirPlayPersistence.saveAutoProjectOnConnect(this, it)
-                }
-                // 冷启动偶发失败的两个兜底：投屏重试阶梯 + 关闭时释放投影权限（否则仪表盘黑屏）。
+                // 冷启动偶发失败的兜底：投屏重试阶梯。
                 toggle(card, getString(R.string.auto_project_retry),
                     getString(R.string.auto_project_retry_desc),
                     AirPlayPersistence.loadAutoProjectRetry(this)) {
                     AirPlayPersistence.saveAutoProjectRetry(this, it)
-                }
-                toggle(card, getString(R.string.cluster_release_on_close),
-                    getString(R.string.cluster_release_on_close_desc),
-                    AirPlayPersistence.loadClusterReleaseOnClose(this)) {
-                    AirPlayPersistence.saveClusterReleaseOnClose(this, it)
                 }
                 // 车辆图标名称（OEM 标签）由 iOS 端按该文字渲染车机图标。
                 // 全部用朴素原生控件，任一渲染异常仅隐藏该控件并把原因写入诊断日志。
@@ -729,7 +783,6 @@ class DiPlayActivity : ComponentActivity() {
                 }
                 // 通用仪表盘控件（原位于“车载导航”分区，仅 BYD 车机可见；长安等车机看不到，
                 // 故移入“仪表盘”分区）。
-                val sizes = CarPlayClusterDisplay.scalePresets
                 val contents = CarPlayClusterDisplay.Content.entries
                 val content = AirPlayPersistence.loadClusterContent(this)
                 val customCard = CarPlayClusterDisplay.usesCustomTurnCard(content)
@@ -785,110 +838,119 @@ class DiPlayActivity : ComponentActivity() {
                 card.addView(positionPreview, LinearLayout.LayoutParams(ViewGroup.LayoutParams.MATCH_PARENT, dp(170)).apply { topMargin = dp(10) })
                 card.addView(label(getString(R.string.cluster_card_position_preview), 14, MUTED))
                 if (customCard) {
-                    // Per-card size as a percentage, replacing the old three-step preset: three
-                    // steps never fit four different cards, and "a bit smaller than medium" had
-                    // no way to be expressed. Applied immediately - the dashboard refreshes
-                    // without a reconnect, so the driver sees the result while dragging.
-                    cardScaleRow(card, getString(R.string.card_scale_turn), "turn")
-                    // The custom turn card uses the same absolute pixel coordinates as the
-                    // other four cards: top-left corner of the full 1920x720 dashboard panel.
-                    toggle(card, getString(R.string.turn_card_show),
-                        getString(R.string.cluster_card_show_desc),
-                        AirPlayPersistence.loadClusterTurnCardVisible(this)) { visible ->
-                        AirPlayPersistence.saveClusterTurnCardVisible(this, visible)
+                    // One inset block per dashboard card: its show switch, its own size and its own
+                    // position together. The size sliders used to sit in one run and every card's
+                    // X/Y rows in another, so "车道指引卡片" was three rows scattered between two
+                    // other cards' rows and its size was somewhere else entirely.
+                    cardGroup(card, getString(R.string.cluster_card_turn_title)) { group ->
+                        cardScaleRow(group, getString(R.string.card_scale_turn), "turn")
+                        toggle(group, getString(R.string.turn_card_show),
+                            getString(R.string.cluster_card_show_desc),
+                            AirPlayPersistence.loadClusterTurnCardVisible(this)) { visible ->
+                            AirPlayPersistence.saveClusterTurnCardVisible(this, visible)
+                        }
+                        group.addView(label(getString(R.string.turn_card_overlay_horizontal), 12, MUTED_DIM).apply {
+                            setPadding(0, dp(6), 0, 0)
+                        })
+                        group.addView(LinearLayout(this@DiPlayActivity).apply {
+                            orientation = LinearLayout.HORIZONTAL
+                            gravity = Gravity.CENTER_VERTICAL
+                            setPadding(0, dp(6), 0, 0)
+                            addView(label(getString(R.string.cluster_card_horizontal), 15, TEXT, true), LinearLayout.LayoutParams(0, -2, 1f))
+                            addView(numberInput(pendingXY["turn"]?.first ?: 0, 1920) { v ->
+                                val y = pendingXY["turn"]?.second ?: 0
+                                pendingXY["turn"] = Pair(v, y)
+                                positionPreview.setTurnOffset(v, y)
+                                // Persist on every keystroke: the dashboard is on another screen that is
+                                // visible at the same time as this one, so the driver watches the card move
+                                // while typing instead of applying and going over to look.
+                                AirPlayPersistence.saveClusterTurnCardX(this@DiPlayActivity, v)
+                            }, LinearLayout.LayoutParams(dp(150), dp(48)).apply { leftMargin = dp(8) })
+                        })
+                        group.addView(LinearLayout(this@DiPlayActivity).apply {
+                            orientation = LinearLayout.HORIZONTAL
+                            gravity = Gravity.CENTER_VERTICAL
+                            setPadding(0, dp(6), 0, 0)
+                            addView(label(getString(R.string.cluster_card_vertical), 15, TEXT, true), LinearLayout.LayoutParams(0, -2, 1f))
+                            addView(numberInput(pendingXY["turn"]?.second ?: 0, 720) { v ->
+                                val x = pendingXY["turn"]?.first ?: 0
+                                pendingXY["turn"] = Pair(x, v)
+                                positionPreview.setTurnOffset(x, v)
+                                AirPlayPersistence.saveClusterTurnCardY(this@DiPlayActivity, v)
+                            }, LinearLayout.LayoutParams(dp(150), dp(48)).apply { leftMargin = dp(8) })
+                        })
+                        group.addView(button(getString(R.string.reset_turn_card_overlay), false) {
+                            // Reset is an immediate action: persist the defaults right away, then
+                            // re-render so the inputs show the restored values. (A preview-only reset
+                            // would be wiped by render(), which re-initialises pendingXY from disk.)
+                            AirPlayPersistence.saveClusterTurnCardX(this, AirPlayPersistence.DEFAULT_CLUSTER_TURN_CARD_X_PX)
+                            AirPlayPersistence.saveClusterTurnCardY(this, AirPlayPersistence.DEFAULT_CLUSTER_TURN_CARD_Y_PX)
+                            positionPreview.setTurnOffset(AirPlayPersistence.DEFAULT_CLUSTER_TURN_CARD_X_PX, AirPlayPersistence.DEFAULT_CLUSTER_TURN_CARD_Y_PX)
+                            render()
+                        }, matchButton(12, 56))
+                        group.addView(label(getString(R.string.turn_card_overlay_note), 12, MUTED).apply {
+                            setPadding(0, dp(8), 0, dp(6))
+                        })
                     }
-                    card.addView(label(getString(R.string.turn_card_overlay_horizontal), 15, TEXT, true))
-                    card.addView(LinearLayout(this@DiPlayActivity).apply {
-                        orientation = LinearLayout.HORIZONTAL
-                        gravity = Gravity.CENTER_VERTICAL
-                        setPadding(0, dp(6), 0, 0)
-                        addView(label(getString(R.string.cluster_card_horizontal), 15, TEXT, true), LinearLayout.LayoutParams(0, -2, 1f))
-                        addView(numberInput(pendingXY["turn"]?.first ?: 0, 1920) { v ->
-                            val y = pendingXY["turn"]?.second ?: 0
-                            pendingXY["turn"] = Pair(v, y)
-                            positionPreview.setTurnOffset(v, y)
-                            // Persist on every keystroke: the dashboard is on another screen that is
-                            // visible at the same time as this one, so the driver watches the card move
-                            // while typing instead of applying and going over to look.
-                            AirPlayPersistence.saveClusterTurnCardX(this@DiPlayActivity, v)
-                        }, LinearLayout.LayoutParams(dp(150), dp(48)).apply { leftMargin = dp(8) })
-                    })
-                    card.addView(LinearLayout(this@DiPlayActivity).apply {
-                        orientation = LinearLayout.HORIZONTAL
-                        gravity = Gravity.CENTER_VERTICAL
-                        setPadding(0, dp(6), 0, 0)
-                        addView(label(getString(R.string.cluster_card_vertical), 15, TEXT, true), LinearLayout.LayoutParams(0, -2, 1f))
-                        addView(numberInput(pendingXY["turn"]?.second ?: 0, 720) { v ->
-                            val x = pendingXY["turn"]?.first ?: 0
-                            pendingXY["turn"] = Pair(x, v)
-                            positionPreview.setTurnOffset(x, v)
-                            AirPlayPersistence.saveClusterTurnCardY(this@DiPlayActivity, v)
-                        }, LinearLayout.LayoutParams(dp(150), dp(48)).apply { leftMargin = dp(8) })
-                    })
-                    card.addView(button(getString(R.string.reset_turn_card_overlay), false) {
-                        // Reset is an immediate action: persist the defaults right away, then
-                        // re-render so the inputs show the restored values. (A preview-only reset
-                        // would be wiped by render(), which re-initialises pendingXY from disk.)
-                        AirPlayPersistence.saveClusterTurnCardX(this, AirPlayPersistence.DEFAULT_CLUSTER_TURN_CARD_X_PX)
-                        AirPlayPersistence.saveClusterTurnCardY(this, AirPlayPersistence.DEFAULT_CLUSTER_TURN_CARD_Y_PX)
-                        positionPreview.setTurnOffset(AirPlayPersistence.DEFAULT_CLUSTER_TURN_CARD_X_PX, AirPlayPersistence.DEFAULT_CLUSTER_TURN_CARD_Y_PX)
-                        render()
-                    }, matchButton(10, 56))
-                    card.addView(label(getString(R.string.turn_card_overlay_note), 14, MUTED))
                 } else {
-                    // The turn card's position and size live inside the customCard branch, so with any
-                    // other "仪表盘显示" they used to vanish without a word - which reads as a bug rather
-                    // than a mode the driver is in. Say what to switch to instead.
-                    card.addView(label(getString(R.string.cluster_turn_card_controls_hidden), 14, MUTED))
+                    cardGroup(card, getString(R.string.cluster_card_turn_title)) { group ->
+                        // The turn card's position and size live inside the customCard branch, so with
+                        // any other "仪表盘显示" they used to vanish without a word - which reads as a
+                        // bug rather than a mode the driver is in. Say what to switch to instead.
+                        group.addView(label(getString(R.string.cluster_turn_card_controls_hidden), 12, MUTED).apply {
+                            setPadding(dp(2), dp(2), dp(2), dp(4))
+                        })
+                    }
                 }
-                card.addView(label(getString(R.string.cluster_card_position_preview_note), 14, MUTED))
-                cardScaleRow(card, getString(R.string.card_scale_eta), "eta")
-                cardScaleRow(card, getString(R.string.card_scale_lane), "lane")
-                cardScaleRow(card, getString(R.string.card_scale_road), "road")
-                cardScaleRow(card, getString(R.string.card_scale_song), "song")
+                card.addView(label(getString(R.string.cluster_card_position_preview_note), 12, MUTED_DIM).apply {
+                    setPadding(0, dp(10), 0, dp(2))
+                })
                 // Per-card absolute position (x, y), origin = top-left of the full dashboard
-                // panel (1920x720 canvas == display). Direct numeric input (not a slider —
+                // panel (1920x720 canvas == display). Direct numeric input (not a slider -
                 // sliders are easy to mis-touch on the head unit). Typing only previews into
                 // pendingXY; Apply & save writes everything and refreshes the live cards.
                 fun addCardOffsetInputs(
                     title: String,
                     cardId: String,
+                    scaleTitle: Int?,
                     onChanged: (String, Int, Int) -> Unit,
                 ) {
-                    toggle(card, getString(R.string.cluster_card_show, title),
-                        getString(R.string.cluster_card_show_desc),
-                        AirPlayPersistence.loadClusterCardVisible(this, cardId)) { visible ->
-                        AirPlayPersistence.saveClusterCardVisible(this, cardId, visible)
+                    cardGroup(card, title) { group ->
+                        toggle(group, getString(R.string.cluster_card_show, title),
+                            getString(R.string.cluster_card_show_desc),
+                            AirPlayPersistence.loadClusterCardVisible(this, cardId)) { visible ->
+                            AirPlayPersistence.saveClusterCardVisible(this, cardId, visible)
+                        }
+                        if (scaleTitle != null) cardScaleRow(group, getString(scaleTitle), cardId)
+                        group.addView(LinearLayout(this).apply {
+                            orientation = LinearLayout.HORIZONTAL
+                            gravity = Gravity.CENTER_VERTICAL
+                            setPadding(0, dp(8), 0, 0)
+                            addView(label(getString(R.string.cluster_card_horizontal), 15, TEXT, true), LinearLayout.LayoutParams(0, -2, 1f))
+                            addView(numberInput(pendingXY[cardId]?.first ?: 0, 1920) { v ->
+                                val y = pendingXY[cardId]?.second ?: 0
+                                pendingXY[cardId] = Pair(v, y)
+                                onChanged(cardId, v, y)
+                            }, LinearLayout.LayoutParams(dp(150), dp(48)).apply { leftMargin = dp(8) })
+                        })
+                        group.addView(LinearLayout(this).apply {
+                            orientation = LinearLayout.HORIZONTAL
+                            gravity = Gravity.CENTER_VERTICAL
+                            setPadding(0, dp(6), 0, dp(6))
+                            addView(label(getString(R.string.cluster_card_vertical), 15, TEXT, true), LinearLayout.LayoutParams(0, -2, 1f))
+                            addView(numberInput(pendingXY[cardId]?.second ?: 0, 720) { v ->
+                                val x = pendingXY[cardId]?.first ?: 0
+                                pendingXY[cardId] = Pair(x, v)
+                                onChanged(cardId, x, v)
+                            }, LinearLayout.LayoutParams(dp(150), dp(48)).apply { leftMargin = dp(8) })
+                        })
                     }
-                    card.addView(label(title, 16, TEXT, true))
-                    card.addView(LinearLayout(this).apply {
-                        orientation = LinearLayout.HORIZONTAL
-                        gravity = Gravity.CENTER_VERTICAL
-                        setPadding(0, dp(6), 0, 0)
-                        addView(label(getString(R.string.cluster_card_horizontal), 15, TEXT, true), LinearLayout.LayoutParams(0, -2, 1f))
-                        addView(numberInput(pendingXY[cardId]?.first ?: 0, 1920) { v ->
-                            val y = pendingXY[cardId]?.second ?: 0
-                            pendingXY[cardId] = Pair(v, y)
-                            onChanged(cardId, v, y)
-                        }, LinearLayout.LayoutParams(dp(150), dp(48)).apply { leftMargin = dp(8) })
-                    })
-                    card.addView(LinearLayout(this).apply {
-                        orientation = LinearLayout.HORIZONTAL
-                        gravity = Gravity.CENTER_VERTICAL
-                        setPadding(0, dp(6), 0, 0)
-                        addView(label(getString(R.string.cluster_card_vertical), 15, TEXT, true), LinearLayout.LayoutParams(0, -2, 1f))
-                        addView(numberInput(pendingXY[cardId]?.second ?: 0, 720) { v ->
-                            val x = pendingXY[cardId]?.first ?: 0
-                            pendingXY[cardId] = Pair(x, v)
-                            onChanged(cardId, x, v)
-                        }, LinearLayout.LayoutParams(dp(150), dp(48)).apply { leftMargin = dp(8) })
-                    })
                 }
-                addCardOffsetInputs(getString(R.string.cluster_card_lane_title), "lane") { id, x, y -> positionPreview.setOffset(id, x, y) }
-                addCardOffsetInputs(getString(R.string.cluster_card_eta_title), "eta") { id, x, y -> positionPreview.setOffset(id, x, y) }
-                addCardOffsetInputs(getString(R.string.cluster_card_road_title), "road") { id, x, y -> positionPreview.setOffset(id, x, y) }
-                addCardOffsetInputs(getString(R.string.cluster_card_exit_title), "exit") { id, x, y -> positionPreview.setOffset(id, x, y) }
-                addCardOffsetInputs(getString(R.string.cluster_card_song_title), "song") { id, x, y -> positionPreview.setOffset(id, x, y) }
+                addCardOffsetInputs(getString(R.string.cluster_card_lane_title), "lane", R.string.card_scale_lane) { id, x, y -> positionPreview.setOffset(id, x, y) }
+                addCardOffsetInputs(getString(R.string.cluster_card_eta_title), "eta", R.string.card_scale_eta) { id, x, y -> positionPreview.setOffset(id, x, y) }
+                addCardOffsetInputs(getString(R.string.cluster_card_road_title), "road", R.string.card_scale_road) { id, x, y -> positionPreview.setOffset(id, x, y) }
+                addCardOffsetInputs(getString(R.string.cluster_card_exit_title), "exit", null) { id, x, y -> positionPreview.setOffset(id, x, y) }
+                addCardOffsetInputs(getString(R.string.cluster_card_song_title), "song", R.string.card_scale_song) { id, x, y -> positionPreview.setOffset(id, x, y) }
                 card.addView(button(getString(R.string.cluster_card_position_apply), false) {
                     pendingXY.forEach { (id, pair) ->
                         if (id == "turn") {
@@ -902,11 +964,6 @@ class DiPlayActivity : ComponentActivity() {
                     toast(getString(R.string.cluster_card_position_applied))
                 }, matchButton(0, 56))
                 val turnCard = officialCardOnly
-                choice(card, getString(if (turnCard) R.string.turn_card_size else R.string.cluster_map_size),
-                    listOf(getString(R.string.cluster_size_standard), getString(R.string.cluster_size_larger), getString(R.string.cluster_size_largest)),
-                    sizes.indexOf(AirPlayPersistence.loadClusterMapScalePercent(this)).coerceAtLeast(0)) {
-                    AirPlayPersistence.saveClusterMapScalePercent(this, sizes[it])
-                }
                 val across = CarPlayClusterDisplay.horizontalSteps.toList()
                 choice(card, getString(if (turnCard) R.string.turn_card_horizontal else R.string.car_marker_horizontal), across.map { markerStepLabel(it, getString(R.string.marker_left), getString(R.string.marker_right)) },
                     across.indexOf(AirPlayPersistence.loadClusterMarkerHorizontalStep(this)).coerceAtLeast(0)) {
@@ -924,19 +981,6 @@ class DiPlayActivity : ComponentActivity() {
                     // No reconnect: the marker offset is a local overlay transform, applied on
                     // the next overlay refresh. Reconnecting here only re-announced the voice.
                 }, matchButton(10, 56))
-                if (!DiLink51ClusterLayout.supported()) navOffsetControl(card)
-                toggle(card, getString(R.string.dashboard_detailed_map),
-                    getString(R.string.dashboard_detailed_map_description),
-                    AirPlayPersistence.loadClusterFullSafeArea(this)) {
-                    AirPlayPersistence.saveClusterFullSafeArea(this, it)
-                    reconnectForClusterMap()
-                }
-                toggle(card, getString(R.string.dashboard_map_only_in_small_and_full_navi),
-                    getString(R.string.dashboard_map_only_in_small_and_full_navi_description),
-                    BydOutputSettings.clusterStreamPause(this)) {
-                    BydOutputSettings.setClusterStreamPause(this, it)
-                    if (it) checkAdbState(mayAsk = true)
-                }
             }
         }
         if (BydOutputSettings.navigationAvailable(this)) section(content, getString(R.string.byd_navigation), R.drawable.ic_dp_navigation) { card ->
@@ -997,16 +1041,25 @@ class DiPlayActivity : ComponentActivity() {
             }
             clusterSongSwitch(card)
         }
+        activeSectionGroups = GROUP_SYSTEM
         section(content, getString(R.string.permissions_and_connection_help), R.drawable.ic_dp_permissions) { card ->
             card.addView(label(getString(R.string.nearby_devices_connects_your_iphone_microphone_enables_sir), 16, MUTED))
             card.addView(button(getString(R.string.app_permissions), false) { openSystem(Intent(Settings.ACTION_APPLICATION_DETAILS_SETTINGS, Uri.parse("package:$packageName"))) }, matchButton(16, 60))
             card.addView(button(getString(R.string.bluetooth_settings), false) { openSystem(Intent(Settings.ACTION_BLUETOOTH_SETTINGS)) }, matchButton(10, 60))
             card.addView(button(getString(R.string.wireless_connection_help), false) { wirelessHelp() }, matchButton(10, 60))
         }
+        activeSectionGroups = GROUP_SYSTEM
         section(content, getString(R.string.about), R.drawable.ic_dp_about) { card ->
             card.addView(button(getString(R.string.about_diplay), false) { page = "about"; render() }, matchButton(0, 60))
         }
+        activeSectionGroups = GROUP_SYSTEM
         languageSettings(content)
+        // Late/async builders (ADB probes) must not inherit a group: untagged content stays visible.
+        activeSectionGroups = GROUP_ALL
+        applyGroupFilter()
+        // The caller owns this row now (it goes outside the outer ScrollView), so the rail and the
+        // page header stay put while only the right column scrolls.
+        return body
     }
 
     private fun about(content: LinearLayout) {
@@ -1035,9 +1088,12 @@ class DiPlayActivity : ComponentActivity() {
             Log.i("DiPlay-Hotspot", "settings hidden: BYD head unit not detected")
             return
         }
-        val controls = column().apply { visibility = View.GONE }
+        // Group tag matters: this column is filled asynchronously, after the page has already
+        // applied its filter, and an untagged view would show up under every rail entry.
+        val controls = column().apply { visibility = View.GONE; tag = SectionTag(GROUP_SYSTEM, 5) }
         bydAdbControls = controls
-        parent.addView(controls)
+        val sink = settingsSectionSink
+        if (sink != null) sink.add(controls) else parent.addView(controls)
         Thread({
             val access = runCatching { CarHotspotSetup.check(applicationContext) }
                 .onFailure { Log.w("DiPlay-Hotspot", "settings ADB check failed", it) }
@@ -1237,6 +1293,7 @@ class DiPlayActivity : ComponentActivity() {
 
     private fun wirelessLinkControls(parent: LinearLayout) {
         val mode = if (pendingCarHotspotSetup) WirelessHotspotMode.MANUAL else AirPlayPersistence.loadWirelessHotspotMode(this)
+        // Three modes only, matching upstream: car hotspot / Wi-Fi Direct / existing Wi-Fi.
         val modes = listOf(WirelessHotspotMode.MANUAL, WirelessHotspotMode.WIFI_P2P, WirelessHotspotMode.EXISTING_WIFI)
         val titles = listOf(getString(R.string.built_in_car_hotspot), getString(R.string.wifi_direct), getString(R.string.existing_wifi_title))
         val descriptions = listOf(
@@ -1333,39 +1390,33 @@ class DiPlayActivity : ComponentActivity() {
     }
 
     private fun mediaChannelControl(parent: LinearLayout) {
-        val summary: (Int) -> String = {
-            getString(R.string.contrib_audio_home_choice_summary, getString(R.string.contrib_audio_home_media_channel_label), channelLabel(it))
-        }
-        val control = button(summary(AirPlayPersistence.loadMediaAudioChannel(this)), false) {}
-        control.setOnClickListener {
+        val title = getString(R.string.contrib_audio_home_media_channel_label)
+        lateinit var value: TextView
+        value = valueRow(parent, title, channelLabel(AirPlayPersistence.loadMediaAudioChannel(this))) {
             val current = AirPlayPersistence.loadMediaAudioChannel(this)
             showChannelDialog(
-                title = getString(R.string.contrib_audio_home_media_channel_label),
+                title = title,
                 current = current,
                 navigation = false,
-                onApply = { value -> applyMediaChannel(value, current, control, summary) },
+                onApply = { picked -> applyMediaChannel(picked, current, value, ::channelLabel) },
             )
         }
-        parent.addView(control, matchButton(0, 60))
     }
 
     private fun navigationChannelControl(parent: LinearLayout) {
-        val summary: (Int) -> String = {
-            getString(R.string.contrib_audio_home_choice_summary, getString(R.string.contrib_audio_home_nav_channel_label), channelLabel(it))
-        }
-        val control = button(summary(AirPlayPersistence.loadNavigationAudioChannel(this)), false) {}
-        control.setOnClickListener {
+        val title = getString(R.string.contrib_audio_home_nav_channel_label)
+        lateinit var value: TextView
+        value = valueRow(parent, title, channelLabel(AirPlayPersistence.loadNavigationAudioChannel(this))) {
             val current = AirPlayPersistence.loadNavigationAudioChannel(this)
             showChannelDialog(
-                title = getString(R.string.contrib_audio_home_nav_channel_label),
+                title = title,
                 current = current,
                 navigation = true,
-                onApply = { value -> applyNavigationChannel(value, current, control, summary) },
+                onApply = { picked -> applyNavigationChannel(picked, current, value, ::channelLabel) },
             )
         }
-        parent.addView(control, matchButton(0, 60))
-        parent.addView(label(getString(R.string.contrib_audio_home_nav_channel_note), 14, MUTED).apply {
-            setPadding(0, dp(8), 0, dp(18))
+        parent.addView(label(getString(R.string.contrib_audio_home_nav_channel_note), 12, MUTED_DIM).apply {
+            setPadding(0, 0, 0, dp(10))
         })
     }
 
@@ -1389,14 +1440,14 @@ class DiPlayActivity : ComponentActivity() {
             .show()
     }
 
-    private fun applyMediaChannel(value: Int, previous: Int, control: Button, summary: (Int) -> String) {
+    private fun applyMediaChannel(value: Int, previous: Int, control: TextView, summary: (Int) -> String) {
         if (value == previous) return
         AirPlayPersistence.saveMediaAudioChannel(this, value)
         control.text = summary(value)
         if (CarPlayBackgroundSession.hasSession()) connect(AirPlayPersistence.loadWirelessEnabled(this))
     }
 
-    private fun applyNavigationChannel(value: Int, previous: Int, control: Button, summary: (Int) -> String) {
+    private fun applyNavigationChannel(value: Int, previous: Int, control: TextView, summary: (Int) -> String) {
         if (value == previous) return
         AirPlayPersistence.saveNavigationAudioChannel(this, value)
         control.text = summary(value)
@@ -1498,10 +1549,11 @@ class DiPlayActivity : ComponentActivity() {
     private fun cardScaleRow(parent: LinearLayout, title: String, card: String) {
         val current = AirPlayPersistence.loadClusterCardScalePercent(this, card)
         val value = label("$current%", 15, ACCENT, true)
+        if (parent.childCount > 0) parent.addView(divider())
         val head = LinearLayout(this).apply {
             orientation = LinearLayout.HORIZONTAL
             gravity = Gravity.CENTER_VERTICAL
-            setPadding(0, dp(12), 0, 0)
+            setPadding(0, dp(10), 0, dp(2))
         }
         head.addView(label(title, 15, TEXT, true), LinearLayout.LayoutParams(0, -2, 1f))
         head.addView(value)
@@ -1534,8 +1586,9 @@ class DiPlayActivity : ComponentActivity() {
     private fun navDuckPercentControl(parent: LinearLayout) {
         val current = AirPlayPersistence.loadNavDuckPercent(this)
         val value = label(getString(R.string.nav_duck_percent_value, current), 15, ACCENT, true)
-        val head = row().apply { setPadding(0, dp(12), 0, 0) }
-        head.addView(label(getString(R.string.nav_duck_percent_title), 15, TEXT, true),
+        if (parent.childCount > 0) parent.addView(divider())
+        val head = row().apply { setPadding(0, dp(10), 0, dp(2)) }
+        head.addView(label(getString(R.string.nav_duck_percent_title), 15, TEXT),
             LinearLayout.LayoutParams(0, -2, 1f))
         head.addView(value)
         parent.addView(head, LinearLayout.LayoutParams(-1, -2))
@@ -1559,41 +1612,6 @@ class DiPlayActivity : ComponentActivity() {
             })
         }, LinearLayout.LayoutParams(-1, dp(44)))
         parent.addView(label(getString(R.string.nav_duck_percent_hint), 14, MUTED).apply {
-            setPadding(0, dp(4), 0, dp(12))
-        })
-    }
-
-    /**
-     * Horizontal correction for the nav-only picture: the cluster stream keeps a right-hand
-     * column free, so its marker can sit off centre on some head units.
-     */
-    private fun navOffsetControl(parent: LinearLayout) {
-        val current = AirPlayPersistence.loadClusterNavOffsetPercent(this)
-        val value = label(getString(R.string.nav_offset_value, current), 15, ACCENT, true)
-        val head = row().apply { setPadding(0, dp(12), 0, 0) }
-        head.addView(label(getString(R.string.nav_offset_title), 15, TEXT, true),
-            LinearLayout.LayoutParams(0, -2, 1f))
-        head.addView(value)
-        parent.addView(head, LinearLayout.LayoutParams(-1, -2))
-        parent.addView(SeekBar(this).apply {
-            val step = 1
-            val min = AirPlayPersistence.NAV_OFFSET_MIN
-            max = (AirPlayPersistence.NAV_OFFSET_MAX - min) / step
-            progress = (current - min) / step
-            // No setMinHeight: this head-unit ROM strips SeekBar#setMinHeight and throws.
-            setOnSeekBarChangeListener(object : SeekBar.OnSeekBarChangeListener {
-                override fun onProgressChanged(seek: SeekBar?, progress: Int, fromUser: Boolean) {
-                    val percent = min + progress * step
-                    value.text = getString(R.string.nav_offset_value, percent)
-                    if (fromUser) {
-                        AirPlayPersistence.saveClusterNavOffsetPercent(this@DiPlayActivity, percent)
-                    }
-                }
-                override fun onStartTrackingTouch(seek: SeekBar?) = Unit
-                override fun onStopTrackingTouch(seek: SeekBar?) = Unit
-            })
-        }, LinearLayout.LayoutParams(-1, dp(44)))
-        parent.addView(label(getString(R.string.nav_offset_hint), 14, MUTED).apply {
             setPadding(0, dp(4), 0, dp(12))
         })
     }
@@ -1752,7 +1770,6 @@ class DiPlayActivity : ComponentActivity() {
         dialog.setOnShowListener {
             dialog.getButton(AlertDialog.BUTTON_POSITIVE).setOnClickListener {
                 if (DiLink51ClusterMonitor.hasAccess(this)) {
-                    AirPlayPersistence.saveClusterMapEnabled(this, true)
                     DiLink51ClusterLayout.saveAutomatic(this, true)
                     dialog.dismiss()
                     render()
@@ -2772,6 +2789,14 @@ class DiPlayActivity : ComponentActivity() {
         appendLine("Saved resolution preference (may differ from active session): ${AirPlayPersistence.loadDisplayScaleTenths(appContext) * 10}%")
         appendLine("Session: ${if (CarPlayBackgroundSession.active) "active" else if (CarPlayBackgroundSession.hasSession()) "connecting" else "stopped"}")
         appendLine("Head-unit board: ${Build.BOARD}; hardware: ${Build.HARDWARE}; build: ${Build.DISPLAY}")
+        // The version number does not change between test builds, so name the installed package:
+        // it is the only way to tell whether a report came from the APK that was just built.
+        runCatching {
+            val info = appContext.packageManager.getPackageInfo(appContext.packageName, 0)
+            val stamp = java.text.SimpleDateFormat("yyyy-MM-dd HH:mm", java.util.Locale.US)
+            appendLine("Installed: ${stamp.format(java.util.Date(info.lastUpdateTime))}" +
+                " (first: ${stamp.format(java.util.Date(info.firstInstallTime))})")
+        }
         appendLine()
         appendLine("--- BYD vehicle-data probe ---")
         appendLine(
@@ -2920,32 +2945,156 @@ class DiPlayActivity : ComponentActivity() {
     }
 
     private fun section(parent: LinearLayout, title: String, icon: Int? = null, build: (LinearLayout) -> Unit) {
-        val card = card()
-        val heading = row().apply { gravity = Gravity.CENTER_VERTICAL; setPadding(0, 0, 0, dp(16)) }
+        // The group label sits outside the card: inside it, thirteen cards all shouting at 22sp is
+        // what made the old page read like a document instead of a settings screen.
+        val wrap = column()
+        val heading = row().apply { gravity = Gravity.CENTER_VERTICAL; setPadding(dp(16), dp(26), dp(16), dp(10)) }
         if (icon != null) heading.addView(ImageView(this).apply {
-            setImageResource(icon); imageTintList = ColorStateList.valueOf(ACCENT)
+            setImageResource(icon); imageTintList = ColorStateList.valueOf(MUTED_DIM)
             importantForAccessibility = View.IMPORTANT_FOR_ACCESSIBILITY_NO
-        }, LinearLayout.LayoutParams(dp(28), dp(28)).apply { marginEnd = dp(12) })
-        heading.addView(label(title, 22, TEXT, true), LinearLayout.LayoutParams(0, -2, 1f))
-        card.addView(heading)
+        }, LinearLayout.LayoutParams(dp(15), dp(15)).apply { marginEnd = dp(8) })
+        heading.addView(label(title, 11, MUTED_DIM, true).apply { letterSpacing = 0.08f })
+        wrap.addView(heading)
+        val card = groupCard()
         build(card)
-        parent.addView(card, LinearLayout.LayoutParams(-1, -2).apply { bottomMargin = dp(18) })
+        wrap.addView(card)
+        wrap.tag = SectionTag(activeSectionGroups, card.childCount.coerceAtLeast(1))
+        val sink = settingsSectionSink
+        if (sink != null && settingsStaging === parent) {
+            sink.add(wrap)
+        } else {
+            parent.addView(wrap, LinearLayout.LayoutParams(-1, -2))
+        }
     }
+
+    private fun groupCard() = column().apply {
+        background = rounded(SURFACE, BORDER, 14)
+        setPadding(dp(16), dp(4), dp(16), dp(4))
+    }
+
+    /**
+     * One inset block per dashboard card: its own show switch, size and position. The block sits
+     * inside the cluster section's card with a darker fill and its own border, which is what
+     * separates "车道指引卡片" from the card above and below it - the previous flat run of rows mixed
+     * four cards' settings together with nothing but vertical spacing between them.
+     */
+    private fun cardGroup(parent: LinearLayout, title: String, build: (LinearLayout) -> Unit) {
+        val group = column().apply {
+            background = rounded(Color.rgb(16, 24, 35), Color.rgb(38, 53, 74), 12)
+            setPadding(dp(14), dp(2), dp(14), dp(6))
+            layoutParams = LinearLayout.LayoutParams(-1, -2).apply { topMargin = dp(14) }
+        }
+        val head = row().apply { gravity = Gravity.CENTER_VERTICAL; setPadding(0, dp(12), 0, dp(4)) }
+        head.addView(label(title, 14, TEXT, true), LinearLayout.LayoutParams(0, -2, 1f))
+        group.addView(head)
+        build(group)
+        parent.addView(group)
+    }
+
+    private fun divider() = View(this).apply {
+        setBackgroundColor(Color.rgb(31, 43, 57))
+        layoutParams = LinearLayout.LayoutParams(-1, dp(1))
+    }
+
+    /**
+     * A drawn chevron instead of a "\u203A" glyph: the glyph carries its own side bearings, so a
+     * column of value rows looked slightly crooked. Two stroked lines are exact.
+     */
+    private fun chevron(): View {
+        val paint = android.graphics.Paint(android.graphics.Paint.ANTI_ALIAS_FLAG).apply {
+            color = MUTED_DIM
+            style = android.graphics.Paint.Style.STROKE
+            strokeWidth = dp(2).toFloat()
+            strokeCap = android.graphics.Paint.Cap.ROUND
+        }
+        return object : View(this) {
+            override fun onDraw(canvas: android.graphics.Canvas) {
+                val w = width.toFloat()
+                val h = height.toFloat()
+                if (w <= 0f || h <= 0f) return
+                canvas.drawLine(w * 0.36f, h * 0.22f, w * 0.74f, h * 0.5f, paint)
+                canvas.drawLine(w * 0.74f, h * 0.5f, w * 0.36f, h * 0.78f, paint)
+            }
+        }.apply { importantForAccessibility = View.IMPORTANT_FOR_ACCESSIBILITY_NO }
+    }
+
+    /**
+     * A long setting description collapses into a two-line summary plus this badge. Tapping it
+     * shows the whole text, so the explanatory paragraphs stay available without making every row
+     * four lines tall on a 720p head unit.
+     */
+    private fun detailBadge(title: String, description: String): TextView = label("!", 10, BG, true).apply {
+        gravity = Gravity.CENTER
+        background = rounded(ACCENT, ACCENT, 11)
+        contentDescription = getString(R.string.settings_setting_details)
+        isClickable = true
+        setOnClickListener {
+            AlertDialog.Builder(this@DiPlayActivity)
+                .setTitle(title)
+                .setMessage(description)
+                .setPositiveButton(getString(R.string.close), null)
+                .show()
+        }
+    }
+
     private fun toggle(parent: LinearLayout, title: String, description: String, value: Boolean, enabled: Boolean = true, save: (Boolean) -> Unit): Switch {
-        val line = row().apply { gravity = Gravity.CENTER_VERTICAL; setPadding(0, dp(12), 0, dp(12)) }
-        val text = column(); text.addView(label(title, 18, TEXT, true)); text.addView(label(description, 14, MUTED).apply { setPadding(0, dp(6), dp(16), 0) })
+        if (parent.childCount > 0) parent.addView(divider())
+        val line = row().apply { gravity = Gravity.CENTER_VERTICAL; minimumHeight = dp(62); setPadding(0, dp(11), 0, dp(11)) }
+        val text = column()
+        val head = row().apply { gravity = Gravity.CENTER_VERTICAL }
+        head.addView(label(title, 15, if (enabled) TEXT else MUTED, true), LinearLayout.LayoutParams(-2, -2))
+        text.addView(head)
+        text.addView(label(description, 12, MUTED).apply {
+            maxLines = 2
+            ellipsize = TextUtils.TruncateAt.END
+            setPadding(0, dp(3), dp(14), 0)
+        })
         line.addView(text, LinearLayout.LayoutParams(0, -2, 1f))
-        val control = Switch(this).apply { contentDescription = title; isChecked = value; isEnabled = enabled; minHeight = dp(56); buttonTintList = ColorStateList.valueOf(ACCENT); setOnCheckedChangeListener { _, checked -> save(checked) } }
+        // Its own column rather than a marker after the title: titles differ in length, and a badge
+        // that follows each one lands on a different x per row, which is what made the list look
+        // crooked. Beside the switch they line up.
+        if (description.length > 110) {
+            line.addView(
+                detailBadge(title, description),
+                LinearLayout.LayoutParams(dp(22), dp(22)).apply { marginEnd = dp(10) },
+            )
+        }
+        val control = Switch(this).apply {
+            contentDescription = title
+            isChecked = value
+            isEnabled = enabled
+            showText = false
+            splitTrack = false
+            minHeight = dp(48)
+            trackTintList = ColorStateList(
+                arrayOf(intArrayOf(android.R.attr.state_checked), intArrayOf()),
+                intArrayOf(ACCENT_TRACK, TRACK_OFF),
+            )
+            thumbTintList = ColorStateList(
+                arrayOf(intArrayOf(android.R.attr.state_checked), intArrayOf()),
+                intArrayOf(ACCENT, THUMB_OFF),
+            )
+            setOnCheckedChangeListener { _, checked -> save(checked) }
+        }
         line.addView(control)
+        // The whole row is a target: a 48dp switch is fiddly with a finger on a moving car.
+        line.setOnClickListener { if (control.isEnabled) control.isChecked = !control.isChecked }
         parent.addView(line)
         return control
     }
+
     // [announcesReconnect] labels a choice whose [save] reconnects by itself.
     private fun choice(parent: LinearLayout, title: String, options: List<String>, current: Int, reconnects: Boolean = true,
         announcesReconnect: Boolean = reconnects, enabled: Boolean = true, save: (Int) -> Unit) {
-        var selection = current
-        val button = button("$title · ${options[selection]}", false) {}.apply { isEnabled = enabled }
-        button.setOnClickListener {
+        var selection = current.coerceIn(0, (options.size - 1).coerceAtLeast(0))
+        if (parent.childCount > 0) parent.addView(divider())
+        val line = row().apply { gravity = Gravity.CENTER_VERTICAL; minimumHeight = dp(60); setPadding(0, dp(10), 0, dp(10)) }
+        line.addView(label(title, 15, if (enabled) TEXT else MUTED), LinearLayout.LayoutParams(0, -2, 1f))
+        val value = label(options.getOrElse(selection) { "" }, 13, if (enabled) ACCENT else MUTED_DIM)
+        line.addView(value)
+        line.addView(chevron(), LinearLayout.LayoutParams(dp(12), dp(20)).apply { marginStart = dp(4) })
+        line.isClickable = enabled
+        line.setOnClickListener {
             var pendingSelection = selection
             AlertDialog.Builder(this).setTitle(title)
                 .setSingleChoiceItems(options.toTypedArray(), selection) { _, index -> pendingSelection = index }
@@ -2953,172 +3102,170 @@ class DiPlayActivity : ComponentActivity() {
                     if (pendingSelection != selection) {
                         selection = pendingSelection
                         save(selection)
-                        button.text = "$title · ${options[selection]}"
+                        value.text = options.getOrElse(selection) { "" }
                         if (reconnects && CarPlayBackgroundSession.hasSession()) {
                             connect(AirPlayPersistence.loadWirelessEnabled(this))
                         }
                     }
                 }.setNegativeButton(getString(R.string.cancel), null).show()
         }
-        parent.addView(button, matchButton(0, 60)); parent.addView(space(12))
+        parent.addView(line)
     }
+
+    /**
+     * A choice row that is not backed by a fixed index list (the channel pickers build their own
+     * dialog). Returns the value label so the caller can refresh it after a pick.
+     */
+    private fun valueRow(parent: LinearLayout, title: String, initial: String, onClick: () -> Unit): TextView {
+        if (parent.childCount > 0) parent.addView(divider())
+        val line = row().apply { gravity = Gravity.CENTER_VERTICAL; minimumHeight = dp(60); setPadding(0, dp(10), 0, dp(10)) }
+        line.addView(label(title, 15, TEXT), LinearLayout.LayoutParams(0, -2, 1f))
+        val value = label(initial, 13, ACCENT)
+        line.addView(value)
+        line.addView(chevron(), LinearLayout.LayoutParams(dp(12), dp(20)).apply { marginStart = dp(4) })
+        line.isClickable = true
+        line.setOnClickListener { onClick() }
+        parent.addView(line)
+        return value
+    }
+
     private fun card() = column().apply { background = rounded(SURFACE, BORDER); setPadding(dp(24), dp(24), dp(24), dp(24)) }
     private fun column() = LinearLayout(this).apply { orientation = LinearLayout.VERTICAL; layoutParams = LinearLayout.LayoutParams(-1, -2) }
     private fun row() = LinearLayout(this).apply { orientation = LinearLayout.HORIZONTAL; layoutParams = LinearLayout.LayoutParams(-1, -2) }
     private fun label(value: String, size: Int, color: Int, bold: Boolean = false) = TextView(this).apply {
-        text = value; textSize = size.toFloat(); setTextColor(color); gravity = Gravity.CENTER_VERTICAL
+        text = value; textSize = size * textScale; setTextColor(color); gravity = Gravity.CENTER_VERTICAL
         typeface = if (bold) Typeface.create("sans-serif-medium", Typeface.NORMAL) else Typeface.create("sans-serif", Typeface.NORMAL)
         setLineSpacing(dp(3).toFloat(), 1f)
     }
     private fun button(title: String, primary: Boolean, click: () -> Unit) = Button(this).apply {
-        text = title; isAllCaps = false; textSize = 18f; setTextColor(if (primary) BG else TEXT)
+        text = title; isAllCaps = false; textSize = 15f * textScale; setTextColor(if (primary) BG else TEXT)
         typeface = Typeface.create("sans-serif-medium", Typeface.NORMAL)
-        background = android.graphics.drawable.RippleDrawable(ColorStateList.valueOf(0x336F9FD9), rounded(if (primary) ACCENT else SURFACE, if (primary) ACCENT else BORDER), null)
-        setPadding(dp(16), 0, dp(16), 0); minHeight = dp(56); stateListAnimator = null
+        background = android.graphics.drawable.RippleDrawable(
+            ColorStateList.valueOf(0x33FFFFFF),
+            rounded(if (primary) ACCENT else SURFACE, if (primary) ACCENT else BORDER, 12),
+            null,
+        )
+        setPadding(dp(14), 0, dp(14), 0); minHeight = dp(48); stateListAnimator = null
         setOnClickListener { click() }
     }
-    private fun rounded(color: Int, stroke: Int) = GradientDrawable().apply { setColor(color); cornerRadius = dp(20).toFloat(); setStroke(dp(1), stroke) }
+    private fun rounded(color: Int, stroke: Int, radiusDp: Int = 20) = GradientDrawable().apply {
+        setColor(color); cornerRadius = dp(radiusDp).toFloat(); setStroke(dp(1), stroke)
+    }
     private fun matchButton(top: Int = 0, height: Int = 68) = LinearLayout.LayoutParams(-1, dp(height)).apply { topMargin = dp(top) }
     private fun space(height: Int) = View(this).apply { layoutParams = LinearLayout.LayoutParams(1, dp(height)) }
-    private fun dp(value: Int) = (value * resources.displayMetrics.density).toInt()
 
-    private fun nightDelaySettingControl(
-        parent: LinearLayout,
-        titleId: Int,
-        hintId: Int,
-        range: IntRange,
-        default: Int,
-        summaryId: Int,
-        load: () -> Int,
-        reconnects: Boolean = false,
-        save: (Int) -> Unit,
-    ) {
-        val title = getString(titleId)
-        fun summary() = getString(R.string.contrib_audio_home_choice_summary, title, getString(summaryId, load()))
-        val control = button(summary(), false) {}
-        control.setOnClickListener {
-            val fields = column().apply { setPadding(dp(24), dp(8), dp(24), dp(8)) }
-            val input = EditText(this).apply {
-                setSingleLine()
-                inputType = android.text.InputType.TYPE_CLASS_NUMBER
-                setText(load().toString())
-            }
-            fields.addView(input)
-            fields.addView(label(getString(hintId), 14, MUTED))
-            val dialog = AlertDialog.Builder(this).setTitle(title).setView(fields)
-                .setPositiveButton(getString(R.string.save), null)
-                .setNegativeButton(getString(R.string.cancel), null)
-                .setNeutralButton(getString(R.string.ambient_light_reset_defaults), null).create()
-            dialog.setOnShowListener {
-                dialog.getButton(AlertDialog.BUTTON_POSITIVE).setOnClickListener {
-                    val value = input.text.toString().trim().toIntOrNull()
-                    if (value == null || value !in range) {
-                        input.error = getString(R.string.custom_number_error, range.first, range.last)
-                    } else {
-                        val changed = value != load()
-                        save(value)
-                        control.text = summary()
-                        dialog.dismiss()
-                        if (changed && reconnects && CarPlayBackgroundSession.hasSession()) {
-                            connect(AirPlayPersistence.loadWirelessEnabled(this))
-                        }
-                    }
-                }
-                dialog.getButton(AlertDialog.BUTTON_NEUTRAL).setOnClickListener {
-                    input.setText(default.toString())
-                    input.error = null
-                }
-            }
-            showNightModeSettingsDialog(dialog, fields)
-        }
-        parent.addView(control, matchButton(0, 60))
-        parent.addView(space(12))
-    }
-
-    private fun ambientLightThresholdControl(parent: LinearLayout) {
-        val title = getString(R.string.ambient_light_threshold_title)
-        fun summary(): String = getString(
-            R.string.contrib_audio_home_choice_summary,
-            title,
-            getString(R.string.ambient_light_threshold_summary, AirPlayPersistence.loadAmbientLightThreshold(this).lux),
+    /**
+     * Left rail of the settings page: one entry per group. Rebuilding the rail is cheap (six rows)
+     * and keeps its own highlight in sync without touching the section column, so switching groups
+     * never re-renders the page and never loses in-progress state such as a pending ADB prompt.
+     */
+    private fun buildSettingsRail(rail: LinearLayout) {
+        rail.removeAllViews()
+        rail.setPadding(0, dp(26), 0, dp(16))
+        val items = listOf(
+            R.string.settings_group_frequent to GROUP_FREQUENT,
+            R.string.settings_group_connect to GROUP_CONNECT,
+            R.string.settings_group_display to GROUP_DISPLAY,
+            R.string.settings_group_sound to GROUP_SOUND,
+            R.string.settings_group_cluster to GROUP_CLUSTER,
+            R.string.settings_group_system to GROUP_SYSTEM,
         )
-
-        val control = button(summary(), false) {}
-        control.setOnClickListener {
-            val fields = column().apply { setPadding(dp(24), dp(8), dp(24), dp(8)) }
-            fields.addView(label(getString(R.string.ambient_light_threshold_value), 16, MUTED))
-            val input = EditText(this).apply {
-                setSingleLine()
-                inputType = android.text.InputType.TYPE_CLASS_NUMBER
-                setText(AirPlayPersistence.loadAmbientLightThreshold(this@DiPlayActivity).lux.toString())
-            }
-            fields.addView(input)
-            fields.addView(label(getString(R.string.ambient_light_threshold_hint), 14, MUTED))
-            val dialog = AlertDialog.Builder(this)
-                .setTitle(title)
-                .setView(fields)
-                .setPositiveButton(getString(R.string.save), null)
-                .setNegativeButton(getString(R.string.cancel), null)
-                .setNeutralButton(getString(R.string.ambient_light_reset_defaults), null)
-                .create()
-
-            dialog.setOnShowListener {
-                dialog.getButton(AlertDialog.BUTTON_POSITIVE).setOnClickListener saveThreshold@{
-                    val lux = input.text.toString().trim().toIntOrNull()
-                    if (lux == null || !AmbientLightThreshold.isValid(lux)) {
-                        input.error = getString(R.string.ambient_light_threshold_error)
-                        return@saveThreshold
-                    }
-                    AirPlayPersistence.saveAmbientLightThreshold(this, AmbientLightThreshold(lux))
-                    control.text = summary()
-                    dialog.dismiss()
-                }
-                dialog.getButton(AlertDialog.BUTTON_NEUTRAL).setOnClickListener {
-                    input.setText(AmbientLightThreshold.DEFAULT_LUX.toString())
-                    input.error = null
+        for ((titleRes, group) in items) {
+            val selected = settingsGroup == group
+            val item = row().apply {
+                gravity = Gravity.CENTER_VERTICAL
+                setPadding(dp(12), 0, dp(10), 0)
+                minimumHeight = dp(50)
+                background = if (selected) rounded(Color.rgb(22, 38, 30), BORDER, 10) else null
+                isClickable = true
+                setOnClickListener {
+                    if (settingsGroup == group) return@setOnClickListener
+                    settingsGroup = group
+                    buildSettingsRail(rail)
+                    applyGroupFilter()
+                    rootScroll?.scrollTo(0, 0)
                 }
             }
-            showNightModeSettingsDialog(dialog, fields)
+            item.addView(View(this).apply {
+                setBackgroundColor(if (selected) ACCENT else Color.TRANSPARENT)
+            }, LinearLayout.LayoutParams(dp(3), dp(18)).apply { marginEnd = dp(10) })
+            item.addView(label(getString(titleRes), 15, if (selected) TEXT else MUTED, selected))
+            rail.addView(item, LinearLayout.LayoutParams(-1, -2).apply { bottomMargin = dp(2) })
         }
-        parent.addView(control, matchButton(0, 60))
-        parent.addView(space(12))
     }
 
-    private fun showNightModeSettingsDialog(dialog: AlertDialog, fields: LinearLayout) {
-        dialog.show()
-        // AlertDialog replaces the custom view's parameters with MATCH_PARENT. Keep numeric
-        // content at its natural height, including on vendor dialog layouts with weighted panels.
-        fields.layoutParams = fields.layoutParams.apply { height = ViewGroup.LayoutParams.WRAP_CONTENT }
-        val decor = dialog.window?.decorView ?: return
-        var panel = fields.parent as? ViewGroup
-        while (panel != null && panel !== decor) {
-            val params = panel.layoutParams
-            if (params is LinearLayout.LayoutParams && params.weight > 0f) {
-                panel.layoutParams = params.apply {
-                    weight = 0f
-                    height = ViewGroup.LayoutParams.WRAP_CONTENT
-                }
-                break
+    /**
+     * Distributes the visible sections over the two content columns.
+     *
+     * One column when the group has a single section (a lone half-width card next to empty space
+     * looked like a rendering bug), two balanced columns otherwise: the head unit is 1920px wide
+     * and a single full-width column left a third of the screen blank.
+     */
+    private fun applyGroupFilter() {
+        val sink = settingsSectionSink ?: return
+        val left = settingsLeft ?: return
+        val right = settingsRight ?: return
+        left.removeAllViews()
+        right.removeAllViews()
+        val visible = sink.filter { sectionGroupsOf(it) and settingsGroup != 0 }
+        // Narrow panels (1024x600 dashes) keep one column: two 230dp columns cannot hold a label
+        // and a 150dp number input side by side.
+        val screenDp = (resources.displayMetrics.widthPixels / resources.displayMetrics.density).toInt()
+        if (visible.size <= 1 || screenDp < 900) {
+            right.visibility = View.GONE
+            visible.forEach { left.addView(it) }
+            return
+        }
+        right.visibility = View.VISIBLE
+        var leftRows = 0
+        var rightRows = 0
+        for (view in visible) {
+            if (leftRows <= rightRows) {
+                left.addView(view)
+                leftRows += sectionRowsOf(view)
+            } else {
+                right.addView(view)
+                rightRows += sectionRowsOf(view)
             }
-            panel = panel.parent as? ViewGroup
         }
-        dialog.window?.let { window ->
-            window.setLayout(window.attributes.width, ViewGroup.LayoutParams.WRAP_CONTENT)
-        }
-        // Run another traversal after the platform has finished its initial button measurement.
-        decor.post { if (dialog.isShowing) decor.requestLayout() }
     }
+
+    private fun sectionGroupsOf(view: View): Int =
+        (view.tag as? SectionTag)?.groups ?: (view.tag as? Int ?: GROUP_ALL)
+
+    private fun sectionRowsOf(view: View): Int = (view.tag as? SectionTag)?.rows ?: 3
+
+    private data class SectionTag(val groups: Int, val rows: Int)
+
+    private fun dp(value: Int) = (value * resources.displayMetrics.density).toInt()
 
     companion object {
         private const val BYD_VEHICLE_TAG = "DiPlay-BYD13"
         private const val VEHICLE_VALIDATION_RETRY_MILLIS = 500L
         private const val ADB_KEY_SAVE_WAIT_MILLIS = 500L
+        // Settings navigation groups. A section carries a mask so one build of the page can serve
+        // every group: switching tabs only flips child visibility, which is what keeps both copies
+        // of a switch from disagreeing about the same preference.
+        const val GROUP_FREQUENT = 1
+        const val GROUP_CONNECT = 1 shl 1
+        const val GROUP_DISPLAY = 1 shl 2
+        const val GROUP_SOUND = 1 shl 3
+        const val GROUP_CLUSTER = 1 shl 4
+        const val GROUP_SYSTEM = 1 shl 5
+        const val GROUP_ALL = (1 shl 6) - 1
+        // Accent follows the CarPlay menu (MENU_ACCENT in CarPlayHostActivity): one palette across
+        // both screens instead of a blue settings page next to a green menu.
         private val BG = Color.rgb(12, 17, 27)
         private val SURFACE = Color.rgb(21, 30, 44)
-        private val BORDER = Color.rgb(42, 56, 75)
-        private val ACCENT = Color.rgb(166, 200, 255)
+        private val RAIL = Color.rgb(9, 13, 20)
+        private val BORDER = Color.rgb(34, 48, 63)
+        private val ACCENT = Color.rgb(127, 205, 154)
+        private val ACCENT_TRACK = Color.rgb(78, 143, 102)
+        private val TRACK_OFF = Color.rgb(64, 74, 80)
+        private val THUMB_OFF = Color.rgb(150, 164, 180)
         private val TEXT = Color.rgb(241, 245, 252)
         private val MUTED = Color.rgb(168, 182, 202)
+        private val MUTED_DIM = Color.rgb(124, 141, 166)
         private val WARNING = Color.rgb(255, 196, 128)
     }
 }

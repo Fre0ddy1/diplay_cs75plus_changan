@@ -14,6 +14,16 @@ internal class P2pConfigBuildCompatibilityFailure(cause: NoSuchMethodError) :
     IOException("Wi-Fi P2P custom configuration unavailable on this Android 10 framework", cause)
 
 /** Only a rejection or recognized pre-create defect permits retry; timeout may still create a group. */
+/**
+ * Set once when a Wi-Fi Direct group came up, the phone associated, and no AirPlay connection
+ * followed. Field case 2026-10-19 (Android 14 tablet): the group on the station's own 5 GHz
+ * channel accepts the phone but carries no traffic, while a 2.4 GHz group works. The next group
+ * is therefore created on 2.4 GHz first; a successful session clears the flag.
+ */
+internal object P2pTwoGhzFallback {
+    @Volatile var requested = false
+}
+
 internal object P2pStartupRecovery {
     fun rememberedFrequency(frequency: Int): P2pCreationRequest? = when {
         frequency in 2412..2462 && (frequency - 2412) % 5 == 0 ->
@@ -49,10 +59,23 @@ internal object P2pStartupRecovery {
         if (preferred?.mode == P2pCreationMode.SYSTEM_DEFAULT && preferred.frequencyMHz == null &&
             !stationOnFiveGhz) add(preferred)
         else if (remembered != null && !rememberedSwitches) channel(remembered.mode, remembered.frequencyMHz!!)
-        if (aligned24) channel(P2pCreationMode.ALIGNED_2_GHZ, requireNotNull(stationFrequency))
-        if (aligned5) channel(P2pCreationMode.ALIGNED_5_GHZ, requireNotNull(stationFrequency))
         fun twoGhz() = listOf(2437, 2412, 2462).forEach { channel(P2pCreationMode.FIXED_2_GHZ, it) }
         fun fiveGhz() = listOf(5180, 5745).forEach { channel(P2pCreationMode.FIXED_5_GHZ, it) }
+        // A group that accepted the phone but never carried its AirPlay traffic is retried on
+        // 2.4 GHz before anything else; everything below stays as it was after that.
+        if (P2pTwoGhzFallback.requested) {
+            twoGhz()
+            if (aligned24) channel(P2pCreationMode.ALIGNED_2_GHZ, requireNotNull(stationFrequency))
+            if (aligned5) channel(P2pCreationMode.ALIGNED_5_GHZ, requireNotNull(stationFrequency))
+            fiveGhz()
+            if (rememberedSwitches) channel(remembered!!.mode, remembered.frequencyMHz!!)
+            if (none { it.mode == P2pCreationMode.SYSTEM_DEFAULT }) {
+                add(P2pCreationRequest(P2pCreationMode.SYSTEM_DEFAULT))
+            }
+            return@buildList
+        }
+        if (aligned24) channel(P2pCreationMode.ALIGNED_2_GHZ, requireNotNull(stationFrequency))
+        if (aligned5) channel(P2pCreationMode.ALIGNED_5_GHZ, requireNotNull(stationFrequency))
         // Keep a shared radio on its existing station channel when possible. Otherwise prefer
         // explicit non-DFS 5 GHz, then channels 6/1/11, except next to a 5 GHz station, where
         // 2.4 GHz comes first (see above). The platform enforces regulatory limits.

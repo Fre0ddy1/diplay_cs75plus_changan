@@ -165,6 +165,17 @@ internal object CarPlayMediaKeys {
     }
 
     private fun start(context: Context) {
+        // Wheel media keys belong to the head unit: no media session and no audio focus here, so
+        // the car's own controls keep the keys. Music still plays - the sink renders the iPhone's
+        // media stream either way (measured 2026-10-18: the phone never moves media to A2DP while
+        // the accessory advertises audio, so "no CarPlay music" is not reachable from the
+        // accessory side). Taking AUDIOFOCUS_GAIN is what used to pull the media route away from
+        // Bluetooth *and* make the car's own controls useless, which is the state this switch
+        // avoids.
+        if (AirPlayPersistence.loadMediaViaCarBluetooth(context)) {
+            Log.i(TAG, "media keys idle: wheel keys stay with the head unit (no session, no focus)")
+            return
+        }
         val audio = context.getSystemService(AudioManager::class.java)
         val request = AudioFocusRequest.Builder(AudioManager.AUDIOFOCUS_GAIN)
             .setAudioAttributes(
@@ -252,17 +263,20 @@ internal object CarPlayMediaKeys {
         }
         // Only hardware keys, i.e. the steering wheel, are dropped. A skip or a play/pause from a
         // media controller is the head unit's own on-screen control and must keep working.
-        // Track change and play/pause share the switch (driver request 2026-10-18). Hardware maps
-        // every play/pause key (MEDIA_PLAY, MEDIA_PAUSE, PLAY_PAUSE, HEADSETHOOK) to the toggle, so
-        // PLAY_PAUSE is the only index the wheel produces here; PLAY and PAUSE only ever arrive
-        // from a controller, i.e. with fromWheel = false.
+        // Track change and play/pause share the Bluetooth-media switch (driver request
+        // 2026-10-18): a CarPlay screen that answers the wheel makes the car's own audio controls
+        // useless. Hardware maps every play/pause key (MEDIA_PLAY, MEDIA_PAUSE, PLAY_PAUSE,
+        // HEADSETHOOK) to the toggle, so PLAY_PAUSE is the only index the wheel produces here;
+        // PLAY and PAUSE only ever arrive from a controller, i.e. with fromWheel = false.
+        // With the switch on there is normally no session at all (start() returns early); this
+        // check is the safety net for a switch flipped while the session was already alive.
         if (fromWheel &&
             (index == CarPlayMediaButton.NEXT ||
                 index == CarPlayMediaButton.PREVIOUS ||
                 index == CarPlayMediaButton.PLAY_PAUSE) &&
-            appContext?.let { AirPlayPersistence.loadBlockWheelTrackChange(it) } == true
+            appContext?.let { AirPlayPersistence.loadMediaViaCarBluetooth(it) } == true
         ) {
-            Log.i(TAG, "media key $source -> blocked (steering-wheel media keys disabled)")
+            Log.i(TAG, "media key $source -> blocked (media belongs to the car Bluetooth)")
             return
         }
         val sent = synchronized(this) { controller }?.sendMediaButton(index) ?: false

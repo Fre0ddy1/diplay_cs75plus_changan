@@ -17,9 +17,9 @@
     <string name="hotspot_hint_manual">车载热点 · 保持车载热点、蓝牙和 iPhone 的 Wi-Fi 开启。</string>
     <string name="hotspot_hint_local">打开“连接设置”以保存车载热点信息。</string>
     <string name="hotspot_hint_p2p">Wi-Fi Direct · 保持车机 Wi-Fi 开关、蓝牙和 iPhone 的 Wi-Fi 开启。</string>
-    <string name="cluster_size_standard">标准 · 最清晰</string>
-    <string name="cluster_size_larger">更大 · 默认</string>
-    <string name="cluster_size_largest">最大</string>
+
+
+
     <string name="marker_left">左</string>
     <string name="marker_right">右</string>
     <string name="marker_up">上</string>
@@ -111,8 +111,6 @@
     <string name="audio_routing">音频路由</string>
     <string name="auto">自动</string>
     <string name="auto_start_on_boot">开机后自动启动</string>
-    <string name="auto_start_car_amap">启动后自动开启原车高德</string>
-    <string name="auto_start_car_amap_description">DiPlay 打开后自动启动车机自带高德（仪表投屏需要高德运行），并立即返回 DiPlay。未检测到车机高德时无效果。</string>
     <string name="automatic_cluster_map_setup">自动仪表盘地图设置</string>
     <string name="automatic_connection">自动连接</string>
     <string name="automatic_map_enabled_open_the_cluster_map_card_or_select">自动地图已启用。打开仪表盘地图卡片或选择“地图主题”。</string>
@@ -136,7 +134,7 @@
     <string name="carplay_control_running">CarPlay 控制通道运行中</string>
     <string name="carplay_control_window_ended">CarPlay 控制会话已结束</string>
     <string name="carplay_icon">CarPlay 图标</string>
-    <string name="carplay_map_on_instrument_cluster_experimental">仪表盘上的CarPlay地图 · 实验性</string>
+
     <string name="carplay_service_already_running">CarPlay 服务已在运行</string>
     <string name="carplay_session_already_running">CarPlay 会话已在运行</string>
     <string name="carplay_session_ended_reconnecting">CarPlay 会话已结束；正在重新连接</string>
@@ -156,7 +154,7 @@
     <string name="choose_where_to_save_your_report">选择报告的保存位置。</string>
     <string name="choose_your_iphone">选择 iPhone</string>
     <string name="close">关闭</string>
-    <string name="cluster_map_size">仪表盘地图大小</string>
+
     <string name="common_cancel">取消</string>
     <string name="connect">连接</string>
     <string name="connect_phone">连接手机</string>
@@ -186,7 +184,7 @@
     <string name="diagnostic_report_saved_in_app">由于公共保存位置不可用，报告已私密保存到 DiPlay。您可以在此分享或查看报告。不会自动发送任何内容。</string>
     <string name="diagnostic_report_saved_to_path">报告已保存到：\n%1$s\n\n您也可以在此分享或查看报告。不会自动发送任何内容。</string>
     <string name="diagnostics">诊断</string>
-    <string name="diplay">DiPlay</string>
+    <string name="diplay">DiPlay HUD Changan</string>
     <string name="discard_changes_and_exit_settings">放弃更改并退出设置</string>
     <string name="disconnect">断开连接</string>
     <string name="discovering_iphone">正在查找 iPhone</string>
@@ -368,7 +366,7 @@
     <string name="show_password">显示密码</string>
     <string name="show_phone_navigation_arrows_distance_and_street_names_on">在支持的比亚迪显示屏上显示手机导航箭头、距离和道路名称。不同车型的兼容性有所差异。</string>
     <string name="show_the_side_map_only_when_its_card_is_open_and_switch_to">仅在地图卡片展开时显示侧方地图，并在“地图主题”中切换为完整地图。更改主题或卡片不会中断 CarPlay 连接。</string>
-    <string name="shows_the_iphone_s_cluster_map_on_the_instrument_cluster_c">在仪表盘上显示iPhone地图。通过方向盘操作仪表盘菜单，选择小屏导航或全屏导航。</string>
+
     <string name="instrument_cluster_content">仪表盘显示内容</string>
     <string name="instrument_cluster_entire_interface">整个 CarPlay 界面（镜像同步）</string>
     <string name="instrument_cluster_navigation_stream">导航仪表流（仅导航画面）</string>
@@ -381,7 +379,7 @@
     <string name="tap_a_number_to_test_14_driver_speaker_on_byd">点按数字测试。14 = 比亚迪主驾扬声器。</string>
     <string name="the_head_unit_couldn_t_start_carplay_wi_fi_check_wi_fi_and">车机无法启动 CarPlay Wi-Fi。请检查 Wi-Fi 并关闭其他投屏应用，正在重试…</string>
     <string name="this_ends_the_existing_wi_fi_direct_connection_including_o">这会结束现有的 Wi-Fi Direct 连接，包括重新安装后遗留的连接。请先关闭其他投屏应用。车机的互联网 Wi-Fi 不受影响。</string>
-    <string name="this_head_unit_cannot_use_the_smaller_size_at_this_resolut">此车机在当前分辨率下无法使用更小的尺寸，将使用默认尺寸。</string>
+
     <string name="this_head_unit_could_not_open_a_save_location_please_try_s">车机无法打开保存位置，请重试保存到 Downloads。</string>
     <string name="this_head_unit_does_not_support_wi_fi_direct">此车机不支持 Wi-Fi Direct。</string>
     <string name="this_head_unit_has_no_available_file_picker_to_save_the_re">此车机没有可用于保存报告的文件选择器。</string>
@@ -451,7 +449,7 @@
     <string name="dashboard_content_turn_card">转向提示卡</string>
     <string name="dashboard_content_map_with_turn_card">地图和官方转向卡</string>
     <string name="dashboard_content_map_with_custom_turn_card">地图和自定义转向卡</string>
-    <string name="turn_card_size">转向提示卡大小</string>
+
     <string name="turn_card_horizontal">转向提示卡 · 水平位置</string>
     <string name="turn_card_vertical">转向提示卡 · 垂直位置</string>
     <string name="reset_turn_card_to_centre">将转向提示卡重置到中央</string>
@@ -480,8 +478,8 @@
     <string name="cluster_eta_m">%1$d米</string>
     <string name="center_map_follows_dashboard">主屏幕地图与仪表盘同步</string>
     <string name="center_map_follows_dashboard_description">开启：主屏幕卡片镜像仪表盘地图。关闭：主屏幕不显示该卡片，仪表盘地图只出现在仪表盘上。不会改变 CarPlay 主屏自己的画面。</string>
-    <string name="dashboard_map_only_in_small_and_full_navi">仅在小屏或全屏导航时显示仪表盘地图</string>
-    <string name="dashboard_map_only_in_small_and_full_navi_description">DiPlay 读取你在方向盘菜单中选择的导航模式。在“关闭”和“导航时开启”模式下仪表盘只显示箭头，因此 iPhone 不发送地图；在小屏导航和全屏导航模式下会发送，切换后一两秒内生效。需要在车机上开启网络 ADB。</string>
+
+
     <string name="check_adb_access">检查 ADB 访问</string>
     <string name="adb_checking">正在检查 ADB 访问…</string>
     <string name="adb_checking_may_ask">正在检查 ADB 访问…如果车机询问，请允许 DiPlay 并勾选“始终允许”。</string>
@@ -593,13 +591,8 @@
     <string name="nav_duck_percent_title">导航播报时音乐音量</string>
     <string name="nav_duck_percent_value">%1$d%%</string>
     <string name="nav_duck_percent_hint">播报期间音乐降到该比例，播报结束自动恢复；通话音频不受影响。改动在下一次播报即生效。</string>
-    <string name="nav_offset_title">仅导航画面水平校正</string>
-    <string name="nav_offset_value">%1$d%%</string>
-    <string name="nav_offset_hint">左右平移仪表盘地图，无需重连。仪表盘导航流会给右侧信息栏留位，车标可能偏左或偏右，用这里把它和车道条调回中间。</string>
-    <string name="block_wheel_track_change">屏蔽方向盘媒体键</string>
-    <string name="block_wheel_track_change_description">默认关闭。开启后方向盘上的上一首/下一首与播放/暂停键都被忽略，iPhone 和车机自带播放器都不会响应；界面上的按钮与 Siri 不受影响。</string>
-    <string name="dashboard_detailed_map">仪表盘显示详细地图</string>
-    <string name="dashboard_detailed_map_description">把整个仪表盘面板声明为安全区，让 iPhone 在仪表盘上直接渲染详细跟随地图（和其他 CarPlay 盒子一致）。关闭则恢复旧的居中安全区，高德会显示全览路线，此时“车辆标记”滑块可移动车标位置。</string>
+    <string name="media_audio_via_bluetooth">音乐与方向盘媒体键走车机蓝牙</string>
+    <string name="media_audio_via_bluetooth_description">默认关闭：音乐走 CarPlay。开启后连接时不再宣告 CarPlay 音频，音乐与方向盘播放/切歌交给车机蓝牙；代价是 CarPlay 不出声、导航与通话也走车机蓝牙。需断开重连生效。</string>
     <string name="cluster_card_position_preview">卡片位置预览（示意）</string>
     <string name="cluster_card_position_preview_note">原点为整个仪表盘投屏画面左上角 (0,0)（1920x720），X 向右、Y 向下，坐标即卡片左上角位置（px）。直接在 X/Y 输入框键入数字预览移动，点击“应用并保存”才会写入并立即刷新仪表盘上的卡片；卡片自适应后若越出屏幕会自动收回边界并保存修正坐标。</string>
     <string name="cluster_card_position_apply">应用并保存</string>
@@ -613,4 +606,16 @@
     <string name="turn_card_show">显示转向卡片</string>
     <string name="cluster_card_horizontal">X 坐标（0-1920 px，距屏幕左缘）</string>
     <string name="cluster_card_vertical">Y 坐标（0-720 px，距屏幕顶缘）</string>
+    <string name="settings_group_frequent">常用</string>
+    <string name="settings_group_connect">连接</string>
+    <string name="settings_group_display">画面</string>
+    <string name="settings_group_sound">声音</string>
+    <string name="settings_group_cluster">仪表盘</string>
+    <string name="settings_group_system">诊断与关于</string>
+    <string name="settings_setting_details">查看完整说明</string>
+    <string name="cluster_card_turn_title">转向卡片</string>
+    <string name="settings_developer_options">显示开发者选项</string>
+    <string name="settings_developer_options_hint">USB 诊断、VPN root 授权、屏幕诊断信息、清除日志。</string>
+    <string name="iphone_accepted_but_did_not_start_carplay">iPhone 已接受连接，但没有发起 CarPlay。请在 iPhone 上打开“设置 → 通用 → CarPlay”，忽略这辆车后重新配对。</string>
+    <string name="resolution_percent_value">%1$d%%（更省带宽）</string>
 </resources>

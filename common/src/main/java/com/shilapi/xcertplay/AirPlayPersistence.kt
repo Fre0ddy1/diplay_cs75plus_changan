@@ -6,8 +6,6 @@ import com.shilapi.xcertplay.airplay.AirPlayDisplaySettings
 import com.shilapi.xcertplay.airplay.AirPlayPhysicalSizeBasis
 import com.shilapi.xcertplay.airplay.CarPlayDisplayScale
 import com.shilapi.xcertplay.airplay.CarPlayClusterDisplay
-import com.shilapi.xcertplay.airplay.ClusterTurnCardOverlay
-import com.shilapi.xcertplay.airplay.CarPlayUiScale
 import com.shilapi.xcertplay.airplay.AirPlayIdentity
 import com.shilapi.xcertplay.airplay.PairingStore
 import com.shilapi.xcertplay.airplay.SafeAreaCodec
@@ -41,18 +39,34 @@ object AirPlayPersistence {
     private const val KEY_LOCKDOWN_ROOT_PRIVATE = "lockdown_root_private"
     private const val KEY_LOCKDOWN_ROOT_CERT = "lockdown_root_cert"
     private const val KEY_DISPLAY_SCALE_TENTHS = "display_scale_tenths"
-    private const val KEY_UI_SCALE_PERCENT = "ui_scale_percent"
     private const val KEY_HEVC_ENABLED = "hevc_enabled"
     private const val KEY_HEVC_SOFTWARE_DECODER = "hevc_software_decoder"
     private const val KEY_ADVANCED_AUDIO_CHANNEL_MAPPING = "advanced_audio_channel_mapping"
     private const val KEY_AUDIO_FOCUS_ENABLED = "audio_focus_enabled"
-    private const val KEY_BLOCK_WHEEL_TRACK_CHANGE = "block_wheel_track_change"
+    /**
+     * Steering-wheel media keys belong to the head unit's own Bluetooth instead of CarPlay.
+     *
+     * Default off: DiPlay renders the iPhone's media stream, its media session holds the media
+     * focus, and the wheel keys reach the iPhone through CarPlay - everything behaves like
+     * factory CarPlay.
+     *
+     * On: no media focus is taken and the wheel's media keys are not claimed by the CarPlay window,
+     * so the head unit's own controls handle them. Music keeps playing through CarPlay: measured
+     * 2026-10-18, the iPhone sends media inside CarPlay (stream 102) whenever the accessory
+     * advertises audio and never falls back to A2DP, so a "no CarPlay music" mode is not reachable
+     * from here - two attempts (dropping the stream, refusing its SETUP) left the cabin silent, and
+     * the refusal additionally put the phone's media remote into a skip loop. The wheel-key half
+     * must stay with the no-focus half: with no media session the keys already fall through, and
+     * claiming them for CarPlay as well skipped two tracks per press. The retired switch was
+     * "block_wheel_track_change"; its value is no longer read (a driver who had only that one on
+     * gets working wheel keys back, which is the smaller surprise of the two).
+     */
+    private const val KEY_MEDIA_AUDIO_VIA_BLUETOOTH = "media_audio_via_bluetooth"
     private const val KEY_NAV_DUCK_PERCENT = "nav_duck_percent"
     private const val KEY_MEDIA_AUDIO_CHANNEL = "media_audio_channel"
     private const val KEY_NAVIGATION_AUDIO_CHANNEL = "navigation_audio_channel"
     private const val KEY_NAVIGATION_STREAM_TYPE = "navigation_stream_type"
     private const val KEY_CARPLAY_NIGHT_MODE = "carplay_night_mode"
-    private const val KEY_AMBIENT_LUX_THRESHOLD = "ambient_lux_threshold"
     private const val KEY_WIRELESS_ENABLED = "wireless_enabled"
     private const val KEY_WIRELESS_HOTSPOT_MODE = "wireless_hotspot_mode"
     private const val KEY_WIFI_P2P_PREFERRED_CHANNEL = "wifi_p2p_preferred_channel"
@@ -67,24 +81,20 @@ object AirPlayPersistence {
     private const val KEY_OEM_LABEL = "oem_label"
     private const val KEY_FPS = "display_fps"
     private const val KEY_MEDIA_BUFFER_MS = "media_buffer_ms"
-    private const val KEY_CLUSTER_MAP = "cluster_map_enabled"
+    /** Merged into KEY_AUTO_FLY_SCREEN in revision 2; kept only for the migration. */
+    private const val KEY_AUTO_PROJECT_ON_CONNECT = "auto_project_on_connect"
+    private const val KEY_DEFAULTS_REVISION = "defaults_revision"
+    private const val DEFAULTS_REVISION = 2
     private const val KEY_CLUSTER_MIRROR_MAIN = "cluster_mirror_main_screen"
     private const val KEY_CENTER_MAP_OVERLAY = "center_map_overlay"
     private const val KEY_LAUNCHER_MAP_SHARING = "launcher_map_sharing"
-    private const val KEY_CLUSTER_MAP_SCALE = "cluster_map_scale_percent"
     private const val KEY_CLUSTER_CONTENT = "cluster_content"
     private const val KEY_CLUSTER_MARKER_X = "cluster_marker_horizontal_step"
     private const val KEY_CLUSTER_MARKER_Y = "cluster_marker_vertical_step"
-    private const val KEY_CLUSTER_NAV_OFFSET = "cluster_nav_offset_percent"
-    private const val KEY_CLUSTER_FULL_SAFE_AREA = "cluster_full_safe_area"
-    private const val KEY_CLUSTER_TURN_CARD_OVERLAY_POSITION = "cluster_turn_card_overlay_position"
-    private const val KEY_CLUSTER_TURN_CARD_OVERLAY_SIZE = "cluster_turn_card_overlay_size"
     /** Bounds for the per-card size percentage (see loadClusterCardScalePercent). */
     const val CLUSTER_CARD_SCALE_MIN = 60
     const val CLUSTER_CARD_SCALE_MAX = 160
     const val CLUSTER_CARD_SCALE_DEFAULT = 100
-    private const val KEY_CLUSTER_TURN_CARD_OVERLAY_X = "cluster_turn_card_overlay_x_percent"
-    private const val KEY_CLUSTER_TURN_CARD_OVERLAY_Y = "cluster_turn_card_overlay_y_percent"
     private const val KEY_CLUSTER_TURN_CARD_X_PX = "cluster_turn_card_x_px"
     private const val KEY_CLUSTER_TURN_CARD_VISIBLE = "cluster_turn_card_visible"
     private const val KEY_CLUSTER_TURN_CARD_Y_PX = "cluster_turn_card_y_px"
@@ -109,7 +119,6 @@ object AirPlayPersistence {
     private const val KEY_HIDE_BOTTOM_BAR = "hide_bottom_bar"
     private const val KEY_SAFE_AREA_DRAW_OUTSIDE = "safe_area_draw_outside"
     private const val KEY_AUTO_START_ON_BOOT = "auto_start_on_boot"
-    private const val KEY_AUTO_START_CAR_AMAP = "auto_start_car_amap"
     private const val KEY_NAVIGATION_FOCUS_ENABLED = "navigation_focus_enabled"
     private const val KEY_LOCATION_REPORTING_ENABLED = "location_reporting_enabled"
     private const val KEY_MFI_TARGET = "mfi_target"
@@ -143,16 +152,6 @@ object AirPlayPersistence {
     fun loadHevcEnabled(context: Context): Boolean =
         context.getSharedPreferences(PREFS, Context.MODE_PRIVATE)
             .getBoolean(KEY_HEVC_ENABLED, false)
-
-    fun loadUiScalePercent(context: Context): Int = CarPlayUiScale.sanitize(
-        context.getSharedPreferences(PREFS, Context.MODE_PRIVATE)
-            .getInt(KEY_UI_SCALE_PERCENT, CarPlayUiScale.DEFAULT),
-    )
-
-    fun saveUiScalePercent(context: Context, percent: Int) {
-        context.getSharedPreferences(PREFS, Context.MODE_PRIVATE).edit()
-            .putInt(KEY_UI_SCALE_PERCENT, CarPlayUiScale.sanitize(percent)).apply()
-    }
 
     fun saveHevcEnabled(context: Context, enabled: Boolean) {
         context.getSharedPreferences(PREFS, Context.MODE_PRIVATE).edit()
@@ -200,21 +199,37 @@ object AirPlayPersistence {
             .apply()
     }
 
-    /** Default off: the wheel keeps changing tracks unless the driver turns the block on. */
-    fun loadBlockWheelTrackChange(context: Context): Boolean =
+    /**
+     * Steering-wheel media keys belong to the head unit's own Bluetooth instead of CarPlay.
+     *
+     * Default off: DiPlay renders the iPhone's media stream, its media session holds the media
+     * focus, and the wheel keys reach the iPhone through CarPlay.
+     *
+     * On: no media focus is taken and the wheel's media keys are not claimed by the CarPlay window,
+     * so the head unit's own controls handle them. Music still plays through CarPlay - measured
+     * 2026-10-18, the iPhone never moves media to A2DP while the accessory advertises audio.
+     * The two halves must travel together: with no media session the keys already fall through to
+     * the car's Bluetooth app, and claiming them for CarPlay as well skipped two tracks per press.
+     */
+    fun loadMediaViaCarBluetooth(context: Context): Boolean =
         context.getSharedPreferences(PREFS, Context.MODE_PRIVATE)
-            .getBoolean(KEY_BLOCK_WHEEL_TRACK_CHANGE, false)
+            .getBoolean(KEY_MEDIA_AUDIO_VIA_BLUETOOTH, false)
 
-    fun saveBlockWheelTrackChange(context: Context, enabled: Boolean) {
+    fun saveMediaViaCarBluetooth(context: Context, enabled: Boolean) {
+        // commit(), not apply(): the driver usually flips this right before switching the head unit
+        // into U-disk/adb mode or pulling power, and an async apply() can lose the write on a hard
+        // power cut (field 2026-10-18: "音乐走车机蓝牙未持久化" after an adb reboot).
         context.getSharedPreferences(PREFS, Context.MODE_PRIVATE).edit()
-            .putBoolean(KEY_BLOCK_WHEEL_TRACK_CHANGE, enabled)
-            .apply()
+            .putBoolean(KEY_MEDIA_AUDIO_VIA_BLUETOOTH, enabled)
+            .commit()
     }
 
     /** Music level while a navigation prompt plays; 100 % leaves the music untouched. */
     const val NAV_DUCK_MIN = 10
     const val NAV_DUCK_MAX = 100
-    const val NAV_DUCK_DEFAULT = 20
+    const val NAV_DUCK_DEFAULT = 60
+    /** The default before 2026-10-18; only used to migrate untouched installs. */
+    private const val NAV_DUCK_DEFAULT_LEGACY = 20
 
     fun loadNavDuckPercent(context: Context): Int =
         context.getSharedPreferences(PREFS, Context.MODE_PRIVATE)
@@ -251,25 +266,6 @@ object AirPlayPersistence {
         context.getSharedPreferences(PREFS, Context.MODE_PRIVATE).edit()
             .putInt(KEY_NAVIGATION_AUDIO_CHANNEL, channel.takeIf { it in AUDIO_CHANNELS } ?: 10)
             .apply()
-    }
-
-    fun loadAmbientDelaySeconds(context: Context): Int =
-        context.getSharedPreferences(PREFS, Context.MODE_PRIVATE)
-            .getInt("ambient_delay_seconds", 2).coerceIn(0, 60)
-
-    fun saveAmbientDelaySeconds(context: Context, seconds: Int) {
-        context.getSharedPreferences(PREFS, Context.MODE_PRIVATE).edit()
-            .putInt("ambient_delay_seconds", seconds.coerceIn(0, 60)).apply()
-    }
-
-    fun loadAmbientLightThreshold(context: Context): AmbientLightThreshold = AmbientLightThreshold.fromStored(
-        context.getSharedPreferences(PREFS, Context.MODE_PRIVATE)
-            .getInt(KEY_AMBIENT_LUX_THRESHOLD, AmbientLightThreshold.DEFAULT_LUX),
-    )
-
-    fun saveAmbientLightThreshold(context: Context, threshold: AmbientLightThreshold) {
-        context.getSharedPreferences(PREFS, Context.MODE_PRIVATE).edit()
-            .putInt(KEY_AMBIENT_LUX_THRESHOLD, threshold.lux).apply()
     }
 
     fun loadCarPlayNightMode(context: Context): CarPlayNightMode = CarPlayNightMode.fromKey(
@@ -340,17 +336,16 @@ object AirPlayPersistence {
     fun loadWirelessHotspotMode(context: Context): WirelessHotspotMode {
         val prefs = context.getSharedPreferences(PREFS, Context.MODE_PRIVATE)
         val stored = prefs.getString(KEY_WIRELESS_HOTSPOT_MODE, null)
-        val mode = WirelessHotspotMode.entries.firstOrNull { it.name == stored }
+        // Local-only hotspot is offered again: on Android 13+ tablets the Wi-Fi Direct group can
+        // accept the phone and still never carry its traffic, while the platform hotspot works
+        // (the reference app uses it). It degrades to the car's own hotspot only when unwritable.
+        return WirelessHotspotMode.entries.firstOrNull { it.name == stored }
             ?: WirelessHotspotMode.MANUAL
-        val supported = if (mode == WirelessHotspotMode.LOCAL_ONLY_HOTSPOT) WirelessHotspotMode.MANUAL else mode
-        if (stored != supported.name) saveWirelessHotspotMode(context, supported)
-        return supported
     }
 
     fun saveWirelessHotspotMode(context: Context, mode: WirelessHotspotMode) {
-        val supported = if (mode == WirelessHotspotMode.LOCAL_ONLY_HOTSPOT) WirelessHotspotMode.MANUAL else mode
         context.getSharedPreferences(PREFS, Context.MODE_PRIVATE).edit()
-            .putString(KEY_WIRELESS_HOTSPOT_MODE, supported.name)
+            .putString(KEY_WIRELESS_HOTSPOT_MODE, mode.name)
             .apply()
     }
 
@@ -460,17 +455,6 @@ object AirPlayPersistence {
     fun saveAutoStartOnBoot(context: Context, enabled: Boolean) {
         context.getSharedPreferences(PREFS, Context.MODE_PRIVATE).edit()
             .putBoolean(KEY_AUTO_START_ON_BOOT, enabled)
-            .apply()
-    }
-
-    /** Launch the head unit's stock Amap after DiPlay opens; dashboard projection needs it. */
-    fun loadAutoStartCarAmap(context: Context): Boolean =
-        context.getSharedPreferences(PREFS, Context.MODE_PRIVATE)
-            .getBoolean(KEY_AUTO_START_CAR_AMAP, false)
-
-    fun saveAutoStartCarAmap(context: Context, enabled: Boolean) {
-        context.getSharedPreferences(PREFS, Context.MODE_PRIVATE).edit()
-            .putBoolean(KEY_AUTO_START_CAR_AMAP, enabled)
             .apply()
     }
 
@@ -609,20 +593,36 @@ object AirPlayPersistence {
             .apply()
     }
 
-    fun loadClusterMapEnabled(context: Context): Boolean {
+    /**
+     * One-time default migration (v1, 2026-10-18).
+     *
+     * The driver asked for auto-fly and auto-project to ship enabled, and for the navigation duck to
+     * default to 60 % instead of 20 %. Changing a `getBoolean(default)` alone would never reach an
+     * install that already stored the old value, so this rewrites those keys exactly once. The duck
+     * value is only moved when it is still the old default, so a driver who picked their own
+     * percentage keeps it.
+     */
+    fun applyDefaultsRevision(context: Context) {
         val prefs = context.getSharedPreferences(PREFS, Context.MODE_PRIVATE)
-        if (prefs.contains(KEY_CLUSTER_MAP)) {
-            return prefs.getBoolean(KEY_CLUSTER_MAP, false)
+        val revision = prefs.getInt(KEY_DEFAULTS_REVISION, 0)
+        if (revision >= DEFAULTS_REVISION) return
+        val editor = prefs.edit()
+        if (revision < 1) {
+            editor.putBoolean(KEY_AUTO_FLY_SCREEN, true)
+            if (prefs.getInt(KEY_NAV_DUCK_PERCENT, NAV_DUCK_DEFAULT_LEGACY) == NAV_DUCK_DEFAULT_LEGACY) {
+                editor.putInt(KEY_NAV_DUCK_PERCENT, NAV_DUCK_DEFAULT)
+            }
         }
-        // Non-BYD head units (Changan Feiyu, etc.): default the dashboard mirror on whenever a
-        // cluster projection display exists, so the feature works out of the box. BYD keeps its
-        // original default (off) because there the toggle is surfaced in the BYD settings section.
-        return !com.shilapi.xcertplay.hud.BydOutputSettings.navigationAvailable(context) &&
-            ClusterMapPresentation.findDisplay(context) != null
-    }
-
-    fun saveClusterMapEnabled(context: Context, enabled: Boolean) {
-        context.getSharedPreferences(PREFS, Context.MODE_PRIVATE).edit().putBoolean(KEY_CLUSTER_MAP, enabled).apply()
+        if (revision < 2 && prefs.contains(KEY_AUTO_PROJECT_ON_CONNECT)) {
+            // The separate "连接后自动投屏" switch did the same job as "自动飞屏", so the two were
+            // merged. Only an install that actually had that switch is affected: a driver who had
+            // either one off stays off. A fresh install has neither key and keeps the v1 default.
+            val merged = prefs.getBoolean(KEY_AUTO_FLY_SCREEN, true) &&
+                prefs.getBoolean(KEY_AUTO_PROJECT_ON_CONNECT, true)
+            editor.putBoolean(KEY_AUTO_FLY_SCREEN, merged)
+        }
+        editor.putInt(KEY_DEFAULTS_REVISION, DEFAULTS_REVISION)
+        editor.apply()
     }
 
     /**
@@ -631,16 +631,6 @@ object AirPlayPersistence {
      * existing "仪表盘内容" choice (loadClusterMirrorMain: whole-screen mirror or
      * navigation stream). Defaults to ON.
      */
-    private const val KEY_AUTO_PROJECT_ON_CONNECT = "auto_project_on_connect"
-
-    fun loadAutoProjectOnConnect(context: Context): Boolean =
-        context.getSharedPreferences(PREFS, Context.MODE_PRIVATE).getBoolean(KEY_AUTO_PROJECT_ON_CONNECT, true)
-
-    fun saveAutoProjectOnConnect(context: Context, enabled: Boolean) {
-        context.getSharedPreferences(PREFS, Context.MODE_PRIVATE).edit().putBoolean(KEY_AUTO_PROJECT_ON_CONNECT, enabled).apply()
-        overlaySettingsListener?.invoke()
-    }
-
     /**
      * "自动投屏重试": the head unit does not report whether it accepted the projection sequence, so
      * a cold-start activation that it dropped used to stay blank until the driver swiped by hand.
@@ -661,27 +651,9 @@ object AirPlayPersistence {
     }
 
     /**
-     * "关闭时释放投影": the three-finger "close" swipe (right swipe past whole-screen mirror).
-     * ON (default): the head unit's ext-screen is handed back, so the dashboard returns to the
-     * head unit's own cluster UI (without it the dashboard shows our hidden projection window,
-     * i.e. black). OFF: only the window is hidden and the projection session is left untouched -
-     * the old behaviour, kept as an escape hatch.
-     */
-    private const val KEY_CLUSTER_RELEASE_ON_CLOSE = "cluster_release_on_close"
-
-    fun loadClusterReleaseOnClose(context: Context): Boolean =
-        context.getSharedPreferences(PREFS, Context.MODE_PRIVATE).getBoolean(KEY_CLUSTER_RELEASE_ON_CLOSE, true)
-
-    fun saveClusterReleaseOnClose(context: Context, enabled: Boolean) {
-        context.getSharedPreferences(PREFS, Context.MODE_PRIVATE).edit().putBoolean(KEY_CLUSTER_RELEASE_ON_CLOSE, enabled).apply()
-        overlaySettingsListener?.invoke()
-    }
-
-    /**
      * "自动飞屏" master switch. When checked (default) the app auto-projects to the dashboard
-     * on connect AND may bring up the stock car Amap to feed the cluster. When unchecked NEITHER
-     * happens: no auto projection and no stock-Amap handling at all (manual three-finger swipe
-     * still works — it is driven by the gesture path, not by this switch).
+     * on connect. When unchecked no auto projection happens (manual three-finger swipe still
+     * works — it is driven by the gesture path, not by this switch).
      */
     private const val KEY_AUTO_FLY_SCREEN = "auto_fly_screen"
 
@@ -729,31 +701,6 @@ object AirPlayPersistence {
     fun saveClusterMirrorMain(context: Context, mainScreen: Boolean) {
         context.getSharedPreferences(PREFS, Context.MODE_PRIVATE).edit().putBoolean(KEY_CLUSTER_MIRROR_MAIN, mainScreen).apply()
         overlaySettingsListener?.invoke()
-    }
-
-    /**
-     * Nav-only stream bottom reserve (px): the head unit's HUD band at the bottom of the
-     * cluster panel is not part of the projected area, so the car marker rendered by Amap
-     * near the safe-area bottom gets cut in half. Reserving that band in the advertised
-     * safe area moves the marker up into the visible part. 0 = full-panel safe area (old
-     * behaviour). Applies to the navigation stream only, not the whole-screen mirror.
-     */
-    private const val KEY_CLUSTER_NAV_BOTTOM_RESERVE = "cluster_nav_bottom_reserve_px"
-
-    // 100 px = field-tested value on the UNI-V: with 0 px the car marker anchored by Amap
-    // near the safe-area bottom is cut in half by the HUD band; 100 px moves it fully into
-    // the visible part while keeping the map filling the panel.
-    private const val DEFAULT_CLUSTER_NAV_BOTTOM_RESERVE = 100
-
-    fun loadClusterNavBottomReservePx(context: Context): Int =
-        context.getSharedPreferences(PREFS, Context.MODE_PRIVATE)
-            .getInt(KEY_CLUSTER_NAV_BOTTOM_RESERVE, DEFAULT_CLUSTER_NAV_BOTTOM_RESERVE).coerceIn(0, 300)
-
-    fun saveClusterNavBottomReservePx(context: Context, px: Int) {
-        context.getSharedPreferences(PREFS, Context.MODE_PRIVATE).edit()
-            .putInt(KEY_CLUSTER_NAV_BOTTOM_RESERVE, px.coerceIn(0, 300)).apply()
-        // The safe area is part of the /info display negotiation, so the change takes
-        // effect on the next (re)connect / auto-project.
     }
 
     /**
@@ -866,20 +813,6 @@ object AirPlayPersistence {
         val clamped = percent.coerceIn(CLUSTER_CARD_SCALE_MIN, CLUSTER_CARD_SCALE_MAX)
         context.getSharedPreferences(PREFS, Context.MODE_PRIVATE).edit()
             .putInt("cluster_card_scale_$card", clamped)
-            // The centre-screen overlay still speaks the old enum; keep it following the turn card
-            // so that removing the preset row does not silently freeze that surface at MEDIUM.
-            .apply {
-                if (card == "turn") {
-                    putString(
-                        KEY_CLUSTER_TURN_CARD_OVERLAY_SIZE,
-                        when {
-                            clamped < 90 -> CarPlayClusterDisplay.OverlaySize.SMALL.name
-                            clamped > 110 -> CarPlayClusterDisplay.OverlaySize.LARGE.name
-                            else -> CarPlayClusterDisplay.OverlaySize.MEDIUM.name
-                        },
-                    )
-                }
-            }
             .apply()
         overlaySettingsListener?.invoke()
     }
@@ -887,62 +820,6 @@ object AirPlayPersistence {
     /** Scale factor for [loadClusterCardScalePercent]; 1.0 is the designed size. */
     fun clusterCardScale(context: Context, card: String): Float =
         loadClusterCardScalePercent(context, card) / 100f
-
-    fun loadClusterTurnCardOverlaySize(context: Context): CarPlayClusterDisplay.OverlaySize =
-        context.getSharedPreferences(PREFS, Context.MODE_PRIVATE)
-            .getString(KEY_CLUSTER_TURN_CARD_OVERLAY_SIZE, null)
-            ?.let { name -> CarPlayClusterDisplay.OverlaySize.entries.firstOrNull { it.name == name } }
-            ?: CarPlayClusterDisplay.OverlaySize.MEDIUM
-
-    fun saveClusterTurnCardOverlaySize(context: Context, size: CarPlayClusterDisplay.OverlaySize) {
-        context.getSharedPreferences(PREFS, Context.MODE_PRIVATE).edit()
-            .putString(KEY_CLUSTER_TURN_CARD_OVERLAY_SIZE, size.name).apply()
-        overlaySettingsListener?.invoke()
-    }
-
-    fun loadClusterTurnCardOverlayXPercent(context: Context): Int {
-        val prefs = context.getSharedPreferences(PREFS, Context.MODE_PRIVATE)
-        val raw = if (prefs.contains(KEY_CLUSTER_TURN_CARD_OVERLAY_X)) {
-            prefs.getInt(KEY_CLUSTER_TURN_CARD_OVERLAY_X, ClusterTurnCardOverlay.DEFAULT_X_PERCENT)
-        } else when (prefs.getString(KEY_CLUSTER_TURN_CARD_OVERLAY_POSITION, null)) {
-            "LEFT" -> 20
-            "CENTER" -> 50
-            // The legacy three-way position stored RIGHT too; without this arm it fell through to
-            // the default 50 and a card the driver had on the right migrated to the centre.
-            "RIGHT" -> 76
-            else -> ClusterTurnCardOverlay.DEFAULT_X_PERCENT
-        }
-        return ClusterTurnCardOverlay.snap(raw, ClusterTurnCardOverlay.xPercents)
-    }
-
-    fun saveClusterTurnCardOverlayXPercent(context: Context, percent: Int) {
-        context.getSharedPreferences(PREFS, Context.MODE_PRIVATE).edit()
-            .putInt(
-                KEY_CLUSTER_TURN_CARD_OVERLAY_X,
-                ClusterTurnCardOverlay.snap(percent, ClusterTurnCardOverlay.xPercents),
-            ).apply()
-        overlaySettingsListener?.invoke()
-    }
-
-    fun loadClusterTurnCardOverlayYPercent(context: Context): Int {
-        val prefs = context.getSharedPreferences(PREFS, Context.MODE_PRIVATE)
-        if (prefs.contains(KEY_CLUSTER_TURN_CARD_OVERLAY_Y)) {
-            return ClusterTurnCardOverlay.snap(
-                prefs.getInt(KEY_CLUSTER_TURN_CARD_OVERLAY_Y, ClusterTurnCardOverlay.DEFAULT_Y_PERCENT),
-                ClusterTurnCardOverlay.yPercents,
-            )
-        }
-        return ClusterTurnCardOverlay.DEFAULT_Y_PERCENT
-    }
-
-    fun saveClusterTurnCardOverlayYPercent(context: Context, percent: Int) {
-        context.getSharedPreferences(PREFS, Context.MODE_PRIVATE).edit()
-            .putInt(
-                KEY_CLUSTER_TURN_CARD_OVERLAY_Y,
-                ClusterTurnCardOverlay.snap(percent, ClusterTurnCardOverlay.yPercents),
-            ).apply()
-        overlaySettingsListener?.invoke()
-    }
 
     // ---- Custom turn card: absolute pixel position (top-left corner of the full 1920x720 panel) ----
 
@@ -1082,16 +959,6 @@ object AirPlayPersistence {
         overlaySettingsListener?.invoke()
     }
 
-    fun loadClusterMapScalePercent(context: Context): Int = CarPlayClusterDisplay.STREAM_SCALE_PERCENT.let { default ->
-        context.getSharedPreferences(PREFS, Context.MODE_PRIVATE).getInt(KEY_CLUSTER_MAP_SCALE, default)
-            .takeIf { it in CarPlayClusterDisplay.scalePresets } ?: default
-    }
-
-    fun saveClusterMapScalePercent(context: Context, percent: Int) {
-        if (percent !in CarPlayClusterDisplay.scalePresets) return
-        context.getSharedPreferences(PREFS, Context.MODE_PRIVATE).edit().putInt(KEY_CLUSTER_MAP_SCALE, percent).apply()
-    }
-
     fun loadClusterMarkerHorizontalStep(context: Context): Int =
         context.getSharedPreferences(PREFS, Context.MODE_PRIVATE).getInt(KEY_CLUSTER_MARKER_X, 0)
             .coerceIn(CarPlayClusterDisplay.horizontalSteps)
@@ -1108,35 +975,6 @@ object AirPlayPersistence {
     fun saveClusterMarkerVerticalStep(context: Context, step: Int) {
         context.getSharedPreferences(PREFS, Context.MODE_PRIVATE).edit()
             .putInt(KEY_CLUSTER_MARKER_Y, step.coerceIn(CarPlayClusterDisplay.verticalSteps)).apply()
-    }
-
-    /** Horizontal correction for the nav-only picture, in percent of the panel width. */
-    const val NAV_OFFSET_MIN = -20
-    const val NAV_OFFSET_MAX = 20
-
-    fun loadClusterNavOffsetPercent(context: Context): Int =
-        context.getSharedPreferences(PREFS, Context.MODE_PRIVATE)
-            .getInt(KEY_CLUSTER_NAV_OFFSET, 0)
-            .coerceIn(NAV_OFFSET_MIN, NAV_OFFSET_MAX)
-
-    fun saveClusterNavOffsetPercent(context: Context, percent: Int) {
-        context.getSharedPreferences(PREFS, Context.MODE_PRIVATE).edit()
-            .putInt(KEY_CLUSTER_NAV_OFFSET, percent.coerceIn(NAV_OFFSET_MIN, NAV_OFFSET_MAX))
-            .apply()
-        // A local TextureView transform: no reconnect, so the 111 stream is not re-announced.
-        overlaySettingsListener?.invoke()
-    }
-
-    /**
-     * Whether the dashboard stream declares the whole panel as safe area. A large safe area
-     * (the old 16/25/35/36 % inset) makes Amap render an overview so the whole route fits;
-     * a full-panel safe area makes it render the detailed follow map, like other CarPlay boxes.
-     */
-    fun loadClusterFullSafeArea(context: Context): Boolean =
-        context.getSharedPreferences(PREFS, Context.MODE_PRIVATE).getBoolean(KEY_CLUSTER_FULL_SAFE_AREA, true)
-
-    fun saveClusterFullSafeArea(context: Context, full: Boolean) {
-        context.getSharedPreferences(PREFS, Context.MODE_PRIVATE).edit().putBoolean(KEY_CLUSTER_FULL_SAFE_AREA, full).apply()
     }
 
     fun loadRightHandDrive(context: Context): Boolean =

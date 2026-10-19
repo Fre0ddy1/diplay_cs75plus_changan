@@ -18,7 +18,6 @@ class DisplayDiagnosticSnapshotTest {
             "Display request selected=Smaller percent=75 surface=1920x1080 candidate=2560x1440",
             "Decoder capability codec=c2.test hardware=true sizeSupported=false result=canvas_dimensions_unsupported",
             "Display effective percent=100 canvas=1920x1080 decision=canvas_dimensions_unsupported")
-        AirPlayPersistence.saveUiScalePercent(context, 100)
         val report = DisplayDiagnosticSnapshot.report(context)
         assertTrue(report.contains("selected=75% reconnect=true"))
         assertTrue(report.contains("percent=75"))

@@ -1,6 +1,9 @@
 package com.shilapi.xcertplay.network
 
+import android.net.TrafficStats
+import android.os.Process
 import java.io.Closeable
+import java.io.File
 import java.net.Inet4Address
 import java.net.Inet6Address
 import java.net.InetAddress
@@ -14,6 +17,8 @@ internal class WirelessStartupDiagnostics(
     private val log: (String) -> Unit,
     private val intervalMillis: Long = 10_000,
     private val nowNs: () -> Long = System::nanoTime,
+    /** Fired once when the phone was asked to start CarPlay but never opened AirPlay. */
+    private val onStall: (() -> Unit)? = null,
 ) : Closeable {
     private val closed = AtomicBoolean(false)
     private val startedNanos = nowNs()
@@ -25,7 +30,17 @@ internal class WirelessStartupDiagnostics(
     private var firstStartRequestNs: Long? = null
     private var firstTcpAfterStartMs: Long? = null
     @Volatile private var lastSnapshot = ""
+    private var lastStallNs = 0L
+    private var lastRxBytes = 0L
+    private var lastTxBytes = 0L
+    private var stallReported = false
     private val worker = Thread(::observe, "diplay-wireless-diagnostics").apply { isDaemon = true }
+
+    private companion object {
+        const val STALL_INTERVAL_NS = 30_000_000_000L
+        /** Long enough for a slow phone to join, short enough to retry inside one attempt. */
+        const val STALL_REPORT_MILLIS = 20_000L
+    }
 
     init { require(intervalMillis > 0) }
 
@@ -80,6 +95,7 @@ internal class WirelessStartupDiagnostics(
                 lastSnapshot = snapshot
                 emit(summary())
                 emitSnapshot(snapshot)
+                maybeEmitStall()
                 Thread.sleep(intervalMillis)
             }
         } catch (_: InterruptedException) {
@@ -87,11 +103,67 @@ internal class WirelessStartupDiagnostics(
         }
     }
 
+    /**
+     * One line every half minute while the phone has been asked to start CarPlay but no AirPlay
+     * connection has arrived. The neighbour table is the only L3 evidence available to an app on
+     * modern Android: an ARP entry for the phone on the hotspot interface means it got an address
+     * and is talking to us (so iOS simply never tried), while an empty table means it associated
+     * but never completed DHCP - a host-side routing problem.
+     */
+    @Synchronized
+    private fun maybeEmitStall() {
+        if (closed.get() || tcpAccepted > 0 || startRequests == 0) return
+        if (!stallReported && (firstStartRequestNs?.let(::elapsedMillis) ?: 0) >= STALL_REPORT_MILLIS) {
+            stallReported = true
+            onStall?.invoke()
+        }
+        val now = nowNs()
+        if (now - lastStallNs < STALL_INTERVAL_NS) return
+        lastStallNs = now
+        emit("wireless stall neighbours=${neighbourTable()} uidTraffic=${uidTrafficDelta()} " +
+            "elapsedSinceStartRequestMs=${firstStartRequestNs?.let(::elapsedMillis) ?: "none"}")
+    }
+
+    /**
+     * Bytes this app received/sent since the previous stall line.
+     *
+     * Kernel counters are unreadable on Android 14, but TrafficStats is public API. A non-zero
+     * receive delta means packets really do reach us from the LAN (so the phone simply never opens
+     * AirPlay), while a flat zero while the phone claims to be connecting means nothing is arriving
+     * at all - a router that isolates clients, or a phone that never joined.
+     */
+    private fun uidTrafficDelta(): String {
+        val uid = Process.myUid()
+        val rx = TrafficStats.getUidRxBytes(uid)
+        val tx = TrafficStats.getUidTxBytes(uid)
+        if (rx < 0 || tx < 0) return "unsupported"
+        val rxDelta = (rx - lastRxBytes).coerceAtLeast(0)
+        val txDelta = (tx - lastTxBytes).coerceAtLeast(0)
+        lastRxBytes = rx
+        lastTxBytes = tx
+        return "rx+$rxDelta tx+$txDelta"
+    }
+
+    /** Interface -> count of neighbour entries, e.g. "p2p0:1,wlan0:0". Never prints an address. */
+    private fun neighbourTable(): String = try {
+        File("/proc/net/arp").readText().lineSequence().drop(1).mapNotNull { line ->
+            val fields = line.trim().split(Regex("\\s+")).filter { it.isNotEmpty() }
+            if (fields.size < 6) null else fields[5]
+        }.filter { it.isNotBlank() }.groupingBy { it }.eachCount()
+            .entries.joinToString(",") { "${it.key}:${it.value}" }
+            .ifEmpty { "none" }
+    } catch (error: Exception) {
+        "unreadable=${error.javaClass.simpleName}"
+    }
+
     @Synchronized override fun close() {
         if (!closed.compareAndSet(false, true)) return
         worker.interrupt()
         emit("${summary()} observation=ended")
         emitSnapshot(lastSnapshot, cached = true)
+        if (tcpAccepted == 0 && startRequests > 0) {
+            emit("wireless stall neighbours=${neighbourTable()} (final)")
+        }
     }
 
     private fun emitSnapshot(snapshot: String, cached: Boolean = false) {
