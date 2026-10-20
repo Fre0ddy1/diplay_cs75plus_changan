@@ -5672,13 +5672,13 @@ class CarPlayHostActivity : ComponentActivity() {
                 )
                 applyClusterMode(mirror, direction)
                 // The window usually already exists by now (it is created as soon as a screen
-                // stream is up, seconds before the open sequence). incall keeps laying that one
-                // out as its small preview box even after projection starts, so the panel shows
-                // a square with part of the picture. Re-creating it here makes incall place it in
-                // the projection layout it is in by now.
+                // stream is up, seconds before the open sequence). Whether incall laid it out over
+                // the whole panel or kept it as its small preview box varies from drive to drive
+                // (field report 2026-10-20: "sometimes fine, sometimes a small square"), so the
+                // frame is measured and only fixed when it is actually wrong.
                 mainHandler.postDelayed(
-                    { rebuildClusterWindowAfterActivation(mirror, direction) },
-                    500L,
+                    { verifyClusterWindowLayout(mirror, direction) },
+                    700L,
                 )
             } else if (attempt < 3) {
                 appendLog("Cluster activation: 激活后未找到仪表投影 display，重试 $attempt")
@@ -5695,20 +5695,43 @@ class CarPlayHostActivity : ComponentActivity() {
     }
 
     /**
-     * Re-creates the dashboard window once the head unit has really switched to projection mode.
+     * Makes sure the dashboard window really covers the panel after activation.
      *
      * Window creation has to stay early - a swipe needs a picture at hand before the first
-     * projection - but incall lays an ext-screen window that existed before projection out as its
-     * small preview box at the right of the panel, and never re-lays it out when projection starts.
-     * Re-creating it here costs one decoder rebind (a brief black frame) and gives the panel the
-     * full size it should have had from the start.
+     * projection - but incall may lay such a window out as its small preview box at the right of
+     * the panel and keep it there. The driver's report is intermittent ("sometimes fine, sometimes
+     * a small square"), so this measures the frame instead of rebuilding blindly:
+     *
+     *  - full size  -> nothing to do, no black frame;
+     *  - too small  -> ask for a full-panel layout first (no surface is touched, no decoder rebind);
+     *  - still small after that -> re-create the window, which costs one rebind.
      */
-    private fun rebuildClusterWindowAfterActivation(mirror: Boolean, direction: String) {
+    private fun verifyClusterWindowLayout(mirror: Boolean, direction: String, attempt: Int = 0) {
         if (DiLink51ClusterLayout.supported()) return
         if (shuttingDown.get() || isFinishing || isDestroyed) return
         if (clusterWindowLaidOutForProjection) return
-        if (clusterPresentation == null) return
-        appendLog("Cluster activation: 重建仪表窗口（激活前创建的窗口仍是右侧占位小框）")
+        val presentation = clusterPresentation ?: return
+        val display = ClusterMapPresentation.findDisplay(this) ?: return
+        val expected = ClusterMapPresentation.sizeOf(display)
+        val frame = presentation.windowFrame()
+        // Nine tenths of the panel is generous enough for a one-pixel rounding difference and far
+        // above any preview box.
+        val full = frame.x >= expected.x * 9 / 10 && frame.y >= expected.y * 9 / 10
+        if (full) {
+            clusterWindowLaidOutForProjection = true
+            appendLog("Cluster activation: 仪表窗口尺寸正常 ${frame.x}x${frame.y}，不重建")
+            return
+        }
+        if (attempt == 0) {
+            appendLog(
+                "Cluster activation: 仪表窗口只有 ${frame.x}x${frame.y} " +
+                    "（应为 ${expected.x}x${expected.y}），先请求整屏布局",
+            )
+            presentation.requestFullPanelLayout()
+            mainHandler.postDelayed({ verifyClusterWindowLayout(mirror, direction, 1) }, 400L)
+            return
+        }
+        appendLog("Cluster activation: 整屏布局无效，重建仪表窗口")
         // dismissClusterPresentation() clears the flag again, so it is set afterwards.
         dismissClusterPresentation()
         ensureClusterWindowQuiet()

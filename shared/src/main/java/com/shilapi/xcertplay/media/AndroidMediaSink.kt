@@ -163,6 +163,27 @@ internal class AudioFocusCoordinator(
     }
 
     /**
+     * Forces the music tracks back to full level, whatever the duck bookkeeping believes.
+     *
+     * Used when a call ends. [setVolume] deliberately does nothing when the target equals
+     * [appliedVolume], which assumes the head unit never touched our tracks - and that assumption
+     * is exactly what fails here: the car lowers the media path for a call, our own flag still says
+     * "full", and the driver is left with quiet music after hanging up (field report 2026-10-20).
+     * A reset writes the level to every media track unconditionally.
+     */
+    fun resetPlaybackVolume(reason: String) {
+        synchronized(this) {
+            volumeHandler.removeCallbacks(unduckRunnable)
+            timedDucking = false
+            guidanceDucking = false
+            appliedVolume = FULL_VOLUME
+            runCatching { report("Audio: music level forced to full ($reason)") }
+            active.entries.filter { it.value.channel == AudioChannel.MEDIA }
+                .forEach { (track, _) -> runCatching { track.setStereoVolume(FULL_VOLUME, FULL_VOLUME) } }
+        }
+    }
+
+    /**
      * The phone's own duckAudio command: lower the music for [durationMs] and then bring it back.
      *
      * CarPlay sends this when one of iOS's own sounds (a camera shutter, a notification, Siri)
@@ -285,6 +306,9 @@ class AndroidMediaSink(
      * here and re-applied once the call is really over.
      */
     private var savedMusicVolume: Int? = null
+
+    /** Whether the head unit had the music stream muted before the call (it can mute without changing the level). */
+    private var savedMusicMuted = false
     // Re-asserts the audio mode after a call; separate from AudioFocusCoordinator's handler,
     // which only drives the media duck.
     private val audioModeHandler = Handler(Looper.getMainLooper())
@@ -535,10 +559,11 @@ class AndroidMediaSink(
             // Select the HAL communication path before AudioRecord is created.
             savedAudioMode = manager.mode
             savedMusicVolume = runCatching { manager.getStreamVolume(AudioManager.STREAM_MUSIC) }.getOrNull()
+            savedMusicMuted = runCatching { manager.isStreamMute(AudioManager.STREAM_MUSIC) }.getOrDefault(false)
             manager.mode = AudioManager.MODE_IN_COMMUNICATION
             communicationModeStream = id
             Log.i("xcertplay-usb", "audio mode $savedAudioMode -> ${manager.mode} for telephony stream=$id")
-            onAudioDiagnostic("Audio: call started, music level snapshot=$savedMusicVolume")
+            onAudioDiagnostic("Audio: call started, music level snapshot=$savedMusicVolume muted=$savedMusicMuted")
         }
     }
 
@@ -549,6 +574,17 @@ class AndroidMediaSink(
     private fun restoreMusicVolume(reason: String) {
         val manager = audioManager ?: return
         val saved = savedMusicVolume ?: return
+        // A mute does not change the level at all, so it has to be checked on its own: a car that
+        // mutes the music for a call and forgets to unmute afterwards looks like "the volume never
+        // came back" while getStreamVolume reports the old number.
+        val muted = runCatching { manager.isStreamMute(AudioManager.STREAM_MUSIC) }.getOrNull()
+        if (muted == true && !savedMusicMuted) {
+            val unmuted = runCatching {
+                manager.adjustStreamVolume(AudioManager.STREAM_MUSIC, AudioManager.ADJUST_UNMUTE, 0)
+            }.isSuccess
+            onAudioDiagnostic("Audio: music stream was muted after the call, unmuted=$unmuted ($reason)")
+        }
+        savedMusicMuted = false
         val current = runCatching { manager.getStreamVolume(AudioManager.STREAM_MUSIC) }.getOrNull()
         if (current == null) {
             savedMusicVolume = null
@@ -595,6 +631,7 @@ class AndroidMediaSink(
                     if (communicationModeStream != null) return@synchronized
                     val current = manager.mode
                     if (current == AudioManager.MODE_NORMAL) {
+                        audioFocusCoordinator.resetPlaybackVolume("call ended")
                         restoreMusicVolume("after-call")
                         return@synchronized
                     }
@@ -607,6 +644,7 @@ class AndroidMediaSink(
                     }
                     Log.w("xcertplay-usb", "audio mode drifted to $current after a call; re-asserting")
                     runCatching { manager.mode = AudioManager.MODE_NORMAL }
+                    audioFocusCoordinator.resetPlaybackVolume("call ended, mode re-asserted")
                     restoreMusicVolume("after-call")
                 }
             }, AUDIO_MODE_REASSERT_MS)
@@ -618,6 +656,7 @@ class AndroidMediaSink(
             audioModeHandler.postDelayed({
                 synchronized(audioModeLock) {
                     if (communicationModeStream != null) return@synchronized
+                    audioFocusCoordinator.resetPlaybackVolume("call ended, late pass")
                     restoreMusicVolume("after-call-late")
                 }
             }, AUDIO_MODE_LATE_CHECK_MS)
@@ -672,6 +711,9 @@ class AndroidMediaSink(
             microphoneUplinks.clear()
             restoreAudioMode(null)
         }
+        // Leaving the session must not leave the car quiet: the head unit may have lowered the
+        // music for a call and would keep that level after we are gone.
+        audioFocusCoordinator.resetPlaybackVolume("sink closed")
     }
 
     private fun videoDecoder(type: Int): VideoDecoder =
