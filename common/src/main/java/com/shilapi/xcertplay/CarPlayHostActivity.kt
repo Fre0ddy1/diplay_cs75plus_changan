@@ -497,6 +497,16 @@ class CarPlayHostActivity : ComponentActivity() {
     // 镜像已开启" (driver request 2026-10-18: a returning phone must stay silent).
     private var clusterWindowHidden = false
     /**
+     * False while the dashboard window was created before the head unit entered projection mode.
+     *
+     * incall lays an already existing ext-screen window out as its small preview box at the right
+     * of the panel and does not re-lay it out when the projection mode is switched on, so a cold
+     * start ended with "a small square showing part of the CarPlay picture" (field report
+     * 2026-10-20). The window has to be re-created after the open sequence; this flag makes that
+     * happen once per activation instead of on every silent re-assert.
+     */
+    private var clusterWindowLaidOutForProjection = false
+    /**
      * How long the dashboard picture may stay frozen before it is hidden.
      *
      * Hiding is all a disconnect does now: the window goes invisible (taking the frozen frame with
@@ -1417,6 +1427,8 @@ class CarPlayHostActivity : ComponentActivity() {
         clusterExtScreenReleased = true
         clusterProjectionStarted = false
         clusterWindowHidden = false
+        // The panel is the head unit's again: the next window starts in the preview layout.
+        clusterWindowLaidOutForProjection = false
         mainHandler.removeCallbacks(releaseDashboardAfterLongLoss)
         appendLog(
             "Disconnect: 已归还原车仪表画面" +
@@ -1427,6 +1439,7 @@ class CarPlayHostActivity : ComponentActivity() {
     private fun dismissClusterPresentation() {
         // A dismissed window cannot be "merely hidden" any more: the next one has to be activated.
         clusterWindowHidden = false
+        clusterWindowLaidOutForProjection = false
         mainHandler.removeCallbacks(releaseDashboardAfterLongLoss)
         val presentations = (clusterLayers.values + listOfNotNull(clusterPresentation)).distinct()
         clusterLayers.clear()
@@ -1570,6 +1583,19 @@ class CarPlayHostActivity : ComponentActivity() {
 
     // Hardware navigation belongs to the iPhone-rendered CarPlay UI, not Android View focus.
     override fun dispatchKeyEvent(event: KeyEvent): Boolean {
+        // Which keys the head unit actually hands to this window. Wheel keys are routed per OEM
+        // policy - some keys never arrive, others arrive rewritten - and the hang-up key the driver
+        // needs for a WeChat call could not be identified from the logs at all (2026-10-20).
+        // Only presses, only outside the noisy volume/media set, so this stays a handful of lines
+        // per drive.
+        if (activeAirPlaySession != null && event.action == KeyEvent.ACTION_DOWN &&
+            event.repeatCount == 0 &&
+            event.keyCode != KeyEvent.KEYCODE_VOLUME_UP &&
+            event.keyCode != KeyEvent.KEYCODE_VOLUME_DOWN &&
+            !isWheelMediaKey(event.keyCode)
+        ) {
+            appendLog("Key: ${KeyEvent.keyCodeToString(event.keyCode)} (${event.keyCode})")
+        }
         // While navigation guidance plays, steer the steering-wheel volume keys to the
         // guidance stream. Head units route the keys to media whenever music holds focus,
         // even during prompts; the stock Amap works because it intercepts the keys itself.
@@ -1589,6 +1615,30 @@ class CarPlayHostActivity : ComponentActivity() {
                 AudioManager.FLAG_SHOW_UI,
             )
             return true
+        }
+
+        // The steering wheel's hang-up key. The head unit gives KEYCODE_ENDCALL to its own phone
+        // app, which is fine for a cellular call - but a WeChat (or any other VoIP) call has no
+        // head-unit phone app behind it, so the key did nothing at all and such a call could not be
+        // ended from the wheel (field report 2026-10-20). Our own telephony audio stream is what
+        // puts the head unit into MODE_IN_COMMUNICATION; a cellular call handled by the car is
+        // MODE_IN_CALL. Only the first one is ours to answer, so the car's own call handling is
+        // never taken away.
+        if (activeAirPlaySession != null && event.keyCode == KeyEvent.KEYCODE_ENDCALL &&
+            (event.action == KeyEvent.ACTION_DOWN || event.action == KeyEvent.ACTION_UP)
+        ) {
+            val voip = inCarPlayVoipCall()
+            if (event.action == KeyEvent.ACTION_DOWN && event.repeatCount == 0) {
+                if (voip) {
+                    val sent = controller?.sendTelephonyButton(
+                        CarPlayMediaButton.TELEPHONY_HOOK_SWITCH,
+                    ) == true
+                    appendLog("Call: wheel hang-up -> CarPlay telephony hook sent=$sent")
+                } else {
+                    appendLog("Call: wheel hang-up left to the head unit (no CarPlay VoIP call)")
+                }
+            }
+            if (voip) return true
         }
 
         if (!menuOpen && AndroidTvInputMode.shouldUseKnobAsPrimaryInput(this) &&
@@ -1655,6 +1705,16 @@ class CarPlayHostActivity : ComponentActivity() {
     private fun inCarPlayCall(): Boolean =
         (getSystemService(Context.AUDIO_SERVICE) as? AudioManager)?.mode
             ?.let { it != AudioManager.MODE_NORMAL } == true
+
+    /**
+     * True while a call runs on CarPlay's own audio path. The sink switches the head unit to
+     * MODE_IN_COMMUNICATION when the phone opens a telephony/speech stream, while a cellular call
+     * the head unit handles itself uses MODE_IN_CALL. The distinction is what keeps the wheel's
+     * hang-up key working for the car's own phone app.
+     */
+    private fun inCarPlayVoipCall(): Boolean =
+        (getSystemService(Context.AUDIO_SERVICE) as? AudioManager)?.mode ==
+            AudioManager.MODE_IN_COMMUNICATION
 
     override fun onWindowFocusChanged(hasFocus: Boolean) {
         super.onWindowFocusChanged(hasFocus)
@@ -5075,9 +5135,9 @@ class CarPlayHostActivity : ComponentActivity() {
             swipeClusterMode(if (dx < 0f) "left" else "right")
             return true
         }
-        if (fingers >= requiredFingers &&
+        if (fingers >= minOf(requiredFingers, GESTURE_MIN_FINGERS) &&
             dy >= distance &&
-            Math.abs(dy) >= Math.abs(dx)
+            dy >= GESTURE_VERTICAL_DOMINANCE * Math.abs(dx)
         ) {
             appendLog(
                 "Gesture release: down-swipe opens settings dx=$dx dy=$dy " +
@@ -5551,6 +5611,9 @@ class CarPlayHostActivity : ComponentActivity() {
             clusterExtScreenReleased = false
         }
         clusterProjectionStarted = true
+        // A new open sequence means incall re-lays-out the ext-screen, so whatever layout the
+        // current window has is worthless afterwards.
+        clusterWindowLaidOutForProjection = false
         // The window was created hidden (see ensureClusterPresentation): the head unit is about to
         // be put into projection mode, so it may become visible now.
         clusterPresentation?.setMapVisible(true)
@@ -5608,6 +5671,15 @@ class CarPlayHostActivity : ComponentActivity() {
                         "(激活序列已发送，incall 是否接受需看仪表盘实际画面) mirror=$mirror",
                 )
                 applyClusterMode(mirror, direction)
+                // The window usually already exists by now (it is created as soon as a screen
+                // stream is up, seconds before the open sequence). incall keeps laying that one
+                // out as its small preview box even after projection starts, so the panel shows
+                // a square with part of the picture. Re-creating it here makes incall place it in
+                // the projection layout it is in by now.
+                mainHandler.postDelayed(
+                    { rebuildClusterWindowAfterActivation(mirror, direction) },
+                    500L,
+                )
             } else if (attempt < 3) {
                 appendLog("Cluster activation: 激活后未找到仪表投影 display，重试 $attempt")
                 finishActivation(mirror, direction, attempt + 1)
@@ -5620,6 +5692,28 @@ class CarPlayHostActivity : ComponentActivity() {
                 ).show()
             }
         }, 1600L)
+    }
+
+    /**
+     * Re-creates the dashboard window once the head unit has really switched to projection mode.
+     *
+     * Window creation has to stay early - a swipe needs a picture at hand before the first
+     * projection - but incall lays an ext-screen window that existed before projection out as its
+     * small preview box at the right of the panel, and never re-lays it out when projection starts.
+     * Re-creating it here costs one decoder rebind (a brief black frame) and gives the panel the
+     * full size it should have had from the start.
+     */
+    private fun rebuildClusterWindowAfterActivation(mirror: Boolean, direction: String) {
+        if (DiLink51ClusterLayout.supported()) return
+        if (shuttingDown.get() || isFinishing || isDestroyed) return
+        if (clusterWindowLaidOutForProjection) return
+        if (clusterPresentation == null) return
+        appendLog("Cluster activation: 重建仪表窗口（激活前创建的窗口仍是右侧占位小框）")
+        // dismissClusterPresentation() clears the flag again, so it is set afterwards.
+        dismissClusterPresentation()
+        ensureClusterWindowQuiet()
+        applyClusterMode(mirror, direction)
+        clusterWindowLaidOutForProjection = true
     }
 
     // Normalized position of Amap CarPlay's "全览" (overview) toggle button, bottom of the
@@ -5839,9 +5933,21 @@ class CarPlayHostActivity : ComponentActivity() {
         const val PROTOCOL_TRACE_PREFIX = "TRACE "
         const val GESTURE_MIN_FINGERS = 3
         // The swipe-down finger count that opens DiPlay settings is user-configurable in
-        // DiPlay settings (3/4/5, persistence default 3) and is loaded into
+        // DiPlay settings (3/4/5, persistence default 4) and is loaded into
         // settingsGestureFingers; two fingers stay reserved for map pinch-zoom.
-        const val THREE_FINGER_SWIPE_DISTANCE_DP = 72
+        //
+        // 56 dp instead of 72: on this head unit a palm-down swipe rarely travels far before the
+        // fingers lift, and the old threshold turned most attempts into "no action" (field report
+        // 2026-10-20: "the four-finger pull-down is not reliable enough").
+        const val THREE_FINGER_SWIPE_DISTANCE_DP = 56
+        /**
+         * How much more vertical than horizontal a settings pull has to be. 0.62 instead of a
+         * strict "dy >= |dx|": a four-finger pull on this panel leaves the fingertips at slightly
+         * different heights, so the centroid drifts sideways by half the down-travel and the old
+         * test rejected most real swipes. A horizontal dashboard swipe still needs |dx| >= 2*|dy|,
+         * so the two gestures do not overlap.
+         */
+        const val GESTURE_VERTICAL_DOMINANCE = 0.62f
         /** Max vertical travel allowed for a three-finger horizontal swipe; a large
          * vertical swipe (or a steep diagonal) must NOT trigger the dashboard switch. */
         const val GESTURE_VERTICAL_SLOP_DP = 48

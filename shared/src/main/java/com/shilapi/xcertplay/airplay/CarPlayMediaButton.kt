@@ -16,6 +16,22 @@ object CarPlayMediaButton {
     const val NEXT = 4
     const val PREVIOUS = 5
 
+    /**
+     * Telephony HID (page 0x0B) indices, matching [AirPlayHid]'s telephony descriptor: the
+     * descriptor declares usages 0x00, 0x20 (Hook Switch), 0x21 (Flash), 0x26, 0x2F, 0xB0..0xBB,
+     * so the report carries the usage's position in that list.
+     *
+     * Hook Switch is what a Bluetooth headset sends to answer or end a call, and iOS treats it the
+     * same way over CarPlay. DiPlay has always declared the telephony HID device but never sent a
+     * report, so the steering wheel's hang-up key only reached the head unit's own phone app: a
+     * WeChat call has no head-unit phone app behind it and could not be ended from the wheel
+     * (field report 2026-10-20).
+     */
+    const val TELEPHONY_HOOK_SWITCH = 1
+
+    /** Flash: the short on-hook "hook flash" a headset uses to switch between calls. */
+    const val TELEPHONY_FLASH = 2
+
     /** BYD's steering-wheel play/pause key; the firmware normally rewrites it to MEDIA_PLAY/PAUSE. */
     const val KEYCODE_BYD_AUTO_MEDIA_PLAY_PAUSE = 353
 

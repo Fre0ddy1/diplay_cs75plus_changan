@@ -478,6 +478,22 @@ class CarPlayController(
         }
     }
 
+    /**
+     * Presses and releases a telephony HID usage on the phone, e.g. the Hook Switch that answers
+     * or ends a call. Used for calls the head unit has no phone app behind - a WeChat call is the
+     * one the driver could not hang up from the wheel.
+     */
+    fun sendTelephonyButton(index: Int): Boolean {
+        if (closed) return false
+        val session = activeSession ?: return false
+        return try {
+            touchExecutor.execute { session.sendTelephony(index) }
+            true
+        } catch (_: Exception) {
+            false
+        }
+    }
+
     override fun close() {
         synchronized(this) {
             if (closed) return
