@@ -275,12 +275,25 @@ class AndroidMediaSink(
     private val audioModeLock = Any()
     private var communicationModeStream: AudioStreamId? = null
     private var savedAudioMode = AudioManager.MODE_NORMAL
+    /**
+     * The head unit's music level just before a call started.
+     *
+     * This car's audio policy lowers the music stream while a call runs (that is what makes the
+     * prompt/duck handling audible at all), and does not always put it back when the call ends:
+     * the driver hears quiet music afterwards, disconnecting does not help, and only a reconnect
+     * restores it (field report 2026-10-20). The level is not ours to guess, so it is snapshotted
+     * here and re-applied once the call is really over.
+     */
+    private var savedMusicVolume: Int? = null
     // Re-asserts the audio mode after a call; separate from AudioFocusCoordinator's handler,
     // which only drives the media duck.
     private val audioModeHandler = Handler(Looper.getMainLooper())
 
     /** How long to wait before re-asserting the audio mode after a call (see restoreAudioMode). */
     private val AUDIO_MODE_REASSERT_MS = 750L
+
+    /** A later pass that restores the music level even when the head unit kept its call mode. */
+    private val AUDIO_MODE_LATE_CHECK_MS = 5_000L
     private val pendingVideoCodec = ConcurrentHashMap<Int, VideoCodec>()
     private val videoRecoveryHandlers = ConcurrentHashMap<Int, () -> Unit>()
     private val videoDiagnosticHandlers = ConcurrentHashMap<Int, (String) -> Unit>()
@@ -521,10 +534,36 @@ class AndroidMediaSink(
             if (communicationModeStream != null) return
             // Select the HAL communication path before AudioRecord is created.
             savedAudioMode = manager.mode
+            savedMusicVolume = runCatching { manager.getStreamVolume(AudioManager.STREAM_MUSIC) }.getOrNull()
             manager.mode = AudioManager.MODE_IN_COMMUNICATION
             communicationModeStream = id
             Log.i("xcertplay-usb", "audio mode $savedAudioMode -> ${manager.mode} for telephony stream=$id")
+            onAudioDiagnostic("Audio: call started, music level snapshot=$savedMusicVolume")
         }
+    }
+
+    /**
+     * Puts the music level back to what it was before the call. Only the head unit's own stream
+     * volume is touched; our per-track duck rides on top of it and is restored by its own logic.
+     */
+    private fun restoreMusicVolume(reason: String) {
+        val manager = audioManager ?: return
+        val saved = savedMusicVolume ?: return
+        val current = runCatching { manager.getStreamVolume(AudioManager.STREAM_MUSIC) }.getOrNull()
+        if (current == null) {
+            savedMusicVolume = null
+            return
+        }
+        if (current == saved) {
+            savedMusicVolume = null
+            onAudioDiagnostic("Audio: music level unchanged after the call ($current, $reason)")
+            return
+        }
+        val restored = runCatching {
+            manager.setStreamVolume(AudioManager.STREAM_MUSIC, saved, 0)
+        }.isSuccess
+        savedMusicVolume = null
+        onAudioDiagnostic("Audio: music level $current -> $saved restored=$restored ($reason)")
     }
 
     private fun restoreAudioMode(id: AudioStreamId?) {
@@ -549,12 +588,16 @@ class AndroidMediaSink(
             // may land after ours, leaving MODE_IN_COMMUNICATION set with the car's audio
             // routed to the Bluetooth channel after the call ended (field report 2026-10-18).
             // Re-assert once shortly after, but never over a mode that means a call is still
-            // active - that would cut the driver's call.
+            // active - that would cut the driver's call. The music level is checked in the same
+            // pass, because the head unit lowers it on its own schedule as well.
             audioModeHandler.postDelayed({
                 synchronized(audioModeLock) {
                     if (communicationModeStream != null) return@synchronized
                     val current = manager.mode
-                    if (current == AudioManager.MODE_NORMAL) return@synchronized
+                    if (current == AudioManager.MODE_NORMAL) {
+                        restoreMusicVolume("after-call")
+                        return@synchronized
+                    }
                     if (current == AudioManager.MODE_IN_CALL ||
                         current == AudioManager.MODE_IN_COMMUNICATION ||
                         current == AudioManager.MODE_RINGTONE
@@ -564,8 +607,20 @@ class AndroidMediaSink(
                     }
                     Log.w("xcertplay-usb", "audio mode drifted to $current after a call; re-asserting")
                     runCatching { manager.mode = AudioManager.MODE_NORMAL }
+                    restoreMusicVolume("after-call")
                 }
             }, AUDIO_MODE_REASSERT_MS)
+            // Second, later pass. Some head units keep MODE_IN_COMMUNICATION for a while after the
+            // stream is gone (the driver's "the volume never came back" case) and the first pass
+            // deliberately refuses to touch anything while a call may still be up. By this point
+            // no stream of ours is running, so the music level is safe to put back whatever the
+            // mode says.
+            audioModeHandler.postDelayed({
+                synchronized(audioModeLock) {
+                    if (communicationModeStream != null) return@synchronized
+                    restoreMusicVolume("after-call-late")
+                }
+            }, AUDIO_MODE_LATE_CHECK_MS)
         }
     }
 

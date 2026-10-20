@@ -15,7 +15,7 @@ data class MicrophoneConfig(
     val codec: AudioCodecKind = AudioCodecKind.LPCM,
     val bitrate: Int? = null,
     /**
-     * The CarPlay clock for an Opus stream. Capture and encoding remain at 48 kHz.
+     * The CarPlay clock for an Opus stream.
      * Captured Siri packets for audioFormat 0x20000000 advance by 480 per 20 ms and calls
      * (0x40000000) by 960, so the clock follows the format's rate; 0x10000000 counts at 16 kHz on that
      * rule. The report's "Audio: rtp clock" line measures the iPhone's own clock for each stream.
@@ -24,7 +24,11 @@ data class MicrophoneConfig(
 ) {
     val samplesPerPacket: Int
         get() = if (codec == AudioCodecKind.OPUS) {
-            OPUS_SAMPLES_PER_PACKET
+            // 20 ms at the stream's own rate. The Opus clock follows audioFormat (48/24/16 kHz),
+            // so a 16 kHz Siri uplink carries 320 samples per packet; a fixed 960 would make one
+            // packet 60 ms long and every later RTP timestamp would drift against the phone's own
+            // clock for that stream.
+            maxOf(1, sampleRate * OPUS_FRAME_MILLIS / 1000)
         } else {
             maxOf(1, sampleRate * frameMillis / 1000)
         }
@@ -37,7 +41,6 @@ data class MicrophoneConfig(
         get() = samplesPerPacket * channels * 2
 
     companion object {
-        private const val OPUS_SAMPLES_PER_PACKET = 960
         private const val OPUS_CAPTURE_RATE = 48_000
         private const val OPUS_FRAME_MILLIS = 20
 
