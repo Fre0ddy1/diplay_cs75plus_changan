@@ -1621,28 +1621,18 @@ class CarPlayHostActivity : ComponentActivity() {
             return true
         }
 
-        // The steering wheel's hang-up key. The head unit gives KEYCODE_ENDCALL to its own phone
-        // app, which is fine for a cellular call - but a WeChat (or any other VoIP) call has no
-        // head-unit phone app behind it, so the key did nothing at all and such a call could not be
-        // ended from the wheel (field report 2026-10-20). Our own telephony audio stream is what
-        // puts the head unit into MODE_IN_COMMUNICATION; a cellular call handled by the car is
-        // MODE_IN_CALL. Only the first one is ours to answer, so the car's own call handling is
-        // never taken away.
+        // The steering wheel's hang-up key stays with the head unit. An earlier build also sent a
+        // telephony Hook Switch to the phone for calls the car has no phone app behind (WeChat),
+        // but the driver reports the wheel already ends those calls with the phone locked, and a
+        // second hang-up reaching the phone after the car's own one can redial the last number.
+        // Left in place for the log only: it names the key code the wheel really sends.
         if (activeAirPlaySession != null && event.keyCode == KeyEvent.KEYCODE_ENDCALL &&
-            (event.action == KeyEvent.ACTION_DOWN || event.action == KeyEvent.ACTION_UP)
+            event.action == KeyEvent.ACTION_DOWN && event.repeatCount == 0
         ) {
-            val voip = inCarPlayVoipCall()
-            if (event.action == KeyEvent.ACTION_DOWN && event.repeatCount == 0) {
-                if (voip) {
-                    val sent = controller?.sendTelephonyButton(
-                        CarPlayMediaButton.TELEPHONY_HOOK_SWITCH,
-                    ) == true
-                    appendLog("Call: wheel hang-up -> CarPlay telephony hook sent=$sent")
-                } else {
-                    appendLog("Call: wheel hang-up left to the head unit (no CarPlay VoIP call)")
-                }
-            }
-            if (voip) return true
+            appendLog(
+                "Call: wheel hang-up seen, CarPlay VoIP=${inCarPlayVoipCall()}; " +
+                    "left to the head unit",
+            )
         }
 
         if (!menuOpen && AndroidTvInputMode.shouldUseKnobAsPrimaryInput(this) &&
