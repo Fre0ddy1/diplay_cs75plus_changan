@@ -342,7 +342,14 @@ class AndroidMediaSink(
     init {
         // Sampled from the very first frame of the session, so a call that started before the
         // session (or that the head unit handles itself) still has its "before" level recorded.
-        if (audioManager != null) audioModeHandler.post(audioModePoll)
+        if (audioManager != null) {
+            audioModeHandler.post(audioModePoll)
+            // One line at start so a report proves the poll is alive even when no call happens.
+            onAudioDiagnostic(
+                "Audio: mode poll started, mode=${runCatching { audioManager?.mode }.getOrNull()} " +
+                    "music=${runCatching { audioManager?.getStreamVolume(AudioManager.STREAM_MUSIC) }.getOrNull()}",
+            )
+        }
     }
     private val pendingVideoCodec = ConcurrentHashMap<Int, VideoCodec>()
     private val videoRecoveryHandlers = ConcurrentHashMap<Int, () -> Unit>()
