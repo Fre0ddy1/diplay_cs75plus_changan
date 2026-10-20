@@ -346,6 +346,26 @@ class AndroidMediaSink(
     }
     @Volatile private var closedForPoll = false
 
+    /**
+     * Last moment real guidance audio was handed to the navigation track.
+     *
+     * The guidance stream's start/stop edges are not proof that a prompt is audible: on this head
+     * unit the stream stays open far longer, and the volume keys were then routed to guidance for
+     * as long as it lived (driver could not change the music; the guidance level itself drifted
+     * down as he pressed the keys, 2026-10-20). Actual PCM is the honest signal.
+     */
+    @Volatile private var lastNavigationPcmAtMs = 0L
+
+    fun onNavigationAudioFrame() {
+        lastNavigationPcmAtMs = SystemClock.elapsedRealtime()
+    }
+
+    /** True while guidance audio is really flowing, not merely while its stream is open. */
+    fun navigationAudioActive(windowMs: Long = 2_500L): Boolean {
+        val last = lastNavigationPcmAtMs
+        return last != 0L && SystemClock.elapsedRealtime() - last <= windowMs
+    }
+
     init {
         // Sampled from the very first frame of the session, so a call that started before the
         // session (or that the head unit handles itself) still has its "before" level recorded.
@@ -836,6 +856,7 @@ class AndroidMediaSink(
             navigationStreamType,
             mediaBufferMillis,
             onAudioDiagnostic,
+            onNavigationFrame = { onNavigationAudioFrame() },
         ).also { audioRenderers[id] = it }
     }
 }
@@ -1271,6 +1292,7 @@ private class AudioRenderer(
     private val audioFocusCoordinator: AudioFocusCoordinator,    private val navigationStreamType: Int,
     private val mediaBufferMillis: Int,
     private val report: (String) -> Unit,
+    private val onNavigationFrame: () -> Unit = {},
 ) : Closeable {
     private data class AudioPacket(val rtp: ByteArray, val sample: Int)
 
@@ -1861,6 +1883,7 @@ private class AudioRenderer(
             writtenFramesThisWindow += framesWritten
             bufferProgress.written(count)
             lastPcmWriteNs = System.nanoTime()
+            if (mappedChannel == AudioChannel.NAVIGATION) runCatching { onNavigationFrame() }
             if (!playbackStarted) {
                 prebufferBytes += count
                 if (prebufferBytes >= startThresholdBytes) {

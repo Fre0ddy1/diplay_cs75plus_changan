@@ -1601,13 +1601,13 @@ class CarPlayHostActivity : ComponentActivity() {
         ) {
             appendLog("Key: ${KeyEvent.keyCodeToString(event.keyCode)} (${event.keyCode})")
         }
-        // While navigation guidance plays, steer the steering-wheel volume keys to the
-        // guidance stream. Head units route the keys to media whenever music holds focus,
-        // even during prompts; the stock Amap works because it intercepts the keys itself.
-        // The guidance stream lives on CarPlay audio, which is always declared now, so this is
-        // the exact "a prompt is playing" signal. Do not widen it to "a route is active": that
-        // stays true for the whole drive and would leave the keys on guidance between prompts.
-        if (navigationGuidanceActive && event.action == KeyEvent.ACTION_DOWN &&
+        // While navigation guidance is actually audible, steer the volume keys to the guidance
+        // stream. The stream's own start/stop edge is not enough: on this head unit the navigation
+        // stream can stay open for minutes after a prompt, and keys routed that whole time adjust
+        // the guidance level instead of the music (field report 2026-10-20). Only PCM written to
+        // the guidance track counts.
+        if (navigationGuidanceActive && sink?.navigationAudioActive() == true &&
+            event.action == KeyEvent.ACTION_DOWN &&
             (event.keyCode == KeyEvent.KEYCODE_VOLUME_UP || event.keyCode == KeyEvent.KEYCODE_VOLUME_DOWN)) {
             val dir = if (event.keyCode == KeyEvent.KEYCODE_VOLUME_UP) 1 else -1
             val navChannel = AirPlayPersistence.loadNavigationAudioChannel(this)
@@ -4064,8 +4064,11 @@ class CarPlayHostActivity : ComponentActivity() {
      * guidance volume itself drift down (field report 2026-10-20). A prompt is seconds long, so
      * the routing is only trusted for this window and then handed back to media on its own.
      */
+    private var guidanceWindowArmed = false
+
     private val endGuidanceVolumeWindow = Runnable {
         if (isDestroyed || isFinishing) return@Runnable
+        guidanceWindowArmed = false
         if (!navigationGuidanceActive) return@Runnable
         navigationGuidanceActive = false
         setVolumeControlStream(AudioManager.STREAM_MUSIC)
@@ -4080,9 +4083,14 @@ class CarPlayHostActivity : ComponentActivity() {
             if (active && navChannel > 0) {
                 setVolumeControlStream(navChannel)
                 appendLog("Volume control stream: navigation($navChannel)")
-                mainHandler.removeCallbacks(endGuidanceVolumeWindow)
-                mainHandler.postDelayed(endGuidanceVolumeWindow, GUIDANCE_VOLUME_WINDOW_MS)
+                // Armed once per prompt burst: restarting the window on every start edge let a
+                // stream that keeps flapping hold the keys on guidance indefinitely.
+                if (!guidanceWindowArmed) {
+                    guidanceWindowArmed = true
+                    mainHandler.postDelayed(endGuidanceVolumeWindow, GUIDANCE_VOLUME_WINDOW_MS)
+                }
             } else {
+                guidanceWindowArmed = false
                 mainHandler.removeCallbacks(endGuidanceVolumeWindow)
                 setVolumeControlStream(AudioManager.STREAM_MUSIC)
                 appendLog("Volume control stream: media")
