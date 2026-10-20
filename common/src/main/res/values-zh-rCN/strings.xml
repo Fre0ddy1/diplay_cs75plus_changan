@@ -249,6 +249,8 @@
     <string name="longest_height">较长边</string>
     <string name="looking_for_your_paired_iphone">正在查找已配对的 iPhone…</string>
     <string name="made_possible_by_open_source">开源项目鸣谢</string>
+    <string name="about_credits_title">原作者与二次开发</string>
+    <string name="about_credits_body">原作者：shihabal3amri/DiPlay（v0.2.11）\n原项目文档站：https://shihabal3amri.github.io/DiPlay/\n\n本版本基于上述原项目，专为适配长安 UNI-V 进行二次开发：\nhttps://gitee.com/jiuyueji/diplay_changan\n\n其它车型可能可以用，但不保证一定能正常使用。</string>
     <string name="make_diplay_feel_right_for_your_car">按需调整 DiPlay 设置。</string>
     <string name="manual_hotspot">手动热点</string>
     <string name="manual_mode_match_the_cluster_theme_here_the_map_cannot_fo">手动模式：在此匹配仪表盘主题。没有使用访问权限时，地图无法跟随卡片显示状态。</string>

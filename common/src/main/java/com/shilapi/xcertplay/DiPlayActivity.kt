@@ -659,8 +659,6 @@ class DiPlayActivity : ComponentActivity() {
             }, matchButton(12, 56))
             if (bydVehicleAdvancedExpanded) {
                 advancedVehicleData(card)
-                // Dashboard song needs ADB, not the navigation receiver; show it here when that card is hidden.
-                if (!BydOutputSettings.navigationAvailable(this)) clusterSongSwitch(card)
             }
         }
         // 仪表盘分区始终渲染：即使当前未检测到投影 display（模拟器、未连接车机），也允许
@@ -778,21 +776,14 @@ class DiPlayActivity : ComponentActivity() {
                 }
                 // 通用仪表盘控件（原位于“车载导航”分区，仅 BYD 车机可见；长安等车机看不到，
                 // 故移入“仪表盘”分区）。
-                val contents = CarPlayClusterDisplay.Content.entries
+                // The original "dashboard shows" picker is gone: it only chose between Apple's
+                // turn card and the map, and this build draws its own cards (see the per-card
+                // blocks below), so the two switches duplicated each other. The stored choice is
+                // still read so existing settings keep working, and the default stays
+                // map-with-custom-card.
                 val content = AirPlayPersistence.loadClusterContent(this)
                 val customCard = CarPlayClusterDisplay.usesCustomTurnCard(content)
                 val officialCardOnly = content == CarPlayClusterDisplay.Content.TURN_CARD
-                choice(card, getString(R.string.dashboard_shows), listOf(
-                    getString(R.string.dashboard_content_map),
-                    getString(R.string.dashboard_content_turn_card),
-                    getString(R.string.dashboard_content_map_with_turn_card),
-                    getString(R.string.dashboard_content_map_with_custom_turn_card),
-                ), contents.indexOf(content).coerceAtLeast(0), reconnects = false) {
-                    val next = contents[it]
-                    AirPlayPersistence.saveClusterContent(this, next)
-                    render()
-                    if (content.url != next.url) reconnectForClusterMap()
-                }
                 // —— 长安仪表盘卡片设置（始终可见）——
                 // 卡片组在 navOnlyCards 模式下无条件显示（只要仪表盘投屏开启），因此这些
                 // 设置不能藏在 customCard 分支里，否则用户换了“仪表盘显示”选择就找不到入口。
@@ -959,23 +950,29 @@ class DiPlayActivity : ComponentActivity() {
                     toast(getString(R.string.cluster_card_position_applied))
                 }, matchButton(0, 56))
                 val turnCard = officialCardOnly
-                val across = CarPlayClusterDisplay.horizontalSteps.toList()
-                choice(card, getString(if (turnCard) R.string.turn_card_horizontal else R.string.car_marker_horizontal), across.map { markerStepLabel(it, getString(R.string.marker_left), getString(R.string.marker_right)) },
-                    across.indexOf(AirPlayPersistence.loadClusterMarkerHorizontalStep(this)).coerceAtLeast(0)) {
-                    AirPlayPersistence.saveClusterMarkerHorizontalStep(this, across[it])
+                // Only the turn card's offsets remain. The "car marker" offsets and the
+                // "reset the marker to the centre" button belonged to the upstream overlay,
+                // which this build no longer needs: the map is placed by the safe area that was
+                // requested at connect time, so there is no marker to nudge.
+                if (turnCard) {
+                    val across = CarPlayClusterDisplay.horizontalSteps.toList()
+                    choice(card, getString(R.string.turn_card_horizontal), across.map { markerStepLabel(it, getString(R.string.marker_left), getString(R.string.marker_right)) },
+                        across.indexOf(AirPlayPersistence.loadClusterMarkerHorizontalStep(this)).coerceAtLeast(0)) {
+                        AirPlayPersistence.saveClusterMarkerHorizontalStep(this, across[it])
+                    }
+                    val upDown = CarPlayClusterDisplay.verticalSteps.toList()
+                    choice(card, getString(R.string.turn_card_vertical), upDown.map { markerStepLabel(it, getString(R.string.marker_up), getString(R.string.marker_down)) },
+                        upDown.indexOf(AirPlayPersistence.loadClusterMarkerVerticalStep(this)).coerceAtLeast(0)) {
+                        AirPlayPersistence.saveClusterMarkerVerticalStep(this, upDown[it])
+                    }
+                    card.addView(button(getString(R.string.reset_turn_card_to_centre), false) {
+                        AirPlayPersistence.saveClusterMarkerHorizontalStep(this, 0)
+                        AirPlayPersistence.saveClusterMarkerVerticalStep(this, 0)
+                        render()
+                        // No reconnect: the marker offset is a local overlay transform, applied on
+                        // the next overlay refresh. Reconnecting here only re-announced the voice.
+                    }, matchButton(10, 56))
                 }
-                val upDown = CarPlayClusterDisplay.verticalSteps.toList()
-                choice(card, getString(if (turnCard) R.string.turn_card_vertical else R.string.car_marker_vertical), upDown.map { markerStepLabel(it, getString(R.string.marker_up), getString(R.string.marker_down)) },
-                    upDown.indexOf(AirPlayPersistence.loadClusterMarkerVerticalStep(this)).coerceAtLeast(0)) {
-                    AirPlayPersistence.saveClusterMarkerVerticalStep(this, upDown[it])
-                }
-                card.addView(button(getString(if (turnCard) R.string.reset_turn_card_to_centre else R.string.reset_car_marker_to_centre), false) {
-                    AirPlayPersistence.saveClusterMarkerHorizontalStep(this, 0)
-                    AirPlayPersistence.saveClusterMarkerVerticalStep(this, 0)
-                    render()
-                    // No reconnect: the marker offset is a local overlay transform, applied on
-                    // the next overlay refresh. Reconnecting here only re-announced the voice.
-                }, matchButton(10, 56))
             }
         }
         if (BydOutputSettings.navigationAvailable(this)) section(content, getString(R.string.byd_navigation), R.drawable.ic_dp_navigation) { card ->
@@ -1034,7 +1031,6 @@ class DiPlayActivity : ComponentActivity() {
                     }
                 }
             }
-            clusterSongSwitch(card)
         }
         activeSectionGroups = GROUP_SYSTEM
         section(content, getString(R.string.permissions_and_connection_help), R.drawable.ic_dp_permissions) { card ->
@@ -1065,6 +1061,9 @@ class DiPlayActivity : ComponentActivity() {
         }
         section(content, getString(R.string.made_possible_by_open_source)) { card ->
             card.addView(label(getString(R.string.receiver_based_on_xcertplay_licensed_under_gpl_3_0_diplay), 16, MUTED))
+        }
+        section(content, getString(R.string.about_credits_title)) { card ->
+            card.addView(label(getString(R.string.about_credits_body), 15, MUTED))
         }
     }
 
@@ -1776,17 +1775,6 @@ class DiPlayActivity : ComponentActivity() {
             }
         }
         dialog.show()
-    }
-
-    /** The 0.2.9 Dashboard song setting, shown once: in the BYD navigation card, or under Advanced vehicle data. */
-    private fun clusterSongSwitch(card: LinearLayout) {
-        toggle(card, getString(R.string.cluster_song),
-            getString(R.string.cluster_song_description),
-            BydOutputSettings.clusterSong(this), enabled = !adbSwitchChangePending) {
-            BydOutputSettings.setClusterSong(this, it)
-            if (it) checkAdbState(mayAsk = true)
-            BydNavigationOutputs.clusterSongChanged(it)
-        }
     }
 
     private fun advancedVehicleData(card: LinearLayout) {

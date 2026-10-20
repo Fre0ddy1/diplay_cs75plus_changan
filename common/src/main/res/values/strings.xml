@@ -251,6 +251,8 @@
     <string name="longest_height">Longest height</string>
     <string name="looking_for_your_paired_iphone">Looking for your paired iPhone…</string>
     <string name="made_possible_by_open_source">Made possible by open source</string>
+    <string name="about_credits_title">Original author and this fork</string>
+    <string name="about_credits_body">Original author: shihabal3amri/DiPlay (v0.2.11)\nProject documentation: https://shihabal3amri.github.io/DiPlay/\n\nThis build is a fork of that project, adapted for the Changan UNI-V:\nhttps://gitee.com/jiuyueji/diplay_changan\n\nIt may work on other vehicles, but that is not guaranteed.</string>
     <string name="make_diplay_feel_right_for_your_car">Make DiPlay feel right for your car.</string>
     <string name="manual_hotspot">Manual hotspot</string>
     <string name="manual_mode_match_the_cluster_theme_here_the_map_cannot_fo">Manual mode: match the cluster theme here. The map cannot follow card visibility without Usage Access.</string>

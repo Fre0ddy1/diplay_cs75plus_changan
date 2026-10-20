@@ -1,7 +1,7 @@
 <?xml version="1.0" encoding="utf-8"?>
 <resources>
-    <string name="cluster_crop_adjust">仪表盘画面调整</string>
-    <string name="cluster_crop_title">仪表盘画面调整</string>
+    <string name="cluster_crop_adjust">Full-mirror dashboard picture adjustment</string>
+    <string name="cluster_crop_title">Full-mirror dashboard picture adjustment</string>
     <string name="cluster_crop_hint">Define a display frame on the dashboard: left/top/width/height set the frame position and size, and the full CarPlay picture is scaled to fit inside it, keeping its aspect ratio and centred (no crop, no distortion). Applied automatically.</string>
     <string name="cluster_crop_left">Frame left</string>
     <string name="cluster_crop_top">Frame top</string>
