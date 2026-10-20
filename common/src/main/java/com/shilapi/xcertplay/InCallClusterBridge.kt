@@ -381,6 +381,15 @@ object InCallClusterBridge {
                                     (previous?.let { " (was $it)" } ?: ""),
                             )
                         }
+                        if (code == CALLBACK_CODE_STATE) {
+                            // The only trustworthy "the panel is ours now" signal. Until it
+                            // arrives incall is still laying the ext-screen out as its preview box
+                            // at the right of the panel, so anything drawn there lands in a small
+                            // square (measured 2026-10-20: window up at 20:01:52, projection
+                            // confirmed at 20:02:39).
+                            val nowProjecting = incallReportsProjecting()
+                            runCatching { projectingListener?.invoke(nowProjecting) }
+                        }
                     }
                     reply?.writeNoException()
                     return true
@@ -807,6 +816,15 @@ object InCallClusterBridge {
      */
     @Volatile
     var diagnosticSink: ((String) -> Unit)? = null
+
+    /**
+     * Called with true when incall reports that the dashboard really is projecting our ext-screen.
+     *
+     * Everything before that first true is incall's preview layout, so the host keeps its window
+     * invisible until then (see the callback handler).
+     */
+    @Volatile
+    var projectingListener: ((Boolean) -> Unit)? = null
 
     private fun registerCallback(b: IBinder): Boolean {
         val ok = txBinder(b, 29, navigateCallback.asBinder())

@@ -497,6 +497,15 @@ class CarPlayHostActivity : ComponentActivity() {
     // 镜像已开启" (driver request 2026-10-18: a returning phone must stay silent).
     private var clusterWindowHidden = false
     /**
+     * When to show the dashboard window even though incall never confirmed the projection.
+     *
+     * incall reports "projecting" through its callback, and until it does, the ext-screen sits in
+     * the head unit's preview layout at the right of the panel - drawing there is what produced the
+     * small square. The window therefore stays invisible until that confirmation, with this
+     * deadline as the way out for firmware that never sends it.
+     */
+    private var projectionShowDeadlineMs = 0L
+    /**
      * How long the dashboard picture may stay frozen before it is hidden.
      *
      * Hiding is all a disconnect does now: the window goes invisible (taking the frozen frame with
@@ -1035,6 +1044,10 @@ class CarPlayHostActivity : ComponentActivity() {
         // session has to become stoppable again.
         CarPlayBackgroundSession.releaseSettingsHold()
         CarPlayBackgroundSession.logger = { message -> appendLog(message) }
+        // incall telling us the panel is really ours is the signal to show the dashboard window.
+        InCallClusterBridge.projectingListener = { projecting ->
+            if (projecting) runOnUiThread { onClusterProjectionConfirmed() }
+        }
         val languagePreference = AppLocale.preference(this)
         if (Build.VERSION.SDK_INT < 33 && languagePreference != languagePreferenceAtCreate) {
             languagePreferenceAtCreate = languagePreference
@@ -1774,6 +1787,7 @@ class CarPlayHostActivity : ComponentActivity() {
 
     override fun onDestroy() {
         if (CarPlayBackgroundSession.logger != null) CarPlayBackgroundSession.logger = null
+        InCallClusterBridge.projectingListener = null
         if (clusterDisplayListenerRegistered) {
             runCatching {
                 getSystemService(android.hardware.display.DisplayManager::class.java)
@@ -5515,7 +5529,10 @@ class CarPlayHostActivity : ComponentActivity() {
         // single-TextureView path keeps the old rebind-and-switch behaviour.
         if (clusterPresentation == null) ensureClusterWindowQuiet()
         clusterPresentation?.let { p ->
-            p.setMapVisible(true)
+            p.setMapVisible(shouldShowClusterWindow())
+            if (!shouldShowClusterWindow()) {
+                appendLog("Cluster: 车机尚未确认投屏通道，先不显示（确认后自动显示）")
+            }
             scheduleClusterFrameCheck()
             if (DiLink51ClusterLayout.supported()) {
                 p.mirrorOutputSurface?.let { s -> onClusterSurface(s, force = true) }
@@ -5569,6 +5586,34 @@ class CarPlayHostActivity : ComponentActivity() {
     // instrument-cluster bridge (full UNI-V sequence: bind DoubleInteractiveService +
     // AUTONAVI 10019/10116/10117 broadcasts + tx21/8/1/2 + CarProperty). Retries
     // findDisplay a few times in case the display registers asynchronously.
+    /**
+     * Whether the dashboard window may be visible right now.
+     *
+     * The head unit tells us through its callback when the panel is really projecting our
+     * ext-screen; before that it lays the ext-screen out as its small preview box at the right of
+     * the panel. Showing the window earlier is exactly what put CarPlay's picture in that square
+     * (measured 2026-10-20: window shown 20:01:59, projection confirmed 20:02:39 - 40 s of square).
+     * A projection that is already confirmed, or a session that started projecting before this
+     * process, shows immediately.
+     */
+    private fun shouldShowClusterWindow(): Boolean {
+        if (!clusterProjectionStarted) return true
+        if (InCallClusterBridge.reportsProjecting()) return true
+        return SystemClock.elapsedRealtime() >= projectionShowDeadlineMs
+    }
+
+    /**
+     * incall just confirmed that the panel is ours: show the window that has been waiting for it.
+     */
+    private fun onClusterProjectionConfirmed() {
+        if (shuttingDown.get() || isFinishing || isDestroyed) return
+        if (clusterWindowHidden) return
+        val presentation = clusterPresentation ?: return
+        presentation.setMapVisible(true)
+        scheduleClusterFrameCheck()
+        appendLog("Cluster: 车机确认投屏通道已开，显示仪表窗口")
+    }
+
     /**
      * Checks shortly after showing the dashboard window that it really covers the panel.
      *
@@ -5632,6 +5677,19 @@ class CarPlayHostActivity : ComponentActivity() {
             clusterExtScreenReleased = false
         }
         clusterProjectionStarted = true
+        // Give incall its confirmation window; firmware that never confirms still gets a picture
+        // after the timeout instead of a permanently blank dashboard.
+        projectionShowDeadlineMs = SystemClock.elapsedRealtime() + PROJECTION_CONFIRM_TIMEOUT_MS
+        // Nothing else would ever fire if the head unit stays silent: show it at the deadline.
+        mainHandler.postDelayed({
+            if (clusterProjectionStarted && !InCallClusterBridge.reportsProjecting() &&
+                !clusterWindowHidden
+            ) {
+                appendLog("Cluster: 等待投屏确认超时，按原样显示仪表窗口")
+                clusterPresentation?.setMapVisible(true)
+                scheduleClusterFrameCheck()
+            }
+        }, PROJECTION_CONFIRM_TIMEOUT_MS + 500L)
         // The window was created hidden (see ensureClusterPresentation): the head unit is about to
         // be put into projection mode, so it may become visible now.
         clusterPresentation?.setMapVisible(true)
@@ -5740,7 +5798,7 @@ class CarPlayHostActivity : ComponentActivity() {
                     mainHandler.removeCallbacks(releaseDashboardAfterLongLoss)
                     if (clusterWindowHidden) {
                         clusterWindowHidden = false
-                        clusterPresentation?.setMapVisible(true)
+                        clusterPresentation?.setMapVisible(shouldShowClusterWindow())
                         clusterPresentation?.setMode(AirPlayPersistence.loadClusterMirrorMain(this))
                         scheduleClusterFrameCheck()
                         appendLog("Cluster map: 画面恢复，静默显示仪表窗口（未重发激活序列）")
@@ -5920,6 +5978,12 @@ class CarPlayHostActivity : ComponentActivity() {
         const val AUDIO_CAPTURE_DIRECTORY = "audio-captures"
         const val PROTOCOL_TRACE_PREFIX = "TRACE "
         const val GESTURE_MIN_FINGERS = 3
+        /**
+         * How long the dashboard window waits for incall's "projecting" confirmation before it is
+         * shown anyway. The open sequence takes up to ~11 s on this head unit; firmware that never
+         * sends the callback must still end up with a picture.
+         */
+        const val PROJECTION_CONFIRM_TIMEOUT_MS = 12_000L
         // The swipe-down finger count that opens DiPlay settings is user-configurable in
         // DiPlay settings (3/4/5, persistence default 4) and is loaded into
         // settingsGestureFingers; two fingers stay reserved for map pinch-zoom.
