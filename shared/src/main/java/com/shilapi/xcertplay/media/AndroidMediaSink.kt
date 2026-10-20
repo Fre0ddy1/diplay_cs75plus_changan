@@ -318,6 +318,32 @@ class AndroidMediaSink(
 
     /** A later pass that restores the music level even when the head unit kept its call mode. */
     private val AUDIO_MODE_LATE_CHECK_MS = 5_000L
+
+    /** How often the head unit's audio mode is sampled to catch calls that never reach our streams. */
+    private val AUDIO_MODE_POLL_MS = 1_500L
+
+    /**
+     * Last audio mode seen by the poll.
+     *
+     * Calls the head unit handles itself (its own phone app over Bluetooth HFP) never open a
+     * telephony stream of ours, so the snapshot/restore that hangs off `onMicrophoneStarted` never
+     * ran for them - and those are the calls where the driver reports the music level dropping and
+     * staying down. The mode is the only channel that covers both kinds.
+     */
+    private var polledAudioMode = AudioManager.MODE_NORMAL
+    private val audioModePoll = object : Runnable {
+        override fun run() {
+            runCatching { pollAudioMode() }
+            if (!closedForPoll) audioModeHandler.postDelayed(this, AUDIO_MODE_POLL_MS)
+        }
+    }
+    @Volatile private var closedForPoll = false
+
+    init {
+        // Sampled from the very first frame of the session, so a call that started before the
+        // session (or that the head unit handles itself) still has its "before" level recorded.
+        if (audioManager != null) audioModeHandler.post(audioModePoll)
+    }
     private val pendingVideoCodec = ConcurrentHashMap<Int, VideoCodec>()
     private val videoRecoveryHandlers = ConcurrentHashMap<Int, () -> Unit>()
     private val videoDiagnosticHandlers = ConcurrentHashMap<Int, (String) -> Unit>()
@@ -602,6 +628,42 @@ class AndroidMediaSink(
         onAudioDiagnostic("Audio: music level $current -> $saved restored=$restored ($reason)")
     }
 
+    /**
+     * Watches the head unit's audio mode: any non-normal mode is a call, whichever app runs it.
+     *
+     * The snapshot is taken when the mode leaves normal and the restore runs when it returns, which
+     * covers the calls that never touch our streams. Logs on every change, so a report shows what
+     * the head unit did to the music level during that call.
+     */
+    private fun pollAudioMode() {
+        val manager = audioManager ?: return
+        val mode = runCatching { manager.mode }.getOrNull() ?: return
+        if (mode == polledAudioMode) return
+        val music = runCatching { manager.getStreamVolume(AudioManager.STREAM_MUSIC) }.getOrNull()
+        val muted = runCatching { manager.isStreamMute(AudioManager.STREAM_MUSIC) }.getOrNull() == true
+        val previous = polledAudioMode
+        polledAudioMode = mode
+        onAudioDiagnostic("Audio: mode $previous -> $mode, music=$music muted=$muted")
+        val callStarting = previous == AudioManager.MODE_NORMAL && mode != AudioManager.MODE_NORMAL
+        val callEnding = previous != AudioManager.MODE_NORMAL && mode == AudioManager.MODE_NORMAL
+        if (callStarting) {
+            synchronized(audioModeLock) {
+                if (savedMusicVolume == null) {
+                    savedMusicVolume = music
+                    savedMusicMuted = muted
+                    onAudioDiagnostic("Audio: call detected (mode=$mode), music snapshot=$music")
+                }
+            }
+        } else if (callEnding) {
+            synchronized(audioModeLock) {
+                if (communicationModeStream == null) {
+                    audioFocusCoordinator.resetPlaybackVolume("call ended (mode poll)")
+                    restoreMusicVolume("mode returned to normal")
+                }
+            }
+        }
+    }
+
     private fun restoreAudioMode(id: AudioStreamId?) {
         val manager = audioManager ?: return
         synchronized(audioModeLock) {
@@ -681,6 +743,8 @@ class AndroidMediaSink(
     }
 
     fun close() {
+        closedForPoll = true
+        audioModeHandler.removeCallbacks(audioModePoll)
         synchronized(screenStateLock) {
             activeScreenTypes.forEach { screenStreamActiveChanged?.invoke(it, false) }
             activeScreenTypes.clear()
