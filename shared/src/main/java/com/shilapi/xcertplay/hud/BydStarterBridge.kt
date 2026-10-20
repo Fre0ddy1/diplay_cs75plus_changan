@@ -1,12 +1,13 @@
 package com.shilapi.xcertplay.hud
 
 import android.content.Context
-import java.net.Socket
-import java.net.InetSocketAddress
 import android.os.SystemClock
 import android.util.Log
+import com.shilapi.xcertplay.shared.BuildConfig
 import java.io.DataInputStream
 import java.io.DataOutputStream
+import java.net.InetSocketAddress
+import java.net.Socket
 import java.util.concurrent.Executors
 import java.util.concurrent.TimeUnit
 
@@ -26,7 +27,7 @@ object BydStarterBridge {
     private var lastNotice: String? = null
 
     @Synchronized fun initialize(context: Context) {
-        if (context.packageName !in setOf("com.andrerinas.headunitrevived.bydhudtest", "com.shihab.diplay.hudtest") || started) return
+        if (!bydTestIdentity(context) || started) return
         val saved = context.getSharedPreferences("hud_starter", Context.MODE_PRIVATE).getString("token", null)
         token = decodeToken(saved)
         started = true
@@ -36,13 +37,24 @@ object BydStarterBridge {
     }
 
     @Synchronized fun configure(context: Context, secret: String) {
-        check(context.packageName in setOf("com.andrerinas.headunitrevived.bydhudtest", "com.shihab.diplay.hudtest"))
+        check(bydTestIdentity(context)) { "The starter bridge is restricted to test builds" }
         val parsed = requireNotNull(decodeToken(secret)) { "Invalid starter token" }
         context.getSharedPreferences("hud_starter", Context.MODE_PRIVATE).edit().putString("token", secret).apply()
         initialize(context)
         token = parsed
         Log.i(TAG, "Temporary starter credentials received")
     }
+
+    /**
+     * Test-only bridge. The debug build now shares the release application id, so the
+     * package name alone no longer marks a test install; the legacy test package names
+     * stay accepted for existing installs.
+     */
+    private fun bydTestIdentity(context: Context): Boolean =
+        BuildConfig.DEBUG || context.packageName in setOf(
+            "com.andrerinas.headunitrevived.bydhudtest",
+            "com.shihab.diplay.hudtest",
+        )
 
     private fun decodeToken(secret: String?): ByteArray? = secret?.takeIf { it.matches(Regex("[0-9a-f]{64}")) }
         ?.let { value -> ByteArray(32) { value.substring(it * 2, it * 2 + 2).toInt(16).toByte() } }

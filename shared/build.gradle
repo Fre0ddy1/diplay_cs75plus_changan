@@ -31,6 +31,11 @@ android {
         sourceCompatibility = JavaVersion.VERSION_11
         targetCompatibility = JavaVersion.VERSION_11
     }
+    buildFeatures {
+        // The debug build shares the release application id, so BYD HUD test-only
+        // paths key their "test build" decision on BuildConfig.DEBUG.
+        buildConfig = true
+    }
 }
 dependencies {
     implementation libs.androidx.app

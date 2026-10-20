@@ -39,13 +39,19 @@ android {
 
     buildTypes {
         debug {
-            applicationIdSuffix = ".hudtest"
+            // The debug build shares the release application id on purpose: one
+            // install slot, no uninstall dance when switching builds. It keeps the
+            // release signing key so debug and release APKs can overwrite each
+            // other, and the version suffix keeps them apart in app info.
             versionNameSuffix = "-hud-test"
+            signingConfig = signingConfigs.getByName("release")
         }
         release {
             optimization {
-                enable = false
+                enable = true
             }
+            isMinifyEnabled = true
+            isShrinkResources = true
             signingConfig = signingConfigs.getByName("release")
         }
     }

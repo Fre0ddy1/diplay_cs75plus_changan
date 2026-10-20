@@ -4,9 +4,24 @@
 # For more details, see
 #   https://d.android.com/r/tools/r8/keep-rules
 
-# If your project uses WebView with JS, uncomment the following
-# and specify the fully qualified class name to the JavaScript interface
-# class:
-#-keepclassmembers class fqcn.of.javascript.interface.for.webview {
-#   public *;
-#}
+# JNI: the native libraries export Java_com_shilapi_* symbols and the runtime
+# binds native methods by name, so the declaring classes and method names must
+# never be renamed or removed.
+-keepclasseswithmembernames,includedescriptorclasses class * {
+    native <methods>;
+}
+
+# JNI: shared/src/main/jni/linux_i2c_jni.c resolves this exception through
+# FindClass by its class-name string and calls its (int, String) constructor.
+-keep class com.shilapi.xcertplay.transport.LinuxI2cNativeException {
+    public <init>(int, java.lang.String);
+}
+
+# Readable crash traces from the field: keep line numbers and the original
+# source file name.
+-keepattributes SourceFile,LineNumberTable
+-renamesourcefileattribute SourceFile
+
+# Generic signatures, nested-class attributes and annotations are consumed by
+# Compose and AndroidX runtime code.
+-keepattributes Signature,InnerClasses,EnclosingMethod,*Annotation*

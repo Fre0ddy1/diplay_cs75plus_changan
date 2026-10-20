@@ -5,6 +5,7 @@ import android.content.Intent
 import android.content.pm.PackageManager
 import android.util.Log
 import com.shilapi.xcertplay.iap2.wire.Iap2Frame
+import com.shilapi.xcertplay.shared.BuildConfig
 import java.util.concurrent.Executors
 import java.util.concurrent.TimeUnit
 
@@ -41,7 +42,7 @@ internal object BydClusterBridge {
         } catch (_: PackageManager.NameNotFoundException) {
             false
         }
-        if (!available && appContext.packageName.endsWith(".hudtest")) {
+        if (!available && (BuildConfig.DEBUG || appContext.packageName.endsWith(".hudtest"))) {
             factory = BydFactoryNavigationOutput(appContext.applicationContext)
             available = true
         }
