@@ -498,6 +498,8 @@ class CarPlayHostActivity : ComponentActivity() {
     private var clusterWindowHidden = false
     /** Set once per process: the projection channel is warmed up at start, before any phone is here. */
     private var clusterPrewarmSent = false
+    /** When that prewarm sequence went out, so a connect right after it re-asserts silently. */
+    private var clusterPrewarmAtMs = 0L
     /** True when the activation ran but the channel never became ready inside the grace window. */
     private var clusterProjectionAbandoned = false
     /**
@@ -5616,8 +5618,21 @@ class CarPlayHostActivity : ComponentActivity() {
         if (clusterProjectionStarted || InCallClusterBridge.reportsProjecting()) return
         if (!AirPlayPersistence.loadAutoFlyScreen(this)) return
         clusterPrewarmSent = true
-        appendLog("Cluster prewarm: 启动即预热投屏通道（不等手机）")
-        InCallClusterBridge.openProjection(this)
+        // Decide after incall has had a chance to speak. Its callback announces the current state
+        // within a few tens of milliseconds of registering, and `reportsProjecting()` reads that
+        // live report - which is empty in a fresh process. Sending first and asking later is how a
+        // force-stop + relaunch would fire the announcing sequence at a panel that is already ours.
+        mainHandler.postDelayed({
+            if (shuttingDown.get() || isFinishing || isDestroyed) return@postDelayed
+            if (clusterProjectionStarted) return@postDelayed
+            if (InCallClusterBridge.reportsProjecting()) {
+                appendLog("Cluster prewarm: incall 已报投影中，不重复发送")
+                return@postDelayed
+            }
+            clusterPrewarmAtMs = SystemClock.elapsedRealtime()
+            appendLog("Cluster prewarm: 启动即预热投屏通道（不等手机）")
+            InCallClusterBridge.openProjection(this)
+        }, PREWARM_SETTLE_MS)
     }
 
     /**
@@ -5713,6 +5728,19 @@ class CarPlayHostActivity : ComponentActivity() {
             clusterProjectionStarted = true
             clusterProjectionAbandoned = false
             applyClusterMode(mirror, direction)
+            return
+        }
+        // A prewarm sequence went out moments ago: re-sending the full one would make the head
+        // unit announce "全屏镜像/导航已开启" a second time for the same activation.
+        if (!forceSequence && clusterPrewarmAtMs > 0L &&
+            SystemClock.elapsedRealtime() - clusterPrewarmAtMs < PREWARM_SILENT_WINDOW_MS
+        ) {
+            appendLog("Cluster activation: 刚预热过，静默重申（不播报第二次）")
+            clusterProjectionStarted = true
+            clusterProjectionAbandoned = false
+            InCallClusterBridge.reassertProjection(this)
+            applyClusterMode(mirror, direction)
+            awaitClusterProjectionReady(mirror, direction, waitedMs = 0L)
             return
         }
         // A window hidden by a disconnect needs no activation at all: incall never left projection
@@ -6038,6 +6066,17 @@ class CarPlayHostActivity : ComponentActivity() {
          * the driver stare at an empty panel; the wheel opens the dashboard by hand.
          */
         const val PROJECTION_CONFIRM_TIMEOUT_MS = 5_000L
+        /**
+         * How long the start-up prewarm waits before it decides. incall reports its current state
+         * within tens of milliseconds of the callback registration; a force-stop + relaunch must
+         * not send the announcing sequence to a panel that is still ours.
+         */
+        const val PREWARM_SETTLE_MS = 1_500L
+        /**
+         * After a start-up prewarm, a connect within this window re-asserts silently instead of
+         * running the announcing sequence a second time.
+         */
+        const val PREWARM_SILENT_WINDOW_MS = 25_000L
         // The swipe-down finger count that opens DiPlay settings is user-configurable in
         // DiPlay settings (3/4/5, persistence default 4) and is loaded into
         // settingsGestureFingers; two fingers stay reserved for map pinch-zoom.
