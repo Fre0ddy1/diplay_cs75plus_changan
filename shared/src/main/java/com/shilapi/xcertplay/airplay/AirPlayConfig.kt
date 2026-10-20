@@ -8,6 +8,23 @@ data class AirPlayInsets(
     val right: Int = 0,
 )
 
+/**
+ * A rectangle of the display's video stream that CarPlay can draw in, and optionally the edge for
+ * its dock ([AirPlayInfoPlist.DOCK_EDGE_DRIVER_SIDE] or [AirPlayInfoPlist.DOCK_EDGE_BOTTOM];
+ * null leaves it to the iPhone).
+ *
+ * Several areas of the same size that differ only in [dockEdge] are how the dock is moved without
+ * reconnecting: the car switches between them with updateViewArea (see
+ * [AirPlayInfoPlist.viewAreaCommand]).
+ */
+data class AirPlayViewArea(
+    val width: Int,
+    val height: Int,
+    val originX: Int = 0,
+    val originY: Int = 0,
+    val dockEdge: Int? = null,
+)
+
 /** One display advertised to the phone in /info. */
 data class AirPlayDisplayConfig(
     val widthPixels: Int,
@@ -22,6 +39,13 @@ data class AirPlayDisplayConfig(
     val initialUrl: String? = null,
     /** Display feature bits; null keeps the main-screen default (high-fidelity touch and knobs). */
     val features: Int? = null,
+    /**
+     * The view areas CarPlay may use on this display, or null for the whole display as one area.
+     * With several, the car moves CarPlay between them with updateViewArea, without reconnecting.
+     */
+    val viewAreas: List<AirPlayViewArea>? = null,
+    /** The area CarPlay starts in, an index into [viewAreas]. */
+    val initialViewArea: Int = 0,
 )
 
 /** One OEM homescreen icon. */

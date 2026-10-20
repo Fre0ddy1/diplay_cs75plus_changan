@@ -1,0 +1,9 @@
+<?xml version="1.0" encoding="utf-8"?>
+<resources>
+    <string name="carplay_dock">CarPlay 程序坞位置</string>
+    <string name="carplay_dock_automatic">自动（由 iPhone 决定）</string>
+    <string name="carplay_dock_driver_side">驾驶侧（左侧）</string>
+    <string name="carplay_dock_bottom">底部</string>
+    <string name="carplay_dock_hint">固定某一边后，驾驶侧与底部之间可在 CarPlay 运行时直接切换；改为自动需下次连接后生效。</string>
+    <string name="carplay_dock_moved">已移动程序坞</string>
+</resources>

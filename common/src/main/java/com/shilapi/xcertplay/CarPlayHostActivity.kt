@@ -65,6 +65,8 @@ import com.shilapi.xcertplay.airplay.CarPlayClusterDisplay
 import com.shilapi.xcertplay.airplay.AirPlaySafeArea
 import com.shilapi.xcertplay.airplay.AirPlaySession
 import com.shilapi.xcertplay.airplay.AirPlaySessionListener
+import com.shilapi.xcertplay.airplay.AirPlayViewArea
+import com.shilapi.xcertplay.airplay.AirPlayInfoPlist
 import com.shilapi.xcertplay.airplay.AirPlayContact
 import com.shilapi.xcertplay.airplay.CarPlayMediaEngine
 import com.shilapi.xcertplay.airplay.SafeAreaRect
@@ -413,6 +415,13 @@ class CarPlayHostActivity : ComponentActivity() {
     private var hideTopBar = true
     private var hideBottomBar = true
     private var safeAreaDrawOutside = true
+    // The dock the running session declared in /info, and the view areas it declared with it.
+    // A fixed dock declares one whole-screen area per edge, so the settings page can move the
+    // dock between the edges live (see applyCarPlayDock); AUTOMATIC declares a single area and
+    // applies on the next connection.
+    private var sessionDock: CarPlayDock? = null
+    private var sessionViewAreas: List<AirPlayViewArea>? = null
+    private var sessionViewAreaIndex = 0
     private var locationReportingEnabled = false
     private var locationPermissionAvailable = false
     private var microphoneAvailable = false
@@ -1842,6 +1851,7 @@ class CarPlayHostActivity : ComponentActivity() {
         // The background session may outlive this activity (system reclaim); drop the hot-restart
         // delegate so the settings page cannot invoke restartCarPlay() on a destroyed activity.
         CarPlayBackgroundSession.setRestart(null)
+        CarPlayBackgroundSession.setDockAction(null)
         pictureBinding?.close()
         pictureBinding = null
         sessionLog?.append("Activity destroyed")
@@ -3825,13 +3835,36 @@ class CarPlayHostActivity : ComponentActivity() {
             ),
             safeAreaDrawOutside = safeAreaDrawOutside,
         )
+        // A fixed dock declares one whole-screen view area per edge, so the dock can move between
+        // the driver's side and the bottom live, with updateViewArea on the event channel (tested
+        // upstream: the iPhone moves at once, no reconnect). AUTOMATIC keeps the single
+        // whole-display area this app has always declared and leaves the edge to the iPhone.
+        val dock = CarPlayDock.load(this).also { sessionDock = it }
+        sessionViewAreas = dock.edge?.let {
+            listOf(
+                AirPlayViewArea(
+                    display.widthPixels, display.heightPixels,
+                    dockEdge = AirPlayInfoPlist.DOCK_EDGE_DRIVER_SIDE,
+                ),
+                AirPlayViewArea(
+                    display.widthPixels, display.heightPixels,
+                    dockEdge = AirPlayInfoPlist.DOCK_EDGE_BOTTOM,
+                ),
+            )
+        }
+        sessionViewAreaIndex =
+            sessionViewAreas?.indexOfFirst { it.dockEdge == dock.edge }?.coerceAtLeast(0) ?: 0
+        val declared = sessionViewAreas
+            ?.let { display.copy(viewAreas = it, initialViewArea = sessionViewAreaIndex) }
+            ?: display
         val requestSummary = "Display request surface=${size.width}x${size.height} " +
             "resolution=${displayScaleTenths * 10}% " +
             "canvas=${display.widthPixels}x${display.heightPixels} fps=$fps " +
             "codec=${if (hevcEnabled) "HEVC" else "H.264"} softwareHevc=$hevcSoftwareDecoderEnabled"
         val effectiveSummary = "Display effective canvas=${display.widthPixels}x${display.heightPixels} " +
             "physical=${physical.widthMm}x${physical.heightMm}mm safeArea=${display.safeArea} " +
-            "drawOutside=${display.safeAreaDrawOutside}"
+            "drawOutside=${display.safeAreaDrawOutside} " +
+            "dock=${dock.name.lowercase()} viewAreas=${sessionViewAreas?.size ?: 1}"
         displayDiagnosticAttempt = DisplayDiagnosticSnapshot.begin(
             this, requestSummary, "Decoder capability enlargement check not required", effectiveSummary,
         )
@@ -3842,7 +3875,7 @@ class CarPlayHostActivity : ComponentActivity() {
             deviceId = DiPlayBootstrap.deviceId(airPlayIdentity),
             btMac = DiPlayBluetooth.localAddress(this) ?: DiPlayBootstrap.deviceId(airPlayIdentity),
             sourceVersion = "950.7.1",
-            main = display,
+            main = declared,
             cluster = clusterDisplayConfig(),
             rightHandDrive = rightHandDrive,
             hevc = hevcEnabled,
@@ -4555,6 +4588,11 @@ class CarPlayHostActivity : ComponentActivity() {
         controller = snapshot.controller
         sink = snapshot.sink
         sessionDisplay = snapshot.display
+        sessionDock = snapshot.display.viewAreas
+            ?.getOrNull(snapshot.display.viewAreaIndex)?.dockEdge
+            ?.let { edge -> CarPlayDock.entries.firstOrNull { it.edge == edge } }
+        sessionViewAreas = snapshot.display.viewAreas
+        sessionViewAreaIndex = snapshot.display.viewAreaIndex
         MapMirrors.reapply()
         CarPlayBackgroundSession.store(snapshot.controller, snapshot.sink, snapshot.width, snapshot.height,
             this, snapshot.display) { completion ->
@@ -4693,7 +4731,8 @@ class CarPlayHostActivity : ComponentActivity() {
         CarPlayMediaKeys.attach(this, next)
         if (airPlayConfig.videoInCar) CarPlayVideo.attach(this, next)
         val display = CarPlaySessionDisplay(airPlayConfig.main.widthPixels, airPlayConfig.main.heightPixels,
-            displayRotation(), hideTopBar, hideBottomBar, size.width, size.height)
+            displayRotation(), hideTopBar, hideBottomBar, size.width, size.height,
+            airPlayConfig.main.viewAreas, airPlayConfig.main.initialViewArea)
         sessionDisplay = display
         videoView?.let { updateVideoLayout(it.width, it.height) }
         CarPlayBackgroundSession.store(next, renderer, size.width, size.height, this, display) { completion ->
@@ -4721,6 +4760,9 @@ class CarPlayHostActivity : ComponentActivity() {
                 }
             }
         }
+        // The settings page moves the dock live while this session runs; like the restart hook,
+        // this only reads session state and writes to the event channel.
+        CarPlayBackgroundSession.setDockAction { next -> applyCarPlayDock(next) }
         try {
             ContextCompat.startForegroundService(this, Intent(this, DiPlaySessionService::class.java))
             next.start()
@@ -5009,6 +5051,28 @@ class CarPlayHostActivity : ComponentActivity() {
                 }
             }
         }
+    }
+
+    /**
+     * Moves the running session's dock to [next] when the session declared an area for that edge
+     * (a change between the two fixed edges); false when it cannot be done live, which is the
+     * caller's cue to reconnect. The session keeps the selection until its event channel can
+     * carry it, so a false only means the channel is not up yet.
+     */
+    private fun applyCarPlayDock(next: CarPlayDock): Boolean {
+        val areas = sessionViewAreas ?: return false
+        val target = areas.indexOfFirst { it.dockEdge == next.edge }
+        if (target < 0) return false
+        if (target == sessionViewAreaIndex) return true
+        val sent = controller?.showViewArea(target) ?: false
+        if (sent) {
+            sessionViewAreaIndex = target
+            appendLog("CarPlay dock moved to ${next.name.lowercase()} (view area $target)")
+        } else {
+            appendLog("CarPlay dock move to ${next.name.lowercase()} not sent yet; " +
+                "the session sends it when the event channel is ready")
+        }
+        return sent
     }
 
     private fun showDiPlayHome(page: String = "home") {
@@ -6165,6 +6229,10 @@ internal data class CarPlaySessionDisplay(
     // Compare unscaled startup window dimensions, not the scaled video canvas.
     val windowWidth: Int,
     val windowHeight: Int,
+    // The view areas the session declared (one per dock edge with a fixed dock), so an activity
+    // that adopts the live session can still move the dock without reconnecting.
+    val viewAreas: List<AirPlayViewArea>? = null,
+    val viewAreaIndex: Int = 0,
 )
 
 /** Process-local hand-off for keeping the CarPlay session alive while no Activity is visible. */
@@ -6172,6 +6240,7 @@ internal object CarPlayBackgroundSession {
     @Volatile var active = false
     private var stopAction: (((() -> Unit)) -> Unit)? = null
     private var restartAction: (() -> Unit)? = null
+    private var dockAction: ((CarPlayDock) -> Boolean)? = null
     private var stopping = false
     private var owner: Any? = null
     @Synchronized fun isOwner(candidate: Any): Boolean = owner === candidate
@@ -6230,6 +6299,18 @@ internal object CarPlayBackgroundSession {
 
     @Synchronized fun setRestart(action: (() -> Unit)?) {
         restartAction = action
+    }
+
+    /**
+     * Asks the running session to move CarPlay's dock to [dock], which only works between the two
+     * fixed edges (the session declared a view area per edge). False means the caller should
+     * reconnect instead - to or from the automatic dock, or without a live session.
+     */
+    @Synchronized fun applyCarPlayDock(dock: CarPlayDock): Boolean =
+        dockAction?.invoke(dock) == true
+
+    @Synchronized fun setDockAction(action: ((CarPlayDock) -> Boolean)?) {
+        dockAction = action
     }
 
     fun stop(completion: () -> Unit = {}) {
@@ -6296,6 +6377,7 @@ internal object CarPlayBackgroundSession {
         controller = null
         sink = null
         restartAction = null
+        dockAction = null
         if (!keepOwner) { stopAction = null; owner = null }
         active = false
         width = 0

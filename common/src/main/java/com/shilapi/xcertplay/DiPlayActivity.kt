@@ -642,6 +642,39 @@ class DiPlayActivity : ComponentActivity() {
             card.addView(label(getString(R.string.carplay_night_time_note), 14, MUTED).apply {
                 setPadding(0, 0, 0, dp(18))
             })
+            val docks = CarPlayDock.entries
+            // Labels follow the enum order, so adding or dropping an option can never shift a value.
+            val dockLabels = docks.map {
+                getString(
+                    when (it) {
+                        CarPlayDock.AUTOMATIC -> R.string.carplay_dock_automatic
+                        CarPlayDock.DRIVER_SIDE -> R.string.carplay_dock_driver_side
+                        CarPlayDock.BOTTOM -> R.string.carplay_dock_bottom
+                    },
+                )
+            }
+            choice(
+                card,
+                getString(R.string.carplay_dock),
+                dockLabels,
+                docks.indexOf(CarPlayDock.load(this)),
+                reconnects = false,
+            ) { index ->
+                val next = docks[index]
+                val from = CarPlayDock.load(this)
+                CarPlayDock.save(this, next)
+                // Between the two fixed edges the running session declares an area per edge, so
+                // the dock moves live with updateViewArea. Anything that touches Automatic
+                // changes what /info declares and applies on the next connection.
+                if (CarPlayDock.movesLive(from, next) && CarPlayBackgroundSession.applyCarPlayDock(next)) {
+                    toast(getString(R.string.carplay_dock_moved))
+                } else if (CarPlayBackgroundSession.hasSession()) {
+                    connect(AirPlayPersistence.loadWirelessEnabled(this))
+                }
+            }
+            card.addView(label(getString(R.string.carplay_dock_hint), 14, MUTED).apply {
+                setPadding(0, 0, 0, dp(18))
+            })
             card.addView(button(getString(R.string.picture_adjustments), false) {
                 startActivity(Intent(this, CarPlayHostActivity::class.java)
                     .putExtra("picture_controls", true).addFlags(Intent.FLAG_ACTIVITY_REORDER_TO_FRONT))

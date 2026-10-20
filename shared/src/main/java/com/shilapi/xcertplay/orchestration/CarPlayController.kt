@@ -442,6 +442,21 @@ class CarPlayController(
         }
     }
 
+    /**
+     * Moves CarPlay on the main screen to one of the declared view areas (another dock edge),
+     * without reconnecting. Returns whether the iPhone was told; the session keeps the selection
+     * until its event channel can carry it, so a false only means the channel is not up yet.
+     */
+    fun showViewArea(index: Int): Boolean {
+        if (closed) return false
+        val session = activeSession ?: return false
+        return try {
+            session.showViewArea(index)
+        } catch (_: Exception) {
+            false
+        }
+    }
+
     /** Sends a CarPlay knob/touchpad movement or button state through the AirPlay HID channel. */
     fun sendKnob(state: AirPlayKnobState, momentary: Boolean = true): Boolean {
         if (closed) return false

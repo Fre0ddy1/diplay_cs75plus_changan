@@ -85,6 +85,7 @@ class AirPlaySession(
     private var eventCipher: ControlCipher? = null
     private var eventCseq = 0
     private var pendingNightMode: Boolean? = null
+    private var pendingViewAreaIndex: Int? = null
     private val firstTouchSendLogged = AtomicBoolean(false)
     private val touchSendFailureLogged = AtomicBoolean(false)
     private val ntp = NtpClock()
@@ -279,6 +280,26 @@ class AirPlaySession(
     fun setNightMode(night: Boolean): Boolean = synchronized(eventWriteLock) {
         pendingNightMode = night
         sendPendingNightModeLocked()
+    }
+
+    /**
+     * Moves CarPlay on the main screen to one of the display's declared view areas, without
+     * reconnecting. Only meaningful when the config declared more than one area (the dock
+     * setting's fixed edges); with a single area the iPhone has nothing to switch to. Like the
+     * night mode, the selection is kept until the event channel can carry it.
+     */
+    fun showViewArea(index: Int): Boolean = synchronized(eventWriteLock) {
+        pendingViewAreaIndex = index
+        sendPendingViewAreaLocked()
+    }
+
+    private fun sendPendingViewAreaLocked(): Boolean {
+        val index = pendingViewAreaIndex ?: return true
+        val sent = sendCommandLocked(
+            AirPlayInfoPlist.viewAreaCommand(index, config.main.viewAreas?.size ?: 1),
+        )
+        if (sent) pendingViewAreaIndex = null
+        return sent
     }
 
     private fun sendPendingNightModeLocked(): Boolean {
@@ -723,6 +744,7 @@ class AirPlaySession(
             eventCipher = ControlCipher(readKey, writeKey)
             synchronized(eventWriteLock) {
                 sendPendingNightModeLocked()
+                sendPendingViewAreaLocked()
             }
             val videoDelivery = videoPlaybackAvailability.setEventReady(true)
             debugLog("airplay video event ready availability=$videoDelivery")

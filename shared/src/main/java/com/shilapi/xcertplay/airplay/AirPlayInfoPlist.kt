@@ -24,6 +24,30 @@ object AirPlayInfoPlist {
     private const val PRIORITY_NICE_TO_HAVE = 100
     private const val CONSTRAINT_ANYTIME = 100
 
+    /**
+     * viewAreaStatusBarEdge values, as CarPlay Simulator's StatusBarEdge (automatic, bottom,
+     * driver) and as seen on a tested head unit with iOS 27: 1 puts the dock at the bottom, 2 on
+     * the driver's side. A view area without the key leaves the edge to the iPhone.
+     */
+    const val DOCK_EDGE_BOTTOM = 1
+    const val DOCK_EDGE_DRIVER_SIDE = 2
+    private const val VIEW_AREA_ANIMATION_MILLIS = 300
+
+    /**
+     * updateViewArea for the main screen. Seen on a tested head unit with iOS 27: the iPhone acts
+     * on it only with an animation duration and the adjacent areas, the arguments CarPlaySDK's
+     * ViewAreaUpdate takes.
+     */
+    fun viewAreaCommand(index: Int, areaCount: Int): Map<String, Any?> = linkedMapOf(
+        "type" to "updateViewArea",
+        "params" to linkedMapOf(
+            "uuid" to MAIN_UUID,
+            "viewAreaIndex" to index,
+            "animationDurationMillis" to VIEW_AREA_ANIMATION_MILLIS,
+            "adjacentViewAreas" to (0 until areaCount).filter { it != index },
+        ),
+    )
+
     /** Discovery and /info must describe the same receiver capabilities. */
     fun features(config: AirPlayConfig): Long =
         if (config.disableAudioOutput) CARPLAY_FEATURES_NO_AUDIO else CARPLAY_FEATURES
@@ -179,16 +203,28 @@ object AirPlayInfoPlist {
             "primaryInputDevice" to display.primaryInputDevice,
         )
 
-        entry["viewAreas"] = listOf(areaDict(display))
-        entry["initialViewArea"] = 0
+        entry["viewAreas"] = display.viewAreas?.takeIf { it.isNotEmpty() }
+            ?.map { areaDict(display, it) }
+            ?: listOf(areaDict(display))
+        entry["initialViewArea"] = if (display.viewAreas.isNullOrEmpty()) 0
+            else display.initialViewArea.coerceIn(0, display.viewAreas!!.lastIndex)
+        // Several areas let the car move CarPlay between them (another dock edge) with
+        // updateViewArea, without reconnecting.
+        if (!display.viewAreas.isNullOrEmpty() && display.viewAreas!!.size > 1) {
+            entry["viewAreaTransitionControl"] = true
+        }
         if (display.initialUrl != null) entry["initialURL"] = display.initialUrl
         return entry
     }
 
-    private fun areaDict(display: AirPlayDisplayConfig): Map<String, Any?> {
+    private fun areaDict(display: AirPlayDisplayConfig, area: AirPlayViewArea? = null): Map<String, Any?> {
         // The session SETUP response enables "viewAreas", so /info must always describe one.
-        // A display without custom insets uses the full panel for both the view and safe areas.
-        val view = display.viewArea ?: AirPlayInsets()
+        // A display without custom insets uses the full panel for both the view and safe areas; an
+        // explicit area replaces the display's view insets and clips its safe area.
+        val view = area?.let {
+            AirPlayInsets(top = it.originY, bottom = display.heightPixels - it.originY - it.height,
+                left = it.originX, right = display.widthPixels - it.originX - it.width)
+        } ?: display.viewArea ?: AirPlayInsets()
         val width = display.widthPixels
         val height = display.heightPixels
         val result = linkedMapOf<String, Any?>(
@@ -197,7 +233,14 @@ object AirPlayInfoPlist {
             "originXPixels" to view.left,
             "originYPixels" to view.top,
         )
-        val safe = display.safeArea ?: AirPlayInsets()
+        area?.dockEdge?.let { result["viewAreaStatusBarEdge"] = it }
+        val displaySafe = display.safeArea ?: AirPlayInsets()
+        val safe = if (area == null) displaySafe else AirPlayInsets(
+            top = maxOf(displaySafe.top, view.top),
+            bottom = maxOf(displaySafe.bottom, view.bottom),
+            left = maxOf(displaySafe.left, view.left),
+            right = maxOf(displaySafe.right, view.right),
+        )
         val safeArea = linkedMapOf<String, Any?>(
             "widthPixels" to (width - safe.left - safe.right),
             "heightPixels" to (height - safe.top - safe.bottom),

@@ -230,4 +230,117 @@ class AirPlayInfoPlistTest {
             .toSet()
         assertEquals(setOf(100, 101, 102), types)
     }
+
+    @Test
+    fun automaticDockDeclaresOneAreaWithoutAnEdge() {
+        val info = AirPlayInfoPlist.build(
+            AirPlayConfig(
+                deviceName = "test",
+                deviceId = "02:00:00:00:00:02",
+                btMac = "02:00:00:00:00:02",
+                sourceVersion = "366.0",
+                main = AirPlayDisplayConfig(widthPixels = 1280, heightPixels = 720),
+            ),
+        )
+
+        val display = (info["displays"] as List<*>).single() as Map<*, *>
+        val areas = display["viewAreas"] as List<*>
+        assertEquals(1, areas.size)
+        assertEquals(0, display["initialViewArea"])
+        assertFalse(display.containsKey("viewAreaTransitionControl"))
+        assertFalse((areas.single() as Map<*, *>).containsKey("viewAreaStatusBarEdge"))
+    }
+
+    @Test
+    fun fixedDockDeclaresOneWholeScreenAreaPerEdge() {
+        val main = AirPlayDisplayConfig(
+            widthPixels = 1280,
+            heightPixels = 720,
+            safeArea = AirPlayInsets(top = 10, bottom = 15, left = 20, right = 25),
+            viewAreas = listOf(
+                AirPlayViewArea(1280, 720, dockEdge = AirPlayInfoPlist.DOCK_EDGE_DRIVER_SIDE),
+                AirPlayViewArea(1280, 720, dockEdge = AirPlayInfoPlist.DOCK_EDGE_BOTTOM),
+            ),
+            initialViewArea = 1,
+        )
+        val info = AirPlayInfoPlist.build(
+            AirPlayConfig(
+                deviceName = "test",
+                deviceId = "02:00:00:00:00:02",
+                btMac = "02:00:00:00:00:02",
+                sourceVersion = "366.0",
+                main = main,
+            ),
+        )
+
+        val display = (info["displays"] as List<*>).single() as Map<*, *>
+        val areas = display["viewAreas"] as List<*>
+        assertEquals(2, areas.size)
+        assertEquals(1, display["initialViewArea"])
+        assertEquals(true, display["viewAreaTransitionControl"])
+        assertEquals(
+            listOf(AirPlayInfoPlist.DOCK_EDGE_DRIVER_SIDE, AirPlayInfoPlist.DOCK_EDGE_BOTTOM),
+            areas.map { (it as Map<*, *>)["viewAreaStatusBarEdge"] },
+        )
+        // A whole-screen area keeps the display's own insets, so nothing else about the picture
+        // changes when the dock moves.
+        areas.forEach { area ->
+            val view = area as Map<*, *>
+            assertEquals(1280, view["widthPixels"])
+            assertEquals(720, view["heightPixels"])
+            assertEquals(0, view["originXPixels"])
+            assertEquals(0, view["originYPixels"])
+            val safe = view["safeArea"] as Map<*, *>
+            assertEquals(1235, safe["widthPixels"])
+            assertEquals(695, safe["heightPixels"])
+            assertEquals(20, safe["originXPixels"])
+            assertEquals(10, safe["originYPixels"])
+        }
+    }
+
+    @Test
+    fun smallerAreaReplacesViewInsetsAndClipsTheSafeArea() {
+        val info = AirPlayInfoPlist.build(
+            AirPlayConfig(
+                deviceName = "test",
+                deviceId = "02:00:00:00:00:02",
+                btMac = "02:00:00:00:00:02",
+                sourceVersion = "366.0",
+                main = AirPlayDisplayConfig(
+                    widthPixels = 1280,
+                    heightPixels = 720,
+                    safeArea = AirPlayInsets(top = 10, bottom = 15, left = 20, right = 25),
+                    viewAreas = listOf(AirPlayViewArea(640, 360, originX = 320, originY = 180)),
+                    initialViewArea = 0,
+                ),
+            ),
+        )
+
+        val display = (info["displays"] as List<*>).single() as Map<*, *>
+        val area = (display["viewAreas"] as List<*>).single() as Map<*, *>
+        assertEquals(640, area["widthPixels"])
+        assertEquals(360, area["heightPixels"])
+        assertEquals(320, area["originXPixels"])
+        assertEquals(180, area["originYPixels"])
+        val safe = area["safeArea"] as Map<*, *>
+        assertEquals(640, safe["widthPixels"])
+        assertEquals(360, safe["heightPixels"])
+        assertEquals(320, safe["originXPixels"])
+        assertEquals(180, safe["originYPixels"])
+    }
+
+    @Test
+    fun viewAreaCommandCarriesAnimationAndTheOtherAreas() {
+        val command = AirPlayInfoPlist.viewAreaCommand(1, areaCount = 2)
+        assertEquals("updateViewArea", command["type"])
+        val params = command["params"] as Map<*, *>
+        assertEquals(AirPlayInfoPlist.MAIN_UUID, params["uuid"])
+        assertEquals(1, params["viewAreaIndex"])
+        assertEquals(300, params["animationDurationMillis"])
+        assertEquals(listOf(0), params["adjacentViewAreas"])
+        assertEquals(
+            listOf(0, 1, 3),
+            (AirPlayInfoPlist.viewAreaCommand(2, areaCount = 4)["params"] as Map<*, *>)["adjacentViewAreas"],
+        )
+    }
 }
