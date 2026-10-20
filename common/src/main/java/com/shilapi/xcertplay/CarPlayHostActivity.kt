@@ -497,16 +497,6 @@ class CarPlayHostActivity : ComponentActivity() {
     // 镜像已开启" (driver request 2026-10-18: a returning phone must stay silent).
     private var clusterWindowHidden = false
     /**
-     * False while the dashboard window was created before the head unit entered projection mode.
-     *
-     * incall lays an already existing ext-screen window out as its small preview box at the right
-     * of the panel and does not re-lay it out when the projection mode is switched on, so a cold
-     * start ended with "a small square showing part of the CarPlay picture" (field report
-     * 2026-10-20). The window has to be re-created after the open sequence; this flag makes that
-     * happen once per activation instead of on every silent re-assert.
-     */
-    private var clusterWindowLaidOutForProjection = false
-    /**
      * How long the dashboard picture may stay frozen before it is hidden.
      *
      * Hiding is all a disconnect does now: the window goes invisible (taking the frozen frame with
@@ -1431,8 +1421,6 @@ class CarPlayHostActivity : ComponentActivity() {
         clusterExtScreenReleased = true
         clusterProjectionStarted = false
         clusterWindowHidden = false
-        // The panel is the head unit's again: the next window starts in the preview layout.
-        clusterWindowLaidOutForProjection = false
         mainHandler.removeCallbacks(releaseDashboardAfterLongLoss)
         appendLog(
             "Disconnect: 已归还原车仪表画面" +
@@ -1443,7 +1431,6 @@ class CarPlayHostActivity : ComponentActivity() {
     private fun dismissClusterPresentation() {
         // A dismissed window cannot be "merely hidden" any more: the next one has to be activated.
         clusterWindowHidden = false
-        clusterWindowLaidOutForProjection = false
         mainHandler.removeCallbacks(releaseDashboardAfterLongLoss)
         val presentations = (clusterLayers.values + listOfNotNull(clusterPresentation)).distinct()
         clusterLayers.clear()
@@ -5610,9 +5597,6 @@ class CarPlayHostActivity : ComponentActivity() {
             clusterExtScreenReleased = false
         }
         clusterProjectionStarted = true
-        // A new open sequence means incall re-lays-out the ext-screen, so whatever layout the
-        // current window has is worthless afterwards.
-        clusterWindowLaidOutForProjection = false
         // The window was created hidden (see ensureClusterPresentation): the head unit is about to
         // be put into projection mode, so it may become visible now.
         clusterPresentation?.setMapVisible(true)
@@ -5670,16 +5654,6 @@ class CarPlayHostActivity : ComponentActivity() {
                         "(激活序列已发送，incall 是否接受需看仪表盘实际画面) mirror=$mirror",
                 )
                 applyClusterMode(mirror, direction)
-                // Re-create the window once, unconditionally. It is created seconds before the
-                // open sequence so a swipe has a picture at hand, and whether incall gives it the
-                // whole panel or its small preview box varies from drive to drive. Measuring and
-                // deciding was worse than the problem: the runs that came out small stayed small.
-                // One rebuild after activation always starts from a projected panel; a driver who
-                // still gets a small box can open the dashboard from the wheel.
-                mainHandler.postDelayed(
-                    { rebuildClusterWindowAfterActivation(mirror, direction) },
-                    700L,
-                )
             } else if (attempt < 3) {
                 appendLog("Cluster activation: 激活后未找到仪表投影 display，重试 $attempt")
                 finishActivation(mirror, direction, attempt + 1)
@@ -5692,34 +5666,6 @@ class CarPlayHostActivity : ComponentActivity() {
                 ).show()
             }
         }, 1600L)
-    }
-
-    /**
-     * Re-creates the dashboard window once the head unit has really switched to projection mode.
-     *
-     * Window creation has to stay early - a swipe needs a picture at hand before the first
-     * projection - but incall may lay such a window out as its small preview box at the right of
-     * the panel and keep it there, and the failure is intermittent. An earlier version measured the
-     * frame and only acted when it was small; the driver's verdict was the opposite of what that
-     * was meant to buy: "just project onto it, if it fails I'll open it from the wheel". So the
-     * window is always re-created once after the sequence, which costs one short black frame and
-     * always starts from a panel that is already in projection mode.
-     */
-    private fun rebuildClusterWindowAfterActivation(mirror: Boolean, direction: String) {
-        if (DiLink51ClusterLayout.supported()) return
-        if (shuttingDown.get() || isFinishing || isDestroyed) return
-        if (clusterWindowLaidOutForProjection) return
-        val presentation = clusterPresentation ?: return
-        val frame = presentation.windowFrame()
-        appendLog(
-            "Cluster activation: 重建仪表窗口（激活前的窗口 ${frame.x}x${frame.y}，" +
-                "不一定被排成整屏）",
-        )
-        // dismissClusterPresentation() clears the flag again, so it is set afterwards.
-        dismissClusterPresentation()
-        ensureClusterWindowQuiet()
-        applyClusterMode(mirror, direction)
-        clusterWindowLaidOutForProjection = true
     }
 
     // Normalized position of Amap CarPlay's "全览" (overview) toggle button, bottom of the

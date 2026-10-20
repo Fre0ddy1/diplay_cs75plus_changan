@@ -336,25 +336,6 @@ internal class ClusterMapPresentation(
         }
     }
 
-    /**
-     * The window's current frame. incall hands a window that already exists before projection a
-     * small preview frame at the right of the panel, and this is how that state is detected: the
-     * frame is far smaller than the panel even though our layout is MATCH_PARENT.
-     */
-    fun windowFrame(): Point {
-        val decor = window?.decorView ?: return Point(0, 0)
-        return Point(decor.width, decor.height)
-    }
-
-    /**
-     * Asks the window manager to lay this window out over the whole panel again. Cheap - no new
-     * surface, no decoder rebind - so it is tried before the window is thrown away and re-created.
-     */
-    fun requestFullPanelLayout() {
-        val window = window ?: return
-        window.setLayout(projectionSize.x, projectionSize.y)
-    }
-
     fun setTurnCardOverlay(xPx: Int, yPx: Int, scalePercent: Int) {
         turnCardView?.setLayout(xPx, yPx, scalePercent)
     }
