@@ -4055,6 +4055,23 @@ class CarPlayHostActivity : ComponentActivity() {
      */
     @Volatile private var navigationGuidanceActive = false
 
+    /**
+     * Ends the guidance volume window.
+     *
+     * The flag comes from the navigation stream's start/stop edges, and on this head unit that
+     * stream can stay open far longer than a prompt - the driver was left unable to raise the
+     * music for minutes because every volume key was routed to guidance, which also made the
+     * guidance volume itself drift down (field report 2026-10-20). A prompt is seconds long, so
+     * the routing is only trusted for this window and then handed back to media on its own.
+     */
+    private val endGuidanceVolumeWindow = Runnable {
+        if (isDestroyed || isFinishing) return@Runnable
+        if (!navigationGuidanceActive) return@Runnable
+        navigationGuidanceActive = false
+        setVolumeControlStream(AudioManager.STREAM_MUSIC)
+        appendLog("Volume control stream: media（导航音量窗口结束，恢复媒体音量键）")
+    }
+
     private fun onNavigationGuidanceChanged(active: Boolean) {
         navigationGuidanceActive = active
         runOnUiThread {
@@ -4063,7 +4080,10 @@ class CarPlayHostActivity : ComponentActivity() {
             if (active && navChannel > 0) {
                 setVolumeControlStream(navChannel)
                 appendLog("Volume control stream: navigation($navChannel)")
+                mainHandler.removeCallbacks(endGuidanceVolumeWindow)
+                mainHandler.postDelayed(endGuidanceVolumeWindow, GUIDANCE_VOLUME_WINDOW_MS)
             } else {
+                mainHandler.removeCallbacks(endGuidanceVolumeWindow)
                 setVolumeControlStream(AudioManager.STREAM_MUSIC)
                 appendLog("Volume control stream: media")
             }
@@ -6059,6 +6079,12 @@ class CarPlayHostActivity : ComponentActivity() {
         const val AUDIO_CAPTURE_DIRECTORY = "audio-captures"
         const val PROTOCOL_TRACE_PREFIX = "TRACE "
         const val GESTURE_MIN_FINGERS = 3
+        /**
+         * How long the volume keys stay on the guidance stream after a prompt starts. A prompt is
+         * a few seconds; the navigation stream on this head unit can stay open much longer, and
+         * routing the keys for that whole time leaves the driver unable to change the music.
+         */
+        const val GUIDANCE_VOLUME_WINDOW_MS = 12_000L
         /**
          * How long the dashboard waits for incall's "projecting" confirmation after the phone
          * connected, before this attempt is dropped. The open sequence alone takes up to ~11 s on

@@ -60,12 +60,14 @@ internal class MicrophoneUplink(
         }
 
         val source = when (config.audioType) {
-            // VOICE_RECOGNITION does not honour the requested rate on this head unit: a 2.8 s
-            // WeChat voice clip produced 9.8 s of samples (338 kB/s against 96 kB/s expected,
-            // measured 2026-10-20), so the phone received audio running at 3.5x speed and played
-            // it as noise. VOICE_COMMUNICATION is the path the call uplink already uses and it
-            // runs at the negotiated 48 kHz.
-            "telephony", "speechrecognition" -> MediaRecorder.AudioSource.VOICE_COMMUNICATION
+            "telephony" -> MediaRecorder.AudioSource.VOICE_COMMUNICATION
+            // Deliberately NOT VOICE_COMMUNICATION for voice-recognition uplinks: that source
+            // moves the whole head unit onto its call audio path, and on this car a WeChat voice
+            // clip captured that way left the navigation volume lowered and the audio garbled for
+            // a few seconds (field report 2026-10-20). VOICE_RECOGNITION reports ~3.5x the
+            // requested rate here, which the wall-clock pacing in capture() now absorbs by
+            // dropping the frames that arrive early.
+            "speechrecognition" -> MediaRecorder.AudioSource.VOICE_RECOGNITION
             else -> MediaRecorder.AudioSource.MIC
         }
         val nextEncoder = if (config.codec == AudioCodecKind.OPUS) {

@@ -98,10 +98,8 @@ internal class MicrophoneCaptureStats(
 
         private fun metadata(config: MicrophoneConfig): String {
             val (type, source) = when (config.audioType) {
-                // Both uplink types capture through VOICE_COMMUNICATION now (see MicrophoneUplink:
-                // VOICE_RECOGNITION ran at ~3.5x the requested rate on this head unit).
                 "telephony" -> "telephony" to "VOICE_COMMUNICATION"
-                "speechrecognition" -> "speechrecognition" to "VOICE_COMMUNICATION"
+                "speechrecognition" -> "speechrecognition" to "VOICE_RECOGNITION"
                 else -> "other" to "MIC"
             }
             return "type=$type source=$source codec=${config.codec.name} " +

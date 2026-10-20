@@ -11,6 +11,7 @@ import android.media.MediaFormat
 import android.os.Build
 import android.os.Handler
 import android.os.Looper
+import android.os.SystemClock
 import android.util.Log
 import android.view.Surface
 import com.shilapi.xcertplay.airplay.AudioCodecKind
@@ -309,6 +310,9 @@ class AndroidMediaSink(
 
     /** Whether the head unit had the music stream muted before the call (it can mute without changing the level). */
     private var savedMusicMuted = false
+
+    /** When that snapshot was taken; an old one must never overwrite a level the driver set since. */
+    private var savedMusicVolumeAtMs = 0L
     // Re-asserts the audio mode after a call; separate from AudioFocusCoordinator's handler,
     // which only drives the media duck.
     private val audioModeHandler = Handler(Looper.getMainLooper())
@@ -318,6 +322,9 @@ class AndroidMediaSink(
 
     /** A later pass that restores the music level even when the head unit kept its call mode. */
     private val AUDIO_MODE_LATE_CHECK_MS = 5_000L
+
+    /** How long a pre-call music snapshot stays usable. */
+    private val MUSIC_SNAPSHOT_TTL_MS = 120_000L
 
     /** How often the head unit's audio mode is sampled to catch calls that never reach our streams. */
     private val AUDIO_MODE_POLL_MS = 1_500L
@@ -593,6 +600,7 @@ class AndroidMediaSink(
             savedAudioMode = manager.mode
             savedMusicVolume = runCatching { manager.getStreamVolume(AudioManager.STREAM_MUSIC) }.getOrNull()
             savedMusicMuted = runCatching { manager.isStreamMute(AudioManager.STREAM_MUSIC) }.getOrDefault(false)
+            savedMusicVolumeAtMs = SystemClock.elapsedRealtime()
             manager.mode = AudioManager.MODE_IN_COMMUNICATION
             communicationModeStream = id
             Log.i("xcertplay-usb", "audio mode $savedAudioMode -> ${manager.mode} for telephony stream=$id")
@@ -621,6 +629,17 @@ class AndroidMediaSink(
         val current = runCatching { manager.getStreamVolume(AudioManager.STREAM_MUSIC) }.getOrNull()
         if (current == null) {
             savedMusicVolume = null
+            return
+        }
+        // Only ever correct a level the head unit lowered. A higher level than the snapshot is the
+        // driver's own doing (he raised it during the call), and replaying an old snapshot over it
+        // is what made "I turn the volume up and it comes back down" (field report 2026-10-20).
+        val stale = SystemClock.elapsedRealtime() - savedMusicVolumeAtMs > MUSIC_SNAPSHOT_TTL_MS
+        if (stale || current >= saved) {
+            savedMusicVolume = null
+            onAudioDiagnostic(
+                "Audio: music level kept at $current (snapshot $saved, stale=$stale, $reason)",
+            )
             return
         }
         if (current == saved) {
@@ -658,6 +677,7 @@ class AndroidMediaSink(
                 if (savedMusicVolume == null) {
                     savedMusicVolume = music
                     savedMusicMuted = muted
+                    savedMusicVolumeAtMs = SystemClock.elapsedRealtime()
                     onAudioDiagnostic("Audio: call detected (mode=$mode), music snapshot=$music")
                 }
             }
