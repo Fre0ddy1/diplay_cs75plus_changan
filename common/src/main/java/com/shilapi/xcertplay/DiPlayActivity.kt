@@ -394,6 +394,7 @@ class DiPlayActivity : ComponentActivity() {
         card.addView(button(getString(R.string.choose_iphone), false) { choosePhone() }, matchButton(16, 56))
         disconnectButton = button(getString(R.string.disconnect), false) {
             disconnectButton?.isEnabled = false
+            CarPlayBackgroundSession.releaseSettingsHold()
             CarPlayBackgroundSession.stop { runOnUiThread { refreshStatus() } }
         }.apply { visibility = View.GONE }
         card.addView(disconnectButton, matchButton(10, 56))
@@ -2521,7 +2522,10 @@ class DiPlayActivity : ComponentActivity() {
             AirPlayPersistence.saveWirelessEnabled(this, wireless)
             launchCarPlayScreen()
         }
-        if (CarPlayBackgroundSession.hasSession()) CarPlayBackgroundSession.stop { runOnUiThread { open() } }
+        if (CarPlayBackgroundSession.hasSession()) {
+            CarPlayBackgroundSession.releaseSettingsHold()
+            CarPlayBackgroundSession.stop { runOnUiThread { open() } }
+        }
         else open()
     }
     /**
@@ -2584,6 +2588,7 @@ class DiPlayActivity : ComponentActivity() {
         AlertDialog.Builder(this).setTitle(getString(R.string.reset_carplay_wi_fi_2))
             .setMessage(getString(R.string.this_ends_the_existing_wi_fi_direct_connection_including_o))
             .setPositiveButton(getString(R.string.reset_and_connect)) { _, _ ->
+                CarPlayBackgroundSession.releaseSettingsHold()
                 CarPlayBackgroundSession.stop { runOnUiThread { resetWirelessGroup() } }
             }.setNegativeButton(getString(R.string.cancel), null).show()
     }

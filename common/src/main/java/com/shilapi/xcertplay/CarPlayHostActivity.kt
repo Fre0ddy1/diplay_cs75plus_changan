@@ -1041,6 +1041,10 @@ class CarPlayHostActivity : ComponentActivity() {
 
     override fun onResume() {
         super.onResume()
+        // Back from the settings page: a stop requested while it was open was ignored, so the
+        // session has to become stoppable again.
+        CarPlayBackgroundSession.releaseSettingsHold()
+        CarPlayBackgroundSession.logger = { message -> appendLog(message) }
         val languagePreference = AppLocale.preference(this)
         if (Build.VERSION.SDK_INT < 33 && languagePreference != languagePreferenceAtCreate) {
             languagePreferenceAtCreate = languagePreference
@@ -1792,6 +1796,7 @@ class CarPlayHostActivity : ComponentActivity() {
     }
 
     override fun onDestroy() {
+        if (CarPlayBackgroundSession.logger != null) CarPlayBackgroundSession.logger = null
         if (clusterDisplayListenerRegistered) {
             runCatching {
                 getSystemService(android.hardware.display.DisplayManager::class.java)
@@ -4988,6 +4993,10 @@ class CarPlayHostActivity : ComponentActivity() {
 
     private fun showDiPlayHome(page: String = "home") {
         controller?.sendTouch(emptyList())
+        // The settings page runs in its own activity, which puts the CarPlay task in the
+        // background; hold the session across that trip so the driver gets settings, not a
+        // reconnect panel.
+        CarPlayBackgroundSession.holdForSettings()
         startActivity(Intent(this, DiPlayActivity::class.java)
             .putExtra("page", page).addFlags(Intent.FLAG_ACTIVITY_REORDER_TO_FRONT))
     }
@@ -5671,13 +5680,14 @@ class CarPlayHostActivity : ComponentActivity() {
                         "(激活序列已发送，incall 是否接受需看仪表盘实际画面) mirror=$mirror",
                 )
                 applyClusterMode(mirror, direction)
-                // The window usually already exists by now (it is created as soon as a screen
-                // stream is up, seconds before the open sequence). Whether incall laid it out over
-                // the whole panel or kept it as its small preview box varies from drive to drive
-                // (field report 2026-10-20: "sometimes fine, sometimes a small square"), so the
-                // frame is measured and only fixed when it is actually wrong.
+                // Re-create the window once, unconditionally. It is created seconds before the
+                // open sequence so a swipe has a picture at hand, and whether incall gives it the
+                // whole panel or its small preview box varies from drive to drive. Measuring and
+                // deciding was worse than the problem: the runs that came out small stayed small.
+                // One rebuild after activation always starts from a projected panel; a driver who
+                // still gets a small box can open the dashboard from the wheel.
                 mainHandler.postDelayed(
-                    { verifyClusterWindowLayout(mirror, direction) },
+                    { rebuildClusterWindowAfterActivation(mirror, direction) },
                     700L,
                 )
             } else if (attempt < 3) {
@@ -5695,43 +5705,26 @@ class CarPlayHostActivity : ComponentActivity() {
     }
 
     /**
-     * Makes sure the dashboard window really covers the panel after activation.
+     * Re-creates the dashboard window once the head unit has really switched to projection mode.
      *
      * Window creation has to stay early - a swipe needs a picture at hand before the first
      * projection - but incall may lay such a window out as its small preview box at the right of
-     * the panel and keep it there. The driver's report is intermittent ("sometimes fine, sometimes
-     * a small square"), so this measures the frame instead of rebuilding blindly:
-     *
-     *  - full size  -> nothing to do, no black frame;
-     *  - too small  -> ask for a full-panel layout first (no surface is touched, no decoder rebind);
-     *  - still small after that -> re-create the window, which costs one rebind.
+     * the panel and keep it there, and the failure is intermittent. An earlier version measured the
+     * frame and only acted when it was small; the driver's verdict was the opposite of what that
+     * was meant to buy: "just project onto it, if it fails I'll open it from the wheel". So the
+     * window is always re-created once after the sequence, which costs one short black frame and
+     * always starts from a panel that is already in projection mode.
      */
-    private fun verifyClusterWindowLayout(mirror: Boolean, direction: String, attempt: Int = 0) {
+    private fun rebuildClusterWindowAfterActivation(mirror: Boolean, direction: String) {
         if (DiLink51ClusterLayout.supported()) return
         if (shuttingDown.get() || isFinishing || isDestroyed) return
         if (clusterWindowLaidOutForProjection) return
         val presentation = clusterPresentation ?: return
-        val display = ClusterMapPresentation.findDisplay(this) ?: return
-        val expected = ClusterMapPresentation.sizeOf(display)
         val frame = presentation.windowFrame()
-        // Nine tenths of the panel is generous enough for a one-pixel rounding difference and far
-        // above any preview box.
-        val full = frame.x >= expected.x * 9 / 10 && frame.y >= expected.y * 9 / 10
-        if (full) {
-            clusterWindowLaidOutForProjection = true
-            appendLog("Cluster activation: 仪表窗口尺寸正常 ${frame.x}x${frame.y}，不重建")
-            return
-        }
-        if (attempt == 0) {
-            appendLog(
-                "Cluster activation: 仪表窗口只有 ${frame.x}x${frame.y} " +
-                    "（应为 ${expected.x}x${expected.y}），先请求整屏布局",
-            )
-            presentation.requestFullPanelLayout()
-            mainHandler.postDelayed({ verifyClusterWindowLayout(mirror, direction, 1) }, 400L)
-            return
-        }
-        appendLog("Cluster activation: 整屏布局无效，重建仪表窗口")
+        appendLog(
+            "Cluster activation: 重建仪表窗口（激活前的窗口 ${frame.x}x${frame.y}，" +
+                "不一定被排成整屏）",
+        )
         // dismissClusterPresentation() clears the flag again, so it is set afterwards.
         dismissClusterPresentation()
         ensureClusterWindowQuiet()
@@ -6022,6 +6015,46 @@ internal object CarPlayBackgroundSession {
     @Synchronized fun hasSession(): Boolean = stopAction != null || stopping
     private val stopWaiters = mutableListOf<() -> Unit>()
 
+    /** Where the hold diagnostics go; the host activity points this at its own log. */
+    @Volatile var logger: ((String) -> Unit)? = null
+
+    /**
+     * True while the settings page is in front of CarPlay.
+     *
+     * Opening settings from the CarPlay screen starts DiPlayActivity, which moves the CarPlay task
+     * into the background. Something in that transition ends the session (the driver sees the
+     * connect panel instead of the settings page, and the dashboard is handed back - field report
+     * 2026-10-20), so a stop request is ignored while this page is open. A disconnect the driver
+     * asks for from the settings page calls [releaseSettingsHold] first.
+     */
+    private var settingsHoldAtMs = 0L
+
+    private const val SETTINGS_HOLD_MAX_MS = 120_000L
+
+    fun holdForSettings() {
+        settingsHoldAtMs = SystemClock.elapsedRealtime()
+        logger?.invoke("Session: settings page opened, session held")
+    }
+
+    fun releaseSettingsHold() {
+        if (settingsHoldAtMs != 0L) {
+            settingsHoldAtMs = 0L
+            logger?.invoke("Session: settings page left, session hold released")
+        }
+    }
+
+    private fun settingsHoldActive(): Boolean {
+        val started = settingsHoldAtMs
+        if (started == 0L) return false
+        // A hold that was never released (app killed on the settings page) must not block a
+        // disconnect forever.
+        if (SystemClock.elapsedRealtime() - started > SETTINGS_HOLD_MAX_MS) {
+            settingsHoldAtMs = 0L
+            return false
+        }
+        return true
+    }
+
     /**
      * Hot-restarts the running session in place (keeps the cluster projection window alive),
      * used by the settings page so a cluster settings change re-applies without tearing down
@@ -6037,6 +6070,13 @@ internal object CarPlayBackgroundSession {
     }
 
     fun stop(completion: () -> Unit = {}) {
+        if (settingsHoldActive()) {
+            val where = Throwable().stackTrace.drop(1).take(7)
+                .joinToString(" <- ") { "${it.className.substringAfterLast('.')}.${it.methodName}" }
+            logger?.invoke("Session: stop ignored while the settings page is open ($where)")
+            completion()
+            return
+        }
         val action: (((() -> Unit)) -> Unit)?
         synchronized(this) {
             if (stopping) { stopWaiters.add(completion); return }
