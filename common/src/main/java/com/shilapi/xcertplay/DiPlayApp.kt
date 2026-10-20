@@ -18,9 +18,11 @@ import java.util.Locale
 class DiPlayApp : Application() {
     override fun onCreate() {
         super.onCreate()
+        DiPlayStartupTrace.markProcessStart()
         // Runs before any Activity reads a preference, so a shipped default change reaches installs
         // that already stored the previous value.
         runCatching { AirPlayPersistence.applyDefaultsRevision(this) }
+        DiPlayStartupTrace.log(this, "Application.onCreate")
         val defaultHandler = Thread.getDefaultUncaughtExceptionHandler()
         Thread.setDefaultUncaughtExceptionHandler { thread, throwable ->
             runCatching {

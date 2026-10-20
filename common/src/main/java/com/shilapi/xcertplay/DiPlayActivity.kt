@@ -178,8 +178,8 @@ class DiPlayActivity : ComponentActivity() {
 
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
+        DiPlayStartupTrace.log(this, "DiPlayActivity.onCreate begin")
         languagePreferenceAtCreate = AppLocale.preference(this)
-        com.shilapi.xcertplay.hud.BydNavigationOutputs.onAppOpened(applicationContext)
         WindowCompat.setDecorFitsSystemWindows(window, true)
         window.statusBarColor = BG; window.navigationBarColor = BG
         WindowInsetsControllerCompat(window, window.decorView).apply {
@@ -190,12 +190,28 @@ class DiPlayActivity : ComponentActivity() {
             android.util.Log.e("DiPlaySetup", "CarPlay authentication could not be loaded", it)
             getString(R.string.setup_error_auth)
         }
+        DiPlayStartupTrace.log(this, "bootstrap done")
         pendingCarHotspotSetup = savedInstanceState?.getBoolean("pending_car_hotspot") ?: false
         bydVehicleAdvancedExpanded = savedInstanceState?.getBoolean("byd_vehicle_advanced") ?: false
         page = savedInstanceState?.getString("page") ?: intent.getStringExtra("page") ?: "home"
         render()
+        DiPlayStartupTrace.log(this, "render done (page=$page)")
+        // First frame: the moment the driver actually sees something.
+        window.decorView.viewTreeObserver.addOnDrawListener(object : android.view.ViewTreeObserver.OnDrawListener {
+            override fun onDraw() {
+                runCatching {
+                    window.decorView.viewTreeObserver.removeOnDrawListener(this)
+                }
+                DiPlayStartupTrace.log(this@DiPlayActivity, "first frame drawn")
+            }
+        })
         scheduleAutomaticVehicleValidation()
         handleWirelessRecovery()
+        // Moved off the first-frame path: it probes the HUD output service and reads the battery,
+        // neither of which the driver needs before the page is visible.
+        window.decorView.post {
+            runCatching { com.shilapi.xcertplay.hud.BydNavigationOutputs.onAppOpened(applicationContext) }
+        }
         onBackPressedDispatcher.addCallback(this, object : OnBackPressedCallback(true) {
             override fun handleOnBackPressed() {
                 if (page != "home") { page = "home"; render() }
