@@ -186,14 +186,21 @@ class DiPlayActivity : ComponentActivity() {
             isAppearanceLightStatusBars = false
             hide(WindowInsetsCompat.Type.statusBars())
         }
-        setupError = runCatching { DiPlayBootstrap.ensure(this) }.exceptionOrNull()?.let {
-            android.util.Log.e("DiPlaySetup", "CarPlay authentication could not be loaded", it)
-            getString(R.string.setup_error_auth)
-        }
-        DiPlayStartupTrace.log(this, "bootstrap done")
         pendingCarHotspotSetup = savedInstanceState?.getBoolean("pending_car_hotspot") ?: false
         bydVehicleAdvancedExpanded = savedInstanceState?.getBoolean("byd_vehicle_advanced") ?: false
         page = savedInstanceState?.getString("page") ?: intent.getStringExtra("page") ?: "home"
+        // The authentication bootstrap reads certificate files off disk and parses them. Nothing on
+        // the first page needs it (only connecting does), so it runs after the frame is drawn and
+        // connect() re-checks it synchronously.
+        window.decorView.post {
+            DiPlayStartupTrace.log(this, "bootstrap start")
+            setupError = runCatching { DiPlayBootstrap.ensure(this) }.exceptionOrNull()?.let {
+                android.util.Log.e("DiPlaySetup", "CarPlay authentication could not be loaded", it)
+                getString(R.string.setup_error_auth)
+            }
+            DiPlayStartupTrace.log(this, "bootstrap done")
+            if (setupError != null && page == "home") render()
+        }
         render()
         DiPlayStartupTrace.log(this, "render done (page=$page)")
         // First frame: the moment the driver actually sees something.
@@ -2513,6 +2520,13 @@ class DiPlayActivity : ComponentActivity() {
 
     private fun connect(wireless: Boolean) {
         startupHotspotCancelled = true
+        // The bootstrap now runs after the first frame; make sure it is done before connecting.
+        if (setupError == null) {
+            setupError = runCatching { DiPlayBootstrap.ensure(this) }.exceptionOrNull()?.let {
+                android.util.Log.e("DiPlaySetup", "CarPlay authentication could not be loaded", it)
+                getString(R.string.setup_error_auth)
+            }
+        }
         if (wireless && pendingCarHotspotSetup) { toast(getString(R.string.save_your_hotspot_details_in_connection_setup_first)); page = "connection"; render(); return }
         if (setupError != null) { toast(setupError!!); return }
         if (wireless && AirPlayPersistence.loadWirelessHotspotMode(this) == WirelessHotspotMode.MANUAL &&
