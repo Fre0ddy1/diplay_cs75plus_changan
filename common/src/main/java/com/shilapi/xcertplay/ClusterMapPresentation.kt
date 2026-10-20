@@ -336,6 +336,16 @@ internal class ClusterMapPresentation(
         }
     }
 
+    /**
+     * The window's current frame, in pixels. incall can lay an ext-screen window out as its small
+     * preview box at the right of the panel instead of over the whole panel, and the driver's rule
+     * is that a small box must never be visible - a blank dashboard is acceptable, a square is not.
+     */
+    fun windowFrame(): Point {
+        val decor = window?.decorView ?: return Point(0, 0)
+        return Point(decor.width, decor.height)
+    }
+
     fun setTurnCardOverlay(xPx: Int, yPx: Int, scalePercent: Int) {
         turnCardView?.setLayout(xPx, yPx, scalePercent)
     }

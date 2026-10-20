@@ -5516,6 +5516,7 @@ class CarPlayHostActivity : ComponentActivity() {
         if (clusterPresentation == null) ensureClusterWindowQuiet()
         clusterPresentation?.let { p ->
             p.setMapVisible(true)
+            scheduleClusterFrameCheck()
             if (DiLink51ClusterLayout.supported()) {
                 p.mirrorOutputSurface?.let { s -> onClusterSurface(s, force = true) }
             } else {
@@ -5568,6 +5569,40 @@ class CarPlayHostActivity : ComponentActivity() {
     // instrument-cluster bridge (full UNI-V sequence: bind DoubleInteractiveService +
     // AUTONAVI 10019/10116/10117 broadcasts + tx21/8/1/2 + CarProperty). Retries
     // findDisplay a few times in case the display registers asynchronously.
+    /**
+     * Checks shortly after showing the dashboard window that it really covers the panel.
+     *
+     * The driver's rule (2026-10-20): a small box on the dashboard is never acceptable - a
+     * dashboard that shows nothing is. incall sometimes lays our (already existing) ext-screen
+     * window out as its small preview box at the right of the panel and keeps it there, so the
+     * window is hidden instead of shown. Nothing is torn down: the next swipe or wheel press shows
+     * it again and re-checks, and by then incall usually re-lays it out properly.
+     */
+    private val clusterFrameCheck = Runnable { hideClusterWindowIfPlaceholder() }
+
+    private fun scheduleClusterFrameCheck() {
+        mainHandler.removeCallbacks(clusterFrameCheck)
+        mainHandler.postDelayed(clusterFrameCheck, 700L)
+    }
+
+    private fun hideClusterWindowIfPlaceholder() {
+        if (DiLink51ClusterLayout.supported()) return
+        if (shuttingDown.get() || isFinishing || isDestroyed) return
+        val presentation = clusterPresentation ?: return
+        val display = ClusterMapPresentation.findDisplay(this) ?: return
+        val expected = ClusterMapPresentation.sizeOf(display)
+        val frame = presentation.windowFrame()
+        // Not laid out yet: leave it alone rather than hide a window that is still settling.
+        if (frame.x <= 0 || frame.y <= 0) return
+        val full = frame.x >= expected.x * 9 / 10 && frame.y >= expected.y * 9 / 10
+        if (full) return
+        presentation.setMapVisible(false)
+        appendLog(
+            "Cluster: 仪表窗口只有 ${frame.x}x${frame.y}（应为 ${expected.x}x${expected.y}），" +
+                "已隐藏，避免仪表出现小方块；方向盘或三指可重新打开",
+        )
+    }
+
     private fun tryActivateClusterProjection(
         mirror: Boolean,
         direction: String,
@@ -5707,6 +5742,7 @@ class CarPlayHostActivity : ComponentActivity() {
                         clusterWindowHidden = false
                         clusterPresentation?.setMapVisible(true)
                         clusterPresentation?.setMode(AirPlayPersistence.loadClusterMirrorMain(this))
+                        scheduleClusterFrameCheck()
                         appendLog("Cluster map: 画面恢复，静默显示仪表窗口（未重发激活序列）")
                     }
                 }

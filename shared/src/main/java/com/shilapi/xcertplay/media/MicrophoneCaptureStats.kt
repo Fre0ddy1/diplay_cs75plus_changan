@@ -27,6 +27,7 @@ internal class MicrophoneCaptureStats(
     private var sendErrors = 0L
     private var lastSentNs: Long? = null
     private var sendGapMaxNs = 0L
+    private var pacedDrops = 0L
     private var routedDeviceType: Int? = null
 
     fun started(routeType: Int?) {
@@ -60,6 +61,9 @@ internal class MicrophoneCaptureStats(
 
     fun sendFailed() { sendErrors++ }
 
+    /** A frame the wall-clock pacing threw away because the device ran ahead of real time. */
+    fun pacedDrop() { pacedDrops++ }
+
     fun failure(stage: MicrophoneFailureStage, error: Throwable? = null, code: Int? = null) {
         emit(failureMessage(metadata, stage, error, code))
     }
@@ -72,7 +76,7 @@ internal class MicrophoneCaptureStats(
             "captureBytes=$capturedBytes reads=$reads zeroReads=$zeroReads readErrors=$readErrors " +
             "readMaxMs=${readMaxNs / 1_000_000} encodedFrames=$encodedFrames " +
             "emptyEncodedFrames=$emptyEncodedFrames udpSent=$udpSent sendErrors=$sendErrors " +
-            "sendGapMaxMs=${sendGapMaxNs / 1_000_000} ended=$ended")
+            "pacedDrops=$pacedDrops sendGapMaxMs=${sendGapMaxNs / 1_000_000} ended=$ended")
         windowStart = now
         capturedBytes = 0
         reads = 0
@@ -83,6 +87,7 @@ internal class MicrophoneCaptureStats(
         emptyEncodedFrames = 0
         udpSent = 0
         sendErrors = 0
+        pacedDrops = 0
         sendGapMaxNs = 0
     }
 
@@ -93,8 +98,10 @@ internal class MicrophoneCaptureStats(
 
         private fun metadata(config: MicrophoneConfig): String {
             val (type, source) = when (config.audioType) {
+                // Both uplink types capture through VOICE_COMMUNICATION now (see MicrophoneUplink:
+                // VOICE_RECOGNITION ran at ~3.5x the requested rate on this head unit).
                 "telephony" -> "telephony" to "VOICE_COMMUNICATION"
-                "speechrecognition" -> "speechrecognition" to "VOICE_RECOGNITION"
+                "speechrecognition" -> "speechrecognition" to "VOICE_COMMUNICATION"
                 else -> "other" to "MIC"
             }
             return "type=$type source=$source codec=${config.codec.name} " +

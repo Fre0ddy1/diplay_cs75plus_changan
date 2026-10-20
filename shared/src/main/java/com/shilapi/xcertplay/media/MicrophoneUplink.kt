@@ -60,8 +60,12 @@ internal class MicrophoneUplink(
         }
 
         val source = when (config.audioType) {
-            "telephony" -> MediaRecorder.AudioSource.VOICE_COMMUNICATION
-            "speechrecognition" -> MediaRecorder.AudioSource.VOICE_RECOGNITION
+            // VOICE_RECOGNITION does not honour the requested rate on this head unit: a 2.8 s
+            // WeChat voice clip produced 9.8 s of samples (338 kB/s against 96 kB/s expected,
+            // measured 2026-10-20), so the phone received audio running at 3.5x speed and played
+            // it as noise. VOICE_COMMUNICATION is the path the call uplink already uses and it
+            // runs at the negotiated 48 kHz.
+            "telephony", "speechrecognition" -> MediaRecorder.AudioSource.VOICE_COMMUNICATION
             else -> MediaRecorder.AudioSource.MIC
         }
         val nextEncoder = if (config.codec == AudioCodecKind.OPUS) {
@@ -182,6 +186,13 @@ internal class MicrophoneUplink(
         val readBuffer = ByteArray(maxOf(frame.size, MIN_READ_BYTES))
         val counters = MicrophoneCounters()
         val routeInfo = { routeType(recorder) }
+        // Wall-clock pacing. A capture device that returns faster than the negotiated rate would
+        // otherwise make the phone play the microphone at that speed - the "it is all noise"
+        // voice clip. Frames that arrive ahead of their slot are dropped instead of sent, so the
+        // RTP timeline always matches real time whatever the device does.
+        val frameNanos = config.samplesPerPacket.toLong() * 1_000_000_000L / config.sampleRate
+        val clockBase = System.nanoTime()
+        var framesPaced = 0L
         var filled = 0
         try {
             while (running.get()) {
@@ -206,7 +217,13 @@ internal class MicrophoneUplink(
                     filled += copied
                     offset += copied
                     if (filled == frame.size) {
-                        sendFrame(socket, counters, frame)
+                        val due = clockBase + (framesPaced + 1) * frameNanos
+                        if (System.nanoTime() + frameNanos / 2 >= due) {
+                            sendFrame(socket, counters, frame)
+                            framesPaced++
+                        } else {
+                            stats.pacedDrop()
+                        }
                         filled = 0
                     }
                 }
