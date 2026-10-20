@@ -88,7 +88,6 @@ object AirPlayPersistence {
     private const val KEY_CLUSTER_MIRROR_MAIN = "cluster_mirror_main_screen"
     private const val KEY_CENTER_MAP_OVERLAY = "center_map_overlay"
     private const val KEY_LAUNCHER_MAP_SHARING = "launcher_map_sharing"
-    private const val KEY_CLUSTER_CONTENT = "cluster_content"
     private const val KEY_CLUSTER_MARKER_X = "cluster_marker_horizontal_step"
     private const val KEY_CLUSTER_MARKER_Y = "cluster_marker_vertical_step"
     /** Bounds for the per-card size percentage (see loadClusterCardScalePercent). */
@@ -748,20 +747,17 @@ object AirPlayPersistence {
     }
 
     /**
-     * Defaults to the map with the custom turn card, not the bare map. The bare map hides the
-     * whole custom-card section of the settings - position, size, show/hide - so a driver on the
-     * default could not find the controls that make this build worth installing, and reported
-     * them as missing. Existing installs keep whatever they stored.
+     * The dashboard always asks for the map and draws its own cards on top of it.
+     *
+     * The upstream "dashboard shows" picker is gone: it chose between Apple's own turn card, the
+     * bare instruments screen and the map, and only the map lets this build draw the cards the
+     * driver configures here. A stored value is deliberately ignored - an install that once
+     * picked Apple's turn card would otherwise stay on it with no way back, because the picker
+     * that changed it no longer exists.
      */
+    @Suppress("UNUSED_PARAMETER")
     fun loadClusterContent(context: Context): CarPlayClusterDisplay.Content =
-        context.getSharedPreferences(PREFS, Context.MODE_PRIVATE).getString(KEY_CLUSTER_CONTENT, null)
-            ?.let { name -> CarPlayClusterDisplay.Content.entries.firstOrNull { it.name == name } }
-            ?: CarPlayClusterDisplay.Content.MAP_WITH_CUSTOM_CARD
-
-    fun saveClusterContent(context: Context, content: CarPlayClusterDisplay.Content) {
-        context.getSharedPreferences(PREFS, Context.MODE_PRIVATE).edit().putString(KEY_CLUSTER_CONTENT, content.name).apply()
-        overlaySettingsListener?.invoke()
-    }
+        CarPlayClusterDisplay.Content.MAP_WITH_CUSTOM_CARD
 
     /** Fingers for the swipe-down that opens settings; some head units reserve three. */
     fun loadSettingsGestureFingers(context: Context): Int =

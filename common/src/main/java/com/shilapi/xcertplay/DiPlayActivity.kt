@@ -778,12 +778,9 @@ class DiPlayActivity : ComponentActivity() {
                 // 故移入“仪表盘”分区）。
                 // The original "dashboard shows" picker is gone: it only chose between Apple's
                 // turn card and the map, and this build draws its own cards (see the per-card
-                // blocks below), so the two switches duplicated each other. The stored choice is
-                // still read so existing settings keep working, and the default stays
-                // map-with-custom-card.
-                val content = AirPlayPersistence.loadClusterContent(this)
-                val customCard = CarPlayClusterDisplay.usesCustomTurnCard(content)
-                val officialCardOnly = content == CarPlayClusterDisplay.Content.TURN_CARD
+                // blocks below), so the two settings duplicated each other. The content is now
+                // fixed to the map, which is what the custom cards are drawn on.
+                val customCard = CarPlayClusterDisplay.usesCustomTurnCard(AirPlayPersistence.loadClusterContent(this))
                 // —— 长安仪表盘卡片设置（始终可见）——
                 // 卡片组在 navOnlyCards 模式下无条件显示（只要仪表盘投屏开启），因此这些
                 // 设置不能藏在 customCard 分支里，否则用户换了“仪表盘显示”选择就找不到入口。
@@ -949,30 +946,10 @@ class DiPlayActivity : ComponentActivity() {
                     }
                     toast(getString(R.string.cluster_card_position_applied))
                 }, matchButton(0, 56))
-                val turnCard = officialCardOnly
-                // Only the turn card's offsets remain. The "car marker" offsets and the
-                // "reset the marker to the centre" button belonged to the upstream overlay,
-                // which this build no longer needs: the map is placed by the safe area that was
-                // requested at connect time, so there is no marker to nudge.
-                if (turnCard) {
-                    val across = CarPlayClusterDisplay.horizontalSteps.toList()
-                    choice(card, getString(R.string.turn_card_horizontal), across.map { markerStepLabel(it, getString(R.string.marker_left), getString(R.string.marker_right)) },
-                        across.indexOf(AirPlayPersistence.loadClusterMarkerHorizontalStep(this)).coerceAtLeast(0)) {
-                        AirPlayPersistence.saveClusterMarkerHorizontalStep(this, across[it])
-                    }
-                    val upDown = CarPlayClusterDisplay.verticalSteps.toList()
-                    choice(card, getString(R.string.turn_card_vertical), upDown.map { markerStepLabel(it, getString(R.string.marker_up), getString(R.string.marker_down)) },
-                        upDown.indexOf(AirPlayPersistence.loadClusterMarkerVerticalStep(this)).coerceAtLeast(0)) {
-                        AirPlayPersistence.saveClusterMarkerVerticalStep(this, upDown[it])
-                    }
-                    card.addView(button(getString(R.string.reset_turn_card_to_centre), false) {
-                        AirPlayPersistence.saveClusterMarkerHorizontalStep(this, 0)
-                        AirPlayPersistence.saveClusterMarkerVerticalStep(this, 0)
-                        render()
-                        // No reconnect: the marker offset is a local overlay transform, applied on
-                        // the next overlay refresh. Reconnecting here only re-announced the voice.
-                    }, matchButton(10, 56))
-                }
+                // The upstream "car marker" offsets are gone with the reset button: the map sits
+                // in the safe area requested at connect time, so there is no marker to nudge.
+                // The custom cards have their own position and size in the blocks above; these
+                // step pickers never moved them.
             }
         }
         if (BydOutputSettings.navigationAvailable(this)) section(content, getString(R.string.byd_navigation), R.drawable.ic_dp_navigation) { card ->
