@@ -14,7 +14,10 @@ android {
     }
 
     defaultConfig {
-        applicationId = "com.shihab.diplay"
+        // Both variants share the .hudtest application id on purpose: the debug
+        // channel has a large installed base and a release build must overwrite
+        // those installs in place, keeping their pairing data.
+        applicationId = "com.shihab.diplay.hudtest"
         minSdk = 25
         targetSdk = 37
         versionCode = 37
@@ -39,7 +42,6 @@ android {
 
     buildTypes {
         debug {
-            applicationIdSuffix = ".hudtest"
             versionNameSuffix = "-hud-test"
         }
         release {
@@ -48,7 +50,11 @@ android {
             }
             isMinifyEnabled = true
             isShrinkResources = true
-            signingConfig = signingConfigs.getByName("release")
+            versionNameSuffix = "-hud-release"
+            // Same application id AND same signature as debug: an installed debug
+            // build upgrades straight to release. The published release key stays
+            // declared above for a future non-hudtest channel.
+            signingConfig = signingConfigs.getByName("debug")
         }
     }
     compileOptions {

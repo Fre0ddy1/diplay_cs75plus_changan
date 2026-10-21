@@ -436,7 +436,7 @@ class DiPlayActivity : ComponentActivity() {
         right.addView(label(getString(R.string.plug_your_iphone_into_a_usb_data_port_allow_carplay_when_y), 14, MUTED).apply { gravity = Gravity.CENTER; setPadding(dp(8), dp(10), dp(8), dp(24)) })
         right.addView(button(getString(R.string.settings), false) { page = "settings"; render() }, matchButton())
         right.addView(label(getString(R.string.make_diplay_feel_right_for_your_car), 14, MUTED).apply { gravity = Gravity.CENTER; setPadding(0, dp(10), 0, dp(24)) })
-        right.addView(label("${getString(R.string.home_public_preview)}${version()} · ${buildTag()}", 12, MUTED).apply { letterSpacing = .08f })
+        right.addView(label("${getString(homeVersionPrefix())}${version()}", 12, MUTED).apply { letterSpacing = .08f })
         if (wide) {
             // Both rows share column widths. The USB button starts at the wireless
             // card's top edge, independently of hero wrapping or font scaling.
@@ -1091,7 +1091,7 @@ class DiPlayActivity : ComponentActivity() {
     private fun about(content: LinearLayout) {
         content.addView(label(getString(R.string.diplay), 40, TEXT, true))
         content.addView(label(getString(R.string.carplay_at_home_in_your_car), 20, MUTED).apply { setPadding(0, dp(8), 0, dp(24)) })
-        section(content, "${getString(R.string.about_public_preview_prefix)}${version()} · ${buildTag()}") { card ->
+        section(content, "${getString(aboutVersionPrefix())}${version()}") { card ->
             card.addView(label(getString(R.string.an_independent_carplay_receiver_for_android_head_units_wir), 17, TEXT))
         }
         section(content, getString(R.string.made_possible_by_open_source)) { card ->
@@ -2807,7 +2807,7 @@ class DiPlayActivity : ComponentActivity() {
     }
 
     private fun buildDiagnosticReport(appContext: Context): String = buildString {
-        appendLine("DiPlay ${version()} (${buildTag()}) · private beta diagnostic report")
+        appendLine("DiPlay ${version()} · private beta diagnostic report")
         appendLine("Android ${Build.VERSION.RELEASE} / API ${Build.VERSION.SDK_INT}")
         appendLine("Head unit: ${Build.MANUFACTURER} ${Build.MODEL}")
         appendLine("Connection: ${if (AirPlayPersistence.loadWirelessEnabled(appContext)) "wireless" else "USB"}")
@@ -2970,12 +2970,17 @@ class DiPlayActivity : ComponentActivity() {
     private fun version() = packageManager.getPackageInfo(packageName, 0).versionName ?: "0.1.0-beta.1"
 
     /**
-     * Build flavour shown next to the version so a debug install is recognizable at a
-     * glance. The debug and release builds share neither the application id nor the
-     * signature, so the debuggable flag is the reliable signal.
+     * Debug and release share the .hudtest application id and the debug signature, so an
+     * installed debug build upgrades straight to release. The build flavour shows in the
+     * version line instead: "public preview" for debug, "public release" for release.
      */
-    private fun buildTag(): String =
-        if (applicationInfo.flags and ApplicationInfo.FLAG_DEBUGGABLE != 0) "Debug" else "Release"
+    private fun debugBuild() = applicationInfo.flags and ApplicationInfo.FLAG_DEBUGGABLE != 0
+
+    private fun homeVersionPrefix() =
+        if (debugBuild()) R.string.home_public_preview else R.string.home_public_release
+
+    private fun aboutVersionPrefix() =
+        if (debugBuild()) R.string.about_public_preview_prefix else R.string.about_public_release_prefix
     private fun languageSettings(content: LinearLayout) {
         section(content, getString(R.string.language_section_title)) { card ->
             card.addView(label(getString(R.string.language_hint), 14, MUTED))

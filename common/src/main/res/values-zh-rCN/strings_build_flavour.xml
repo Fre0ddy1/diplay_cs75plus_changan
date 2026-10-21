@@ -1,0 +1,7 @@
+<?xml version="1.0" encoding="utf-8"?>
+<resources>
+    <!-- Release build of the .hudtest channel: shown next to the version on the home page. -->
+    <string name="home_public_release">公开版本  ·&#160;&#160;</string>
+    <!-- Release build of the .hudtest channel: about page section title prefix. -->
+    <string name="about_public_release_prefix">公开版本 ·&#160;</string>
+</resources>
