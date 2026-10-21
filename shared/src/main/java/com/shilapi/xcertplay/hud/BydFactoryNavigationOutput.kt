@@ -2,7 +2,6 @@ package com.shilapi.xcertplay.hud
 
 import android.content.Context
 import android.util.Log
-import com.shilapi.xcertplay.shared.BuildConfig
 import java.lang.reflect.InvocationTargetException
 
 /** Temporary HUD-test output using the installed factory SDK and the app's own identity. */
@@ -13,7 +12,7 @@ internal class BydFactoryNavigationOutput(private val context: Context) {
     private var logged = false
 
     fun update(icon: Int, exit: Int, distance: Int) {
-        if (disabled || !testIdentity()) return
+        if (disabled || !context.packageName.endsWith(".bydhudtest") && !context.packageName.endsWith(".hudtest")) return
         val turn = BydFactoryTurnCode.map(icon, exit) ?: run { clear(); return }
         if (distance !in 0..16777214) { clear(); return }
         try {
@@ -61,15 +60,6 @@ internal class BydFactoryNavigationOutput(private val context: Context) {
     private fun checkResult(operation: String, result: Any?) {
         check(result == 0) { "$operation returned $result" }
     }
-
-    /**
-     * Test-only output. The debug build shares the release application id, so the package
-     * suffix alone no longer marks a test install; debug builds qualify on their own.
-     */
-    private fun testIdentity(): Boolean =
-        BuildConfig.DEBUG ||
-            context.packageName.endsWith(".bydhudtest") ||
-            context.packageName.endsWith(".hudtest")
 
     companion object { private const val TAG = "BYD-Factory-Navi" }
 }
