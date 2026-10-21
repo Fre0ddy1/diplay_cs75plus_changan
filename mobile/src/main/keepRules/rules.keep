@@ -17,6 +17,20 @@
     public <init>(int, java.lang.String);
 }
 
+# app_process entry points: the head unit's adb shell starts these classes by
+# name (`CLASSPATH=<apk> app_process /system/bin <fqcn>`), so no Java code calls
+# main() and R8 dropped it in release builds. Keeping the class also keeps its
+# name, which is what the command string interpolates.
+-keep class com.shilapi.xcertplay.transport.IphoneUsbGrantTool {
+    public static void main(java.lang.String[]);
+}
+-keep class com.shilapi.xcertplay.hud.BydClusterSongTool {
+    public static void main(java.lang.String[]);
+}
+-keep class com.shilapi.xcertplay.hud.Byd13CatalogProbeMain {
+    public static void main(java.lang.String[]);
+}
+
 # Readable crash traces from the field: keep line numbers and the original
 # source file name.
 -keepattributes SourceFile,LineNumberTable
