@@ -495,6 +495,14 @@ class CarPlayHostActivity : ComponentActivity() {
     // quiet hot-switch, which would only make our (hidden) window visible on a display the
     // head-unit is not showing.
     private var clusterExtScreenReleased = false
+    /** The start-up channel watcher; the only component allowed to send the activation sequence. */
+    private var watcherThread: Thread? = null
+    /** Last channel state the watcher sampled. Every swipe decision reads this, not incall. */
+    @Volatile private var watcherChannelOpen = false
+    /** The dashboard display the watcher sampled, reused for every window build. */
+    @Volatile private var watcherDisplay: android.view.Display? = null
+    @Volatile private var watcherWidth = 0
+    @Volatile private var watcherHeight = 0
     // True once this activity has sent the projection open sequence at all. The disconnect
     // hand-back refuses to run without it: sending the ext-screen release (r0) to a head unit that
     // never projected would switch it out of a mode it is not in.
@@ -1084,10 +1092,12 @@ class CarPlayHostActivity : ComponentActivity() {
             clusterMonitor = null
         }
         settingsGestureHint?.text = getString(R.string.open_diplay_settings_hint)
-        // Warm the projection channel before a phone is anywhere near: incall takes tens of
-        // seconds to report a projection, and starting that clock at app launch is what lets a
-        // freshly connected phone show its picture right away.
-        prewarmClusterProjection()
+        // The ONLY place that may ever send the activation sequence: a start-up watcher that
+        // samples the projection channel and sends it once when the channel is not open yet, and
+        // records the dashboard display for every later window build. Everything after this point
+        // only shows or hides the window - re-sending the sequence anywhere else is what made the
+        // head unit announce "全屏镜像/导航已开启" on swipes and reconnects.
+        startClusterChannelWatcher()
         ensureClusterPresentation()
         // Watch for the dashboard display arriving late. Cold boot: the driver can open the app
         // before the instrument cluster has come up, findDisplay() then returns nothing, the
@@ -1172,15 +1182,20 @@ class CarPlayHostActivity : ComponentActivity() {
         if (clusterPresentation != null) return
         if (!AirPlayPersistence.loadAutoFlyScreen(this)) return
         if (activeAirPlaySession == null) return
-        appendLog("Cluster map: $reason; 仪表屏就绪，补做自动投屏")
+        appendLog("Cluster map: $reason; 仪表屏就绪，补建投屏窗口（不发激活序列）")
         runCatching { ensureClusterPresentation() }
         if (clusterPresentation == null) return
         val mirror = AirPlayPersistence.loadClusterMirrorMain(this)
-        tryActivateClusterProjection(mirror, "auto", keepWindow = true)
-        // Only arm the ladder if it is not already running: the normal chain may still be part way
-        // through its 11/30/60 s attempts when the display finally arrives, and two ladders sharing
-        // one token would double every silent re-assert.
-        if (!autoProjectLadderActive) scheduleAutoProjectRetry(mirror, attempt = 0)
+        // Show only when the channel is actually open. The start-up watcher owns activation, so
+        // this path must never send the sequence - a display arriving late is not a reason to
+        // announce again.
+        if (!watcherChannelOpen && !InCallClusterBridge.reportsProjecting()) {
+            clusterPresentation?.setMapVisible(false)
+            appendLog("Cluster map: 投屏通道未开，窗口保持隐藏")
+            return
+        }
+        clusterPresentation?.setMapVisible(true)
+        applyClusterMode(mirror, "auto")
     }
 
     private fun ensureClusterPresentation() {
@@ -1190,7 +1205,9 @@ class CarPlayHostActivity : ComponentActivity() {
             return
         }
         if (clusterPresentation != null) return
-        val display = ClusterMapPresentation.findDisplay(this, theme) ?: run {
+        // Prefer the display the start-up watcher sampled: it was taken while incall was idle, so a
+        // window build does not have to hope findDisplay() succeeds during a reconfiguration.
+        val display = watcherDisplay ?: ClusterMapPresentation.findDisplay(this, theme) ?: run {
             appendLog("Cluster map: no cluster projection display among ${ClusterMapPresentation.describeDisplays(this)}")
             return
         }
@@ -1437,17 +1454,15 @@ class CarPlayHostActivity : ComponentActivity() {
     private fun releaseDashboardForDisconnect(immediate: Boolean = false) {
         if (shuttingDown.get() || isFinishing || isDestroyed) return
         if (!clusterProjectionStarted) return
-        if (clusterExtScreenReleased) return
         val presentation = clusterPresentation ?: return
+        // Hiding the window is the whole hand-back now: no broadcast, no activation. The driver
+        // asked for the car's own dials, and the channel stays untouched for the next session.
         presentation.setMapVisible(false)
-        InCallClusterBridge.releaseExternalScreen(this)
-        clusterExtScreenReleased = true
-        clusterProjectionStarted = false
         clusterWindowHidden = false
         mainHandler.removeCallbacks(releaseDashboardAfterLongLoss)
         appendLog(
-            "Disconnect: 已归还原车仪表画面" +
-                if (immediate) "（司机主动断开）" else "（${disconnectReleaseFallbackMs}ms 无画面，兜底归还）",
+            "Disconnect: 隐藏仪表窗口（归还仪表，不发序列）" +
+                if (immediate) "（司机主动断开）" else "（${disconnectReleaseFallbackMs}ms 无画面，兜底隐藏）",
         )
     }
 
@@ -1808,16 +1823,12 @@ class CarPlayHostActivity : ComponentActivity() {
         mainHandler.removeCallbacks(refreshTurnOverlay)
         mainHandler.removeCallbacks(hideDashboardAfterDisconnect)
         mainHandler.removeCallbacks(releaseDashboardAfterLongLoss)
-        // Leaving while the dashboard window is hidden would leave the panel BLACK for good: incall
-        // is still projecting an invisible window, the fallback timer is being cancelled right
-        // here, and nothing else can hand the ext-screen back afterwards. Only on a real finish -
-        // never on a recreate, which would then have to re-activate and announce.
-        if (isFinishing && clusterWindowHidden) {
-            InCallClusterBridge.releaseExternalScreen(this)
-            clusterExtScreenReleased = true
+        // Leaving only hides the window: no broadcast, no activation. The channel is left as the
+        // head unit has it, so a relaunch finds the same state the watcher sampled.
+        if (isFinishing && clusterPresentation != null) {
+            clusterPresentation?.setMapVisible(false)
             clusterWindowHidden = false
-            clusterProjectionStarted = false
-            sessionLog?.append("Activity finishing while the dashboard window was hidden: ext-screen handed back")
+            sessionLog?.append("Activity finishing: dashboard window hidden")
         }
         AirPlayPersistence.overlaySettingsListener = null
         com.shilapi.xcertplay.hud.BydNavigationOutputs.setTurnOverlayListener(null)
@@ -4288,24 +4299,20 @@ class CarPlayHostActivity : ComponentActivity() {
         }
         clusterSwipePosition = if (mirror) 0 else 1
         appendLog("Auto project: 请求仪表盘显示${if (mirror) "整机界面" else "导航流"} (pos=$clusterSwipePosition)")
-        if (!clusterActivationAttempted) {
-            // First projection of the session: run the UNI-V activation sequence.
-            appendLog("Auto project: 首次投屏，执行长安激活序列")
-            // Keep the pre-created quiet window: dismissing it tears the nav stream (111) out of
-            // the incall sink and the rebuilt window re-attaches it, which re-activates 111 and
-            // makes the head-unit announce "全屏导航已开启". Keeping the window leaves both 110/111
-            // resident across activation, so the announcement never fires (15:51 behavior).
-            tryActivateClusterProjection(mirror, direction, keepWindow = true)
-            // The head unit may still drop the sequence (it does not tell us either way), so arm
-            // the bounded retry ladder - the same recovery a manual swipe performs by hand.
-            scheduleAutoProjectRetry(mirror, attempt = 0)
-        } else if (ClusterMapPresentation.findDisplay(this) != null) {
-            applyClusterMode(mirror, direction)
-        } else {
-            appendLog("Auto project: 无仪表投影 display，尝试激活")
-            tryActivateClusterProjection(mirror, direction)
-            scheduleAutoProjectRetry(mirror, attempt = 0)
+        // Connection time only shows or hides the window that was built for this session. The
+        // start-up watcher already sent the sequence if the channel was closed, and it keeps
+        // sampling: if the channel is still not open now, this session simply has no dashboard.
+        // Sending the sequence from here is what made every reconnect announce again.
+        if (!watcherChannelOpen && !InCallClusterBridge.reportsProjecting()) {
+            clusterPresentation?.setMapVisible(false)
+            appendLog("Auto project: 投屏通道未开，本次会话不投屏")
+            return
         }
+        if (clusterPresentation == null) {
+            runCatching { ensureClusterPresentation() }
+        }
+        clusterPresentation?.setMapVisible(true)
+        applyClusterMode(mirror, direction)
     }
 
     /**
@@ -4346,7 +4353,6 @@ class CarPlayHostActivity : ComponentActivity() {
             }
             if (shuttingDown.get() || handshakeResetInProgress || isFinishing || isDestroyed) {
                 autoProjectLadderActive = false
-                appendLog("Auto project: 重试取消（关闭/重连中）")
                 return@postDelayed
             }
             if (activeAirPlaySession == null) {
@@ -4354,41 +4360,18 @@ class CarPlayHostActivity : ComponentActivity() {
                 appendLog("Auto project: 重试取消（会话已断开）")
                 return@postDelayed
             }
-            if (!AirPlayPersistence.loadAutoFlyScreen(this)) {
+            // The ladder no longer sends anything: the start-up watcher owns activation, and every
+            // extra signal here is what announced "全屏镜像/导航已开启" more than once per session.
+            // All it does now is notice a channel that opened late and show the window.
+            val open = watcherChannelOpen ||
+                runCatching { InCallClusterBridge.reportsProjecting() }.getOrDefault(false)
+            if (open) {
                 autoProjectLadderActive = false
-                appendLog("Auto project: 重试取消（自动飞屏已取消勾选）")
+                if (clusterPresentation == null) runCatching { ensureClusterPresentation() }
+                clusterPresentation?.setMapVisible(true)
+                applyClusterMode(mirror, "auto")
+                appendLog("Auto project: 投屏通道已开，显示窗口（不发序列）")
                 return@postDelayed
-            }
-            if (!AirPlayPersistence.loadAutoProjectRetry(this)) {
-                autoProjectLadderActive = false
-                appendLog("Auto project: 自动重试已关闭，停止重试")
-                return@postDelayed
-            }
-            // Every attempt is silent, always. There is no way to observe whether the head unit
-            // accepted the first sequence, so re-sending the announcing sequence "just in case" is
-            // what made one activation announce three times: the open plus the two retries that had
-            // run before the driver swiped (field log 10-16, 20:38). A genuinely dropped activation
-            // is recovered by the driver's swipe, which always runs the full sequence and is a
-            // deliberate action, so the announcement it may cause is expected.
-            //
-            // incall's own callback is the one exception, in both directions. If it reports the
-            // projection is up, the ladder has done its job and stops (it used to keep firing F0 -
-            // the ext-screen clear - at 11/30/60 s on a perfectly good projection). If it reports
-            // the projection is NOT ours, the silent re-assert cannot take the ext-screen back
-            // (measured 2026-10-18), so the last attempt becomes a real open instead of a no-op.
-            if (InCallClusterBridge.reportsProjecting()) {
-                autoProjectLadderActive = false
-                appendLog("Auto project: incall 已确认投影，停止重试阶梯")
-                return@postDelayed
-            }
-            val lastAttempt = attempt == autoProjectRetryDelaysMs.lastIndex
-            if (lastAttempt && InCallClusterBridge.heardFromIncall()) {
-                appendLog("Auto project: incall 报未投影，最后一次重试改为完整激活序列")
-                clusterActivationAttempted = false
-                InCallClusterBridge.openProjection(this)
-            } else {
-                appendLog("Auto project: 重试 ${attempt + 1}/${autoProjectRetryDelaysMs.size}，静默重申仪表盘投影")
-                InCallClusterBridge.reassertProjection(this)
             }
             scheduleAutoProjectRetry(mirror, attempt + 1)
         }, delay)
@@ -5505,92 +5488,27 @@ class CarPlayHostActivity : ComponentActivity() {
             }
         }
         if (nextPos == -1) {
-            // Back at "not projected": hide the dashboard window (keep it alive so the next
-            // swipe can show it instantly) instead of leaving it visible.
-            // Hiding the window alone leaves the physical dashboard BLACK: while incall is in
-            // projection mode the cluster shows our (now invisible) projection window, and the
-            // head unit's own UI only comes back when the ext-screen is handed back to it.
-            // So the close swipe now also releases the ext-screen (releaseExternalScreen = the
-            // box's r0: 10116/10117 op/status 2,2 -> 4 pkgs + op/status 0,1 -> incall alone) and
-            // NOTHING else - no binder teardown, no window dismiss.
-            // NOTE: we intentionally do NOT port the rest of the box's close path. Field testing
-            // showed that the full close sequence (tx21[1,1]/tx8[3,0]/tx1[1] + D0(0) + tx30)
-            // tears down the head-unit's projection session: every later openProjection() is then
-            // ignored (dashboard stays blank even though our window is up) and the steering-wheel
-            // projection button is disabled until the head-unit restarts.
+            // Hand the dashboard back by hiding our window. Nothing else: no broadcast, no
+            // activation, no teardown. The channel and the window live for the whole session, so
+            // the next swipe only has to show it again.
             clusterPresentation?.setMapVisible(false)
-            appendLog("Cluster swipe $direction: 关闭仪表盘投屏 (pos=-1)")
-            // The hand-back is unconditional (the 关闭时归还 switch is gone, field report
-            // 2026-10-18: a driver who closes the projection wants the car's dials back).
-            InCallClusterBridge.releaseExternalScreen(this)
-            clusterExtScreenReleased = true
-            // The panel is the head unit's again, so a later disconnect has nothing to hand
-            // back until the next projection.
-            clusterProjectionStarted = false
-            // The head unit is out of projection mode now, so the next open is a real open:
-            // it must re-send the full sequence (which re-grabs the ext-screen) instead of the
-            // quiet hot-switch. This may make incall announce "全屏镜像/导航已开启" once per
-            // close->reopen cycle - the price of the dashboard actually coming back.
-            clusterActivationAttempted = false
-            appendLog("Cluster swipe $direction: 已释放车机投影权限（仪表盘回到车机原界面）")
+            appendLog("Cluster swipe $direction: 隐藏仪表盘投屏窗口 (pos=-1)")
             return
         }
         // pos 0 = whole-screen mirror, pos 1 = navigation stream only.
         val mirror = nextPos == 0
         appendLog("Cluster swipe $direction: 请求仪表盘显示${if (mirror) "整机界面" else "导航流"} (pos=$nextPos)")
-        if (clusterExtScreenReleased) {
-            // The ext-screen was handed back on the last close: the head unit is not projecting,
-            // so this is a real (re-)open - re-run the full sequence to take the ext-screen back.
-            clusterExtScreenReleased = false
-            clusterActivationAttempted = false
-            appendLog("Cluster swipe $direction: 投影权限已释放，重发完整激活序列 (pos=$nextPos)")
-            tryActivateClusterProjection(mirror, direction, keepWindow = true, forceSequence = true)
+        // The window exists for the whole session and only ever shows or hides. Whether it can be
+        // seen at all depends on one thing: the projection channel the start-up watcher sampled.
+        // No path below may send the activation sequence - that is what announced on every swipe.
+        if (!watcherChannelOpen && !InCallClusterBridge.reportsProjecting()) {
+            clusterPresentation?.setMapVisible(false)
+            appendLog("Cluster swipe $direction: 投屏通道未开，不显示窗口 (pos=$nextPos)")
             return
         }
-        if (direction != "auto" && nextPos >= 0) {
-            // incall's own report is the only witness of whether the ext-screen is still routed to
-            // us. When the driver closes the projection channel on the head unit (or the head unit
-            // drops it, e.g. after an adb-mode detour) incall reports value 0, and a hot-switch then
-            // only re-shows our window on a session the head unit no longer projects - the
-            // dashboard stays on the head unit's own screen. Field 2026-10-18 14:25: value 0 at
-            // 14:25:42, left swipe at 14:25:44 logged "已激活，热切换" and nothing appeared, while
-            // every build before the hot-switch optimisation re-sent the sequence and worked.
-            val incallProjecting = InCallClusterBridge.reportsProjecting()
-            if (clusterActivationAttempted && incallProjecting &&
-                ClusterMapPresentation.findDisplay(this) != null
-            ) {
-                // Activation was confirmed for this session (window bound AND the verify pass
-                // saw the expected stream): take the quiet hot-switch path. Re-sending the full
-                // open sequence here would make incall re-switch its projection source and
-                // announce "全屏镜像已开启" on every swipe (this was the 12:09 regression - the
-                // always-resend branch). Only the first projection (or an unconfirmed activation,
-                // e.g. the head-unit ignored auto-project) re-runs the sequence.
-                appendLog("Cluster swipe $direction: 已激活，热切换 (pos=$nextPos)")
-                applyClusterMode(mirror, direction)
-            } else if (clusterActivationAttempted && InCallClusterBridge.heardFromIncall()) {
-                // incall spoke in this process and its last word is "not projecting": the head unit
-                // has taken the ext-screen back, so the projection has to be re-opened for real.
-                appendLog(
-                    "Cluster swipe $direction: incall 报未投影（车机已关投影通道），" +
-                        "重发完整激活序列 (pos=$nextPos)",
-                )
-                clusterActivationAttempted = false
-                tryActivateClusterProjection(mirror, direction, keepWindow = true, forceSequence = true)
-            } else {
-                // First projection of the session, or the previous activation was not confirmed
-                // (verify pass failed -> clusterActivationAttempted reset): re-run the open
-                // sequence while keeping the window alive (no dismiss+recreate, no black flash).
-                appendLog("Cluster swipe $direction: 手动投屏，重发激活序列 (pos=$nextPos)")
-                tryActivateClusterProjection(mirror, direction, keepWindow = true)
-            }
-        } else if (ClusterMapPresentation.findDisplay(this) != null) {
-            applyClusterMode(mirror, direction)
-        } else {
-            // No projection display at all: the head-unit never registered one. Activate and
-            // retry findDisplay a few times in case it registers asynchronously.
-            appendLog("Cluster swipe $direction: 无仪表投影 display，尝试激活 (pos=$nextPos)")
-            tryActivateClusterProjection(mirror, direction)
-        }
+        if (clusterPresentation == null) ensureClusterPresentation()
+        clusterPresentation?.setMapVisible(true)
+        applyClusterMode(mirror, direction)
     }
 
     // Applies the requested dashboard mode once a projection display is available.
@@ -5696,35 +5614,61 @@ class CarPlayHostActivity : ComponentActivity() {
     }
 
     /**
-     * Warms the projection channel up as soon as DiPlay itself starts, before any phone is here.
+     * Samples the projection channel for the whole life of the activity.
      *
-     * incall takes its time to report a projection (40-50 s on this head unit after the open
-     * sequence), and that delay is what the driver sees as "the dashboard stays empty until I press
-     * the wheel". The channel does not depend on the CarPlay session at all, so the open sequence is
-     * sent at start-up: by the time a phone connects, the channel is usually already there and the
-     * picture only has to be shown (driver's suggestion, 2026-10-20).
+     * This is the ONLY place allowed to send the activation sequence. It sends it once, and only
+     * when the channel is not open yet; every other part of the app just shows or hides the window.
+     * Re-sending anywhere else is exactly what made the head unit announce
+     * "全屏镜像/导航已开启" on swipes and reconnects, and what left the state machine disagreeing
+     * with the panel.
+     *
+     * The first dashboard display it sees is kept, so later window builds use a display that was
+     * sampled while incall was idle instead of one taken mid-reconfiguration.
      */
-    private fun prewarmClusterProjection() {
-        if (clusterPrewarmSent || DiLink51ClusterLayout.supported()) return
+    private fun startClusterChannelWatcher() {
+        if (watcherThread != null || DiLink51ClusterLayout.supported()) return
         if (shuttingDown.get() || isFinishing || isDestroyed) return
-        if (clusterProjectionStarted || InCallClusterBridge.reportsProjecting()) return
-        if (!AirPlayPersistence.loadAutoFlyScreen(this)) return
-        clusterPrewarmSent = true
-        // Decide after incall has had a chance to speak. Its callback announces the current state
-        // within a few tens of milliseconds of registering, and `reportsProjecting()` reads that
-        // live report - which is empty in a fresh process. Sending first and asking later is how a
-        // force-stop + relaunch would fire the announcing sequence at a panel that is already ours.
-        mainHandler.postDelayed({
-            if (shuttingDown.get() || isFinishing || isDestroyed) return@postDelayed
-            if (clusterProjectionStarted) return@postDelayed
-            if (InCallClusterBridge.reportsProjecting()) {
-                appendLog("Cluster prewarm: incall 已报投影中，不重复发送")
-                return@postDelayed
+        watcherThread = Thread({
+            // Let incall report its current state first: a force-stop + relaunch must not fire the
+            // announcing sequence at a panel that is already ours.
+            quietSleep(PREWARM_SETTLE_MS)
+            var sequenceSent = false
+            while (!shuttingDown.get() && !isFinishing && !isDestroyed) {
+                val open = runCatching { InCallClusterBridge.reportsProjecting() }.getOrDefault(false)
+                watcherChannelOpen = open
+                if (watcherDisplay == null) {
+                    runCatching { ClusterMapPresentation.findDisplay(this) }.getOrNull()?.let { display ->
+                        watcherDisplay = display
+                        watcherWidth = display.mode?.physicalWidth ?: 0
+                        watcherHeight = display.mode?.physicalHeight ?: 0
+                        appendLog(
+                            "Cluster watcher: 记录仪表 display=${display.displayId} " +
+                                "${watcherWidth}x${watcherHeight}",
+                        )
+                    }
+                }
+                if (!open && !sequenceSent) {
+                    sequenceSent = true
+                    clusterPrewarmAtMs = SystemClock.elapsedRealtime()
+                    appendLog("Cluster watcher: 启动时投屏通道未开，发完整激活序列（全程仅此一次）")
+                    mainHandler.post {
+                        if (!shuttingDown.get() && !isFinishing && !isDestroyed) {
+                            InCallClusterBridge.openProjection(this)
+                        }
+                    }
+                }
+                quietSleep(WATCHER_PERIOD_MS)
             }
-            clusterPrewarmAtMs = SystemClock.elapsedRealtime()
-            appendLog("Cluster prewarm: 启动即预热投屏通道（不等手机）")
-            InCallClusterBridge.openProjection(this)
-        }, PREWARM_SETTLE_MS)
+        }, "cluster-channel-watcher").apply { isDaemon = true; start() }
+    }
+
+    /** Sleeps without letting an interrupt escape the watcher loop. */
+    private fun quietSleep(millis: Long) {
+        try {
+            Thread.sleep(millis)
+        } catch (_: InterruptedException) {
+            Thread.currentThread().interrupt()
+        }
     }
 
     /**
@@ -5827,10 +5771,9 @@ class CarPlayHostActivity : ComponentActivity() {
         if (!forceSequence && clusterPrewarmAtMs > 0L &&
             SystemClock.elapsedRealtime() - clusterPrewarmAtMs < PREWARM_SILENT_WINDOW_MS
         ) {
-            appendLog("Cluster activation: 刚预热过，静默重申（不播报第二次）")
+            appendLog("Cluster activation: 刚预热过，直接显示（不发重申）")
             clusterProjectionStarted = true
             clusterProjectionAbandoned = false
-            InCallClusterBridge.reassertProjection(this)
             applyClusterMode(mirror, direction)
             awaitClusterProjectionReady(mirror, direction, waitedMs = 0L)
             return
@@ -5874,27 +5817,11 @@ class CarPlayHostActivity : ComponentActivity() {
         }
         val bridgeAvailable = InCallClusterBridge.isAvailable(this)
         appendLog(
-            "Cluster activation: bridgeAvailable=$bridgeAvailable",
+            "Cluster activation: bridgeAvailable=$bridgeAvailable（本路径不再发激活序列）",
         )
-        // Full UNI-V open sequence — the ONLY activation signal. The earlier experiment
-        // that also fired InCallClusterSdk.sendNavigateStatus(1) (tx22 on the same
-        // IDouInteractiveManager binder) was removed: the box sends only the InstrumentBridge
-        // sequence on activation, and two concurrent sequences on one binder can confuse the
-        // head-unit's projection state machine.
-        if (bridgeAvailable) {
-            appendLog("Cluster activation: InCallClusterBridge.openProjection()")
-            InCallClusterBridge.openProjection(this)
-            // NOTE: a previous attempt to suppress the incall "全屏镜像已开启" voice by sending
-            // InCallClusterSdk.sendNavigateStatus(1) (tx22) ~8 s after the open sequence was
-            // REVERTED after field testing: tx22 switches the head-unit out of the whole-screen
-            // mirror projection source into its navigation-projection mode, which loses the
-            // display mapping established by the open sequence — the dashboard goes blank a few
-            // seconds after projection (and after every re-projection), even though our stream
-            // keeps decoding. The old tx22-only activation worked because it was a cold start;
-            // after the open sequence it is a harmful source switch. The voice stays for now;
-            // removing it requires finding the incall announcement toggle rather than a mode
-            // switch.
-        }
+        // No open sequence from here. The start-up channel watcher is the only sender; every call
+        // that used to land here now just shows the window, which is what removed the repeated
+        // "全屏镜像/导航已开启" announcements.
         // The UNI-V open sequence itself takes ~1.5 s (delays 80..7600 ms + source ladder
         // 250..3500 ms), so wait longer than the previous 800 ms before looking for the display.
         finishActivation(mirror, direction, attempt = 1)
@@ -6170,6 +6097,8 @@ class CarPlayHostActivity : ComponentActivity() {
          * not send the announcing sequence to a panel that is still ours.
          */
         const val PREWARM_SETTLE_MS = 1_500L
+        /** How often the start-up watcher samples the projection channel. */
+        const val WATCHER_PERIOD_MS = 500L
         /**
          * After a start-up prewarm, a connect within this window re-asserts silently instead of
          * running the announcing sequence a second time.
