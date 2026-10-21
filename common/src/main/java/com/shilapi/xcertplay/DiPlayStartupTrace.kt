@@ -22,16 +22,29 @@ import java.util.Locale
 internal object DiPlayStartupTrace {
     private var processStartMs = 0L
 
+    /**
+     * `first frame drawn` is the only mark driven by a `ViewTreeObserver.OnDrawListener`. Removing
+     * that listener from inside `onDraw` cannot stop the callbacks already dispatched for the same
+     * frame, and a field log showed 1482 copies of the line on one entry, which rotates the 64 KB
+     * file and buries a real launch. Report it once per process, whatever calls it.
+     */
+    @Volatile
+    private var firstFrameReported = false
+
     fun markProcessStart() {
         processStartMs = runCatching { Process.getStartElapsedRealtime() }.getOrDefault(0L)
     }
 
-    fun log(context: Context, label: String) {
+    /**
+     * Returns false when [label] was already reported and no line was written. Only
+     * [FIRST_FRAME_LABEL] is deduplicated; every other mark keeps its own meaning.
+     */
+    fun log(context: Context, label: String): Boolean {
+        if (label == FIRST_FRAME_LABEL && firstFrameReported) return false
         val now = SystemClock.elapsedRealtime()
         val base = processStartMs
         val delta = if (base > 0L && now >= base) now - base else -1L
         val line = "${stamp()}  Startup: $label at +${delta}ms"
-        Log.i("DiPlayStartup", line)
         runCatching {
             val dir = File(context.filesDir, "logs").apply { mkdirs() }
             val file = File(dir, "startup.log")
@@ -39,7 +52,12 @@ internal object DiPlayStartupTrace {
             if (file.length() > 64 * 1024) file.renameTo(File(dir, "startup-previous.log"))
             file.appendText(line + "\n")
         }
+        if (label == FIRST_FRAME_LABEL) firstFrameReported = true
+        Log.i("DiPlayStartup", line)
+        return true
     }
+
+    private const val FIRST_FRAME_LABEL = "first frame drawn"
 
     private fun stamp(): String =
         SimpleDateFormat("HH:mm:ss.SSS", Locale.US).format(Date())

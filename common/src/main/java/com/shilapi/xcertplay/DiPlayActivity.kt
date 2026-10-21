@@ -204,9 +204,15 @@ class DiPlayActivity : ComponentActivity() {
         }
         render()
         DiPlayStartupTrace.log(this, "render done (page=$page)")
-        // First frame: the moment the driver actually sees something.
+        // First frame: the moment the driver actually sees something. The listener removes itself
+        // on the first draw, and this guard also covers callbacks already dispatched for that frame
+        // (a field log showed 1482 copies of the line on one entry).
         window.decorView.viewTreeObserver.addOnDrawListener(object : android.view.ViewTreeObserver.OnDrawListener {
+            private var reported = false
+
             override fun onDraw() {
+                if (reported) return
+                reported = true
                 runCatching {
                     window.decorView.viewTreeObserver.removeOnDrawListener(this)
                 }
