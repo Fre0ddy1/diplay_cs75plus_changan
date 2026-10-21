@@ -783,12 +783,19 @@ class AndroidMediaSink(
      * came, the music stayed quiet (field report: a photo ducked the volume and it never returned).
      */
     fun duckMediaFor(durationMs: Long) {
-        audioRenderers.values.forEach { runCatching { it.duckAudioFor(durationMs) } }
+        // Music only. iOS ducks when one of ITS sounds wants to be heard, so the guidance stream
+        // must not follow: ducking it as well left the prompts very quiet and the volume keys
+        // useless (field 2026-10-21: "the guidance got very low, silent and unadjustable").
+        mediaRenderers().forEach { runCatching { it.duckAudioFor(durationMs) } }
     }
 
     fun unduckMedia() {
-        audioRenderers.values.forEach { runCatching { it.unduckAudio() } }
+        mediaRenderers().forEach { runCatching { it.unduckAudio() } }
     }
+
+    /** Renderers whose channel is music; an unclassified one is left alone on purpose. */
+    private fun mediaRenderers(): List<AudioRenderer> =
+        audioRenderers.values.filter { it.channel() == AudioChannel.MEDIA }
 
     fun close() {
         closedForPoll = true
@@ -1299,6 +1306,10 @@ private class AudioRenderer(
 
     private var trackAttributes: AudioAttributes? = null
     private var mappedChannel: AudioChannel? = null
+
+    /** The channel this renderer plays, for callers that must treat the streams differently. */
+    fun channel(): AudioChannel? = mappedChannel
+
     private val queue = LinkedBlockingQueue<AudioPacket>(MAX_QUEUED_PACKETS)
     /** Music with sustained decoder backpressure must not keep playing minutes-old packets. */
     private val mediaLagGuard = if (format.audioType == "media") MediaPacketLagGuard(format.rtpClockRate) else null

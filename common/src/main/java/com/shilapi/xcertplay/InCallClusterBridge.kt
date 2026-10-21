@@ -363,9 +363,18 @@ object InCallClusterBridge {
                                     "${SystemClock.uptimeMillis() - r0SentAtUptimeMs}ms after our hand-back",
                             )
                         } else {
-                            // A projecting report outside that window means the projection is ours
-                            // again by some other means, so the released belief ends here.
-                            if (projecting && releasedByUs()) setReleasedByUs(false)
+                            // A projecting report outside that window used to end the released belief
+                            // here, on the theory that the projection was ours again "by some other
+                            // means". On this head unit it is never true: after every hand-back incall
+                            // keeps answering 3 for its OWN screen (measured 2026-10-21: still value=3
+                            // 5.9 s after the r0), so this line wiped the flag before the next open
+                            // and sent that open down the silent half, which never re-grabs the
+                            // ext-screen - the dashboard then stayed on "等待 CarPlay 地图". Only a
+                            // sequence we actually ran (which resets r0SentAtUptimeMs to 0) may
+                            // clear the belief, and runFullOpenSequence() already does that.
+                            if (projecting && releasedByUs() && r0SentAtUptimeMs == 0L) {
+                                setReleasedByUs(false)
+                            }
                             persistProjecting(projecting)
                         }
                     }
