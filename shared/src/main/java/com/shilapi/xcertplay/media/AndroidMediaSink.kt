@@ -28,6 +28,7 @@ import java.util.concurrent.ConcurrentHashMap
 import java.util.concurrent.LinkedBlockingQueue
 import java.util.concurrent.Executors
 import java.util.concurrent.atomic.AtomicBoolean
+import java.util.concurrent.locks.LockSupport
 import java.util.concurrent.atomic.AtomicInteger
 import java.util.concurrent.atomic.AtomicLong
 import java.util.concurrent.TimeUnit
@@ -1343,6 +1344,10 @@ private class AudioRenderer(
     private var clockTrim: MediaClockTrim? = null
     private var lastPcmWriteNs = 0L
     private var rebufferCount = 0
+    private var blockedWritesThisWindow = 0
+    private var longestBlockedWriteMs = 0L
+    private var unsentPcmBytesThisWindow = 0L
+    private var unsentPcmBytesTotal = 0L
     private var diagnosticStage = "starting"
     private var lastDecoderOutputMetadata: String? = null
     private var decoderOutputReports = 0
@@ -1789,6 +1794,14 @@ private class AudioRenderer(
         drainCodec(codec)
     }
 
+    /**
+     * Moves every decoded PCM buffer the codec has ready into the track.
+     *
+     * Called from the loop and inline from [feedCodec], so it must always make progress and never
+     * hold an output buffer: a hold here starves the decoder's input side and freezes audio (a
+     * back-pressure experiment did exactly that: `outputBuffers` stayed at 0 while `inputDropped`
+     * climbed).
+     */
     private fun drainCodec(codec: MediaCodec) {
         diagnosticStage = "decoder-output"
         val info = MediaCodec.BufferInfo()
@@ -1842,6 +1855,28 @@ private class AudioRenderer(
         }
     }
 
+    /**
+     * One place for "these bytes will never reach the player": counts them for the report and takes
+     * them out of the queued estimate, so the estimate reflects what the track actually holds.
+     */
+    private fun recordLostPcm(bytes: Long) {
+        if (bytes <= 0) return
+        unsentPcmBytesThisWindow += bytes
+        unsentPcmBytesTotal += bytes
+        bufferProgress.discarded(bytes)
+    }
+
+    /**
+     * Writes one decoded frame without blocking the decode loop.
+     *
+     * `WRITE_BLOCKING` parked the `carplay-audio` thread for 320-360 ms whenever the track was
+     * full (field measurement on a 2026 OPPO, Android 15). While it was parked, decoded packets
+     * piled up behind it and the track drained to its rebuffer floor. A non-blocking write keeps
+     * the loop turning, and a short bounded retry still lets a frame land as soon as the track has
+     * room instead of dropping it: an A/B on the same phone showed every dropped frame costing a
+     * rebuffer, so dropping eagerly is the worse trade. A frame that finds no room within
+     * [BLOCKING_WRITE_DEADLINE_NS] is dropped and counted in `unsentPcmBytes`.
+     */
     private fun writePcm(data: ByteArray, offset: Int = 0, length: Int = data.size) {
         val track = track ?: return
         diagnosticStage = "track-write"
@@ -1856,6 +1891,17 @@ private class AudioRenderer(
             applyFadeIn(data, offset, length)
             fadeApplied = true
         }
+        // A guidance prompt is short and carries meaning, so losing frames from it is audible as a
+        // clipped word. It therefore waits much longer than music before giving up on a frame, and
+        // since it has its own track and thread this never delays the music path. Without this the
+        // 20 ms music window would clip navigation prompts that the old blocking write used to
+        // deliver in full.
+        val deadlineNs = if (mappedChannel == AudioChannel.NAVIGATION) {
+            NAVIGATION_WRITE_DEADLINE_NS
+        } else {
+            BLOCKING_WRITE_DEADLINE_NS
+        }
+        val deadline = System.nanoTime() + deadlineNs
         var written = 0
         while (written < length && running) {
             val writeLength = if (playbackStarted) {
@@ -1865,16 +1911,32 @@ private class AudioRenderer(
             }
             val writeStarted = System.nanoTime()
             diagnosticStage = "track-write"
-            val count = track.write(data, offset + written, writeLength, AudioTrack.WRITE_BLOCKING)
-            maxWriteMs = maxOf(maxWriteMs, (System.nanoTime() - writeStarted) / 1_000_000L)
+            val count = track.write(data, offset + written, writeLength, AudioTrack.WRITE_NON_BLOCKING)
+            val writeMs = (System.nanoTime() - writeStarted) / 1_000_000L
+            maxWriteMs = maxOf(maxWriteMs, writeMs)
+            if (writeMs >= BLOCKED_WRITE_MS) {
+                blockedWritesThisWindow++
+                if (writeMs > longestBlockedWriteMs) longestBlockedWriteMs = writeMs
+            }
             if (count < 0) {
                 writeErrorsThisWindow++
                 lastWriteErrorCode = count
                 break
             }
             if (count == 0) {
+                // Full track: nothing was consumed. Retry briefly while the frame is still worth
+                // playing, so the decode loop never sleeps for hundreds of ms inside one write.
                 zeroWritesThisWindow++
-                break
+                if (System.nanoTime() >= deadline) {
+                    recordLostPcm((length - written).toLong())
+                    break
+                }
+                // Park instead of yield: yielding here spun up to 715k times per 5 s window on a
+                // full track (measured 2026-10-21), and that CPU burn starved the network receive
+                // threads - it showed up as 1.2-1.4 s "Wi-Fi gaps" in the same windows. One
+                // millisecond still gives ~20 attempts inside the deadline for the track to drain.
+                LockSupport.parkNanos(MICRO_WAIT_NS)
+                continue
             }
             if (count < writeLength) partialWritesThisWindow++
             written += count
@@ -1927,9 +1989,14 @@ private class AudioRenderer(
 
     private fun maintainPlaybackBuffer() {
         val track = track ?: return
+        // Lost frames are already out of the queued estimate (see recordLostPcm), so there is
+        // nothing to correct here before asking whether a rebuffer is due.
         if (bufferProgress.shouldRebuffer(mappedChannel == AudioChannel.MEDIA, playbackStarted,
                 track.underrunCount > underrunsAtPlaybackStart, queue.isEmpty(), track.playbackHeadPosition,
-                startThresholdBytes / 2L)) {
+                // Field data: bursts reached 450-740 ms while the old floor was half the 500 ms
+                // start threshold, so one burst drained straight through it. Recover to a full
+                // start threshold instead of twice as often.
+                startThresholdBytes.toLong())) {
             // The hardware buffer has starved below the recovery floor. Pause without flushing
             // or discarding PCM, then use the configured start threshold again when music resumes.
             track.pause()
@@ -1973,6 +2040,8 @@ private class AudioRenderer(
             "dropped=${packetsDropped.getAndSet(0)} underruns=+${underruns - statsLastUnderruns} queue=${queue.size} " +
             "playing=$playbackStarted maxGapMs=${maxArrivalGapMs.getAndSet(0)} " +
             "sinceRxMs=${if (lastRx == 0L) -1 else (now - lastRx) / 1_000_000L} maxWriteMs=$maxWriteMs " +
+            "blockedWrites=$blockedWritesThisWindow longestBlockedWriteMs=$longestBlockedWriteMs " +
+            "unsentPcmBytes=$unsentPcmBytesThisWindow unsentPcmBytesTotal=$unsentPcmBytesTotal " +
             "writtenFrames=$writtenFramesThisWindow totalWrittenFrames=$totalWrittenFrames " +
             "playbackHeadFrames=${playbackHeadFrames ?: -1} playbackAdvanceFrames=${playbackAdvanceFrames ?: -1} " +
             "estimatedQueuedFrames=${queuedFrames ?: -1} writeErrors=$writeErrorsThisWindow " +
@@ -1993,6 +2062,9 @@ private class AudioRenderer(
         }
         statsLastUnderruns = underruns
         maxWriteMs = 0L
+        blockedWritesThisWindow = 0
+        longestBlockedWriteMs = 0L
+        unsentPcmBytesThisWindow = 0L
         writtenFramesThisWindow = 0L
         writeErrorsThisWindow = 0
         lastWriteErrorCode = null
@@ -2082,5 +2154,16 @@ private class AudioRenderer(
         const val STATS_TAG = "DiPlay-AudioStats"
         const val STATS_WINDOW_NS = 5_000_000_000L
         const val DECODED_BUFFER_LOG_INTERVAL = 50
+        /** A blocking write that stalls this long would starve the decode loop. */
+        const val BLOCKED_WRITE_MS = 100L
+        /** How long one decoded frame may wait for room in a full track before it is dropped. */
+        const val BLOCKING_WRITE_DEADLINE_NS = 20_000_000L
+        /**
+         * How long a guidance frame may wait. Prompts are short, so a dropped frame is heard as a
+         * missing word; waiting this long costs nothing because navigation has its own track.
+         */
+        const val NAVIGATION_WRITE_DEADLINE_NS = 200_000_000L
+        /** Wait between retries while a full track has no room; keeps the loop off the CPU. */
+        const val MICRO_WAIT_NS = 1_000_000L
     }
 }

@@ -97,9 +97,11 @@ internal class MicrophoneCaptureStats(
         private const val REPORT_INTERVAL_NS = 5_000_000_000L
 
         private fun metadata(config: MicrophoneConfig): String {
+            // Must mirror the source chosen in MicrophoneUplink.start(); reporting the type's old
+            // source would make a field report state the opposite of what the capture ran on.
             val (type, source) = when (config.audioType) {
                 "telephony" -> "telephony" to "VOICE_COMMUNICATION"
-                "speechrecognition" -> "speechrecognition" to "VOICE_RECOGNITION"
+                "speechrecognition" -> "speechrecognition" to "VOICE_COMMUNICATION"
                 else -> "other" to "MIC"
             }
             return "type=$type source=$source codec=${config.codec.name} " +

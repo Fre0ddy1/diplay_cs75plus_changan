@@ -61,13 +61,21 @@ internal class MicrophoneUplink(
 
         val source = when (config.audioType) {
             "telephony" -> MediaRecorder.AudioSource.VOICE_COMMUNICATION
-            // Deliberately NOT VOICE_COMMUNICATION for voice-recognition uplinks: that source
-            // moves the whole head unit onto its call audio path, and on this car a WeChat voice
-            // clip captured that way left the navigation volume lowered and the audio garbled for
-            // a few seconds (field report 2026-10-20). VOICE_RECOGNITION reports ~3.5x the
-            // requested rate here, which the wall-clock pacing in capture() now absorbs by
-            // dropping the frames that arrive early.
-            "speechrecognition" -> MediaRecorder.AudioSource.VOICE_RECOGNITION
+            // Voice-recognition uplinks must NOT use VOICE_RECOGNITION on this head unit.
+            //
+            // Measured 2026-10-21 18:55 on the car (release build): VOICE_RECOGNITION delivered
+            // 367 KB/s against a 96 KB/s baseline, i.e. ~3.8x the negotiated rate. The wall-clock
+            // pacing below then decimates 3.8:1 with no low-pass filter, which does not produce
+            // "a few dropped frames" but a pitch-shifted, aliased clip - the "WeChat voice is all
+            // noise" report. Pacing fixes the packet rate, not the waveform.
+            //
+            // VOICE_COMMUNICATION delivered the correct 95 KB/s in the 2026-10-20 21:56 log, so
+            // pacing becomes a safety net instead of the primary mechanism. The known drawback is
+            // that it moves the head unit onto its call audio path; the volume guard in
+            // AndroidMediaSink (music-level snapshot and restore around a call) covers that, and
+            // the guidance-volume key routing is decided by navigationAudioActive(), which this
+            // source choice does not touch.
+            "speechrecognition" -> MediaRecorder.AudioSource.VOICE_COMMUNICATION
             else -> MediaRecorder.AudioSource.MIC
         }
         val nextEncoder = if (config.codec == AudioCodecKind.OPUS) {
@@ -131,6 +139,14 @@ internal class MicrophoneUplink(
             if (config.audioType == "telephony") effects = voiceEffects(nextRecorder.audioSessionId)
             nextRecorder.startRecording()
             stats.started(routeType(nextRecorder))
+            // The rate the device actually runs at, next to the one we negotiated. When these
+            // differ the uplink is unusable no matter how well the pacing hides it, and this line
+            // is the quickest way to see that from a field report.
+            Log.i(
+                TAG,
+                "Microphone: source=$source requestedRate=${config.sampleRate} " +
+                    "actualRate=${nextRecorder.sampleRate} channels=${config.channels}",
+            )
             thread = Thread({ capture(nextRecorder, nextSocket) }, "carplay-mic").apply {
                 isDaemon = true
                 start()

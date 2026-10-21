@@ -58,14 +58,27 @@ internal class MediaClockTrim(
             learnedTrim = integral
         }
         val next = (sampleRate * (1.0 + (KP * error + integral).coerceIn(-MAX_TRIM, MAX_TRIM))).roundToInt()
-        if (next == rate) return null
-        rate = next
-        return next
+        // Slew-limit instead of jumping to the target. setPlaybackRate changes the resampling
+        // ratio, so it changes pitch as well as speed: a 1.5 % correction at once is heard as a
+        // slide. On the first stream of a process the integral has not learned the head unit's
+        // drift yet, so the target can swing the whole range within a couple of updates (field
+        // 2026-10-21: "the first track slides in pitch, later ones are fine"). Moving at most
+        // MAX_RATE_STEP per update turns that into a slow, inaudible drift.
+        val maxDelta = (sampleRate * MAX_RATE_STEP).roundToInt().coerceAtLeast(1)
+        val limited = rate + (next - rate).coerceIn(-maxDelta, maxDelta)
+        if (limited == rate) return null
+        rate = limited
+        return limited
     }
 
     internal companion object {
         /** At most 1.5 % slower or faster: 26 cents, above the 0.76 % seen on #610. */
         const val MAX_TRIM = 0.015
+        /**
+         * Largest playback-rate change per update (0.2 %). The trim still reaches its target, just
+         * over several seconds, so a large correction is heard as drift rather than as a slide.
+         */
+        const val MAX_RATE_STEP = 0.002
         const val KP = 0.03
         /** Per second, per unit of level error. */
         const val KI = 0.001

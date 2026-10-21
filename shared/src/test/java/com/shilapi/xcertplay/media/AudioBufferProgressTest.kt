@@ -58,4 +58,22 @@ class AudioBufferProgressTest {
         assertEquals(40, buffer.queuedBytes(0))
         assertEquals(0, buffer.queuedBytes(20))
     }
+
+    /**
+     * The field bug behind "music stutters": frames the track could not take were dropped but
+     * stayed in the ledger, so the estimate never fell to the rebuffer floor and playback ran
+     * underrun forever with dropped audio on top.
+     */
+    @Test fun droppedFramesLeaveTheQueuedByteEstimate() {
+        val buffer = AudioBufferProgress(4)
+        buffer.written(8000)
+        assertEquals(0, buffer.queuedBytes(2000))
+        buffer.written(4000)
+        // The track kept 4000 bytes but could not take 2000 more; those are gone for good.
+        buffer.discarded(2000)
+        assertEquals(2000, buffer.queuedBytes(2000))
+        // Without the correction the estimate would still sit at 4000 and never reach the floor.
+        buffer.discarded(2600)
+        assertEquals(0, buffer.queuedBytes(2000))
+    }
 }

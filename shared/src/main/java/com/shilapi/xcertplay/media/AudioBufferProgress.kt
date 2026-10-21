@@ -8,6 +8,14 @@ internal class AudioBufferProgress(private val frameBytes: Int) {
 
     fun written(bytes: Int) { writtenBytes += bytes }
 
+    /**
+     * Compression resynchronises the head: [bytes] of still-queued PCM are discarded, so they must
+     * leave the ledger too. Without this the estimate stays permanently inflated by everything the
+     * track dropped and the rebuffer decision never sees a real underrun (field log: the estimate
+     * sat at ~23 k frames while the caller kept reporting an empty incoming queue).
+     */
+    fun discarded(bytes: Long) { writtenBytes -= bytes }
+
     fun queuedBytes(rawHead: Int): Long {
         val head = rawHead.toLong() and 0xffff_ffffL
         playedFrames += (head - lastHead) and 0xffff_ffffL
