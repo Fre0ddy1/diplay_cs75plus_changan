@@ -479,7 +479,14 @@ object InCallClusterBridge {
      * field report). Now: wait for the connection, then send the full sequence; if the service
      * never connects, fall back to the broadcast-only half so behaviour is never worse than before.
      */
-    fun openProjection(context: Context) {
+    /**
+     * @param forceFullSequence run the full open sequence even when incall claims it is already
+     *   projecting. The report is not trustworthy after our own window was hidden: on the first
+     *   stream after a cold start incall kept answering "projecting" while the panel was already
+     *   showing its own screen, so the silent half ran and the dashboard stayed wrong. A caller
+     *   that knows the window is gone (the swipe back from off) must be able to override it.
+     */
+    fun openProjection(context: Context, forceFullSequence: Boolean = false) {
         contextRef = context.applicationContext
         val ctx = contextRef ?: return
         mainHandler.removeCallbacksAndMessages(token)
@@ -490,7 +497,7 @@ object InCallClusterBridge {
         // announce "全屏导航已开启" for nothing. Our OWN r0 outranks any report: after a hand-back
         // the ext-screen is the head unit's, and a value-3 that arrived inside the r0 answer
         // window is the head unit describing its own screen, not ours.
-        val alreadyProjecting = incallReportsProjecting() && !releasedByUs()
+        val alreadyProjecting = incallReportsProjecting() && !releasedByUs() && !forceFullSequence
         openState = true
         broadcastHalfSent = false
         sourceEnterSent = false
