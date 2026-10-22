@@ -23,6 +23,10 @@ internal class MediaClockTrim(
     private var lastUpdateNs: Long? = null
     private var compressedBacklog = false
 
+    /** How many times a stale learned offset was dropped, for the diagnostic report. */
+    var resetCount = 0
+        private set
+
     /** The playback rate last asked of the track, in Hz. */
     var rate = sampleRate
         private set
@@ -38,9 +42,23 @@ internal class MediaClockTrim(
         val error = (buffered - targetFrames).toDouble() / targetFrames
         val previous = level
         // After a pause, a rebuffer or the first write the average restarts from what is queued now.
-        level = if (previous == null || nowNs - lastSampleNs > STALE_NS) error
+        val nextLevel = if (previous == null || nowNs - lastSampleNs > STALE_NS) error
         else previous + (error - previous) * (1.0 - exp(-(nowNs - lastSampleNs).toDouble() / AVERAGE_NS))
+        level = nextLevel
         lastSampleNs = nowNs
+        // A buffer far on the *opposite* side of a learned offset proves that offset is stale: a
+        // transient (a Wi-Fi gap, a rebuffer) wound the integral to a limit, and the old PI gains
+        // were too weak to unwind it. The trim then stayed pinned at 47280 Hz, the track sat full
+        // and the write path dropped ~12 kB of PCM every 5 s - the crackle in the field log
+        // (2026-10-22). Drop the learned offset at once; the proportional term takes over and the
+        // buffer drains instead of overflowing.
+        if ((nextLevel > RESET_ERROR && integral < 0.0) ||
+            (nextLevel < -RESET_ERROR && integral > 0.0)
+        ) {
+            integral = 0.0
+            learnedTrim = 0.0
+            resetCount++
+        }
     }
 
     /** The playback rate to set now, or null to keep the current one. */
@@ -55,7 +73,10 @@ internal class MediaClockTrim(
         lastUpdateNs = nowNs
         if (!compressedBacklog) {
             integral = (integral + KI * error * seconds).coerceIn(-MAX_TRIM, MAX_TRIM)
-            learnedTrim = integral
+            // A level far from target is a transient, not the head unit's steady drift. Learning it
+            // would start the next music stream with the same wrong offset; only remember a trim
+            // that was found with the buffer near its target.
+            if (kotlin.math.abs(error) < LEARN_ERROR) learnedTrim = integral
         }
         val next = (sampleRate * (1.0 + (KP * error + integral).coerceIn(-MAX_TRIM, MAX_TRIM))).roundToInt()
         // Slew-limit instead of jumping to the target. setPlaybackRate changes the resampling
@@ -109,6 +130,16 @@ internal class MediaClockTrim(
         const val UPDATE_NS = 3_000_000_000L
         const val STALE_NS = 250_000_000L
         const val MAX_STEP_SECONDS = 2.0
+        /**
+         * Level error that proves the learned offset is stale, as a fraction of the target.
+         *
+         * 2 % of a 1 s buffer is 20 ms, far outside the normal level ripple but well below the
+         * point where the track starts dropping frames. At that point the integral is dropped and
+         * the proportional term steers back to target.
+         */
+        const val RESET_ERROR = 0.02
+        /** Only a trim found this close to target is remembered for the next music stream. */
+        const val LEARN_ERROR = 0.02
 
         /** The drift the last music stream settled on. Each process plays to one head unit. */
         @Volatile var learnedTrim = 0.0

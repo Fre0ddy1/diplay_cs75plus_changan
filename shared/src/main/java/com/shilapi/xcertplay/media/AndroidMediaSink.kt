@@ -1414,6 +1414,7 @@ private class AudioRenderer(
     private val bufferProgress = AudioBufferProgress(if (format.channels >= 2) 4 else 2)
     private var underrunsAtPlaybackStart = 0
     private var clockTrim: MediaClockTrim? = null
+    private var lastTrimResets = 0
     private var lastPcmWriteNs = 0L
     private var rebufferCount = 0
     private var blockedWritesThisWindow = 0
@@ -2043,6 +2044,12 @@ private class AudioRenderer(
             format.rtpClockRate.coerceAtLeast(1)
         trim.sample(bufferProgress.queuedBytes(track.playbackHeadPosition) / frameBytes,
             now, compressedPcmFrames)
+        val resets = trim.resetCount
+        if (resets != lastTrimResets) {
+            lastTrimResets = resets
+            report("Audio: clock trim reset audioType=${format.audioType} count=$resets " +
+                "rate=${trim.rate} levelFrames=${bufferProgress.queuedBytes(track.playbackHeadPosition) / frameBytes}")
+        }
         val rate = trim.rateDue(now) ?: return
         val result = runCatching { track.setPlaybackRate(rate) }.getOrDefault(AudioTrack.ERROR)
         if (result != AudioTrack.SUCCESS) {
@@ -2228,8 +2235,16 @@ private class AudioRenderer(
         const val DECODED_BUFFER_LOG_INTERVAL = 50
         /** A blocking write that stalls this long would starve the decode loop. */
         const val BLOCKED_WRITE_MS = 100L
-        /** How long one decoded frame may wait for room in a full track before it is dropped. */
-        const val BLOCKING_WRITE_DEADLINE_NS = 20_000_000L
+        /**
+         * How long one decoded frame may wait for room in a full track before it is dropped.
+         *
+         * An AAC frame is 1024 samples, 21.3 ms at 48 kHz; the old 20 ms deadline was shorter
+         * than the time the track needs to make room for exactly one frame, so a full track
+         * dropped the tail of every frame (field log 2026-10-22: unsentPcmBytes ~12 kB per 5 s,
+         * heard as crackle). 30 ms covers one AAC frame plus the retry jitter; it is still far
+         * below the 320-360 ms blocking write that used to starve the decode loop.
+         */
+        const val BLOCKING_WRITE_DEADLINE_NS = 30_000_000L
         /**
          * How long a guidance frame may wait. Prompts are short, so a dropped frame is heard as a
          * missing word; waiting this long costs nothing because navigation has its own track.
