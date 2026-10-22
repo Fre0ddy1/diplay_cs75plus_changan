@@ -113,7 +113,14 @@ internal class ClusterSongView(context: Context) : View(context) {
         val left = posX.coerceIn(0f, (width - w).coerceAtLeast(0f))
         val top = posY.coerceIn(0f, (height - h).coerceAtLeast(0f))
         rect.set(left, top, left + w, top + h)
-        GlassCardStyle.drawCapsule(canvas, rect, radius, cardAlpha / 100f)
+        // Background strength: 100 % is an opaque black card, 0 % leaves only the text and artwork.
+        // The glass tint the other cards share would top out at 23 % and never look solid, which is
+        // what "the setting does nothing" meant.
+        val cardFill = android.graphics.Color.argb(
+            (255 * cardAlpha.coerceIn(0, 100) / 100f).toInt().coerceIn(0, 255),
+            0, 0, 0,
+        )
+        GlassCardStyle.drawCapsule(canvas, rect, radius, cardFill)
         if (art != null) {
             val half = artSize / 2f
             val cx = rect.left + padH + half + artworkX

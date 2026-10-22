@@ -596,10 +596,16 @@ class CarPlayHostActivity : ComponentActivity() {
     }
 
     private fun requestClusterRepaint(reason: String) {
-        repaintExecutor.execute {
-            val sent = runCatching { controller?.refreshClusterUi(reason) }.getOrDefault(false)
-            appendLog("Cluster repaint ($reason) sent=$sent")
-        }
+        // The executor is shut down in onDestroy while the one-second overlay loop can still fire
+        // one last time; execute() on a shut-down pool throws RejectedExecutionException, which
+        // used to take the process down on the first disconnect (the second one was fine because
+        // the loop had already stopped). Never let a background repaint crash the app.
+        runCatching {
+            repaintExecutor.execute {
+                val sent = runCatching { controller?.refreshClusterUi(reason) }.getOrDefault(false)
+                appendLog("Cluster repaint ($reason) sent=$sent")
+            }
+        }.onFailure { appendLog("Cluster repaint skipped (${it.javaClass.simpleName})") }
     }
 
     private val checkVideoFreeze = object : Runnable {
