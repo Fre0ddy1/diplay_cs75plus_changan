@@ -5634,7 +5634,11 @@ class CarPlayHostActivity : ComponentActivity() {
         if (shuttingDown.get() || isFinishing || isDestroyed) return
         watcherThread = Thread({
             val startedAtMs = SystemClock.elapsedRealtime()
-            var decided = false
+            // Throttle only. It is deliberately NOT a one-shot latch: if the driver closes the
+            // projection channel by hand, `open` turns false again and this has to fire once more,
+            // which a "decided" flag would make impossible.
+            var lastSentAtMs = 0L
+            var sentCount = 0
             while (!shuttingDown.get() && !isFinishing && !isDestroyed) {
                 // Read-only: incall's own report, no request of any kind goes out here.
                 val open = runCatching { InCallClusterBridge.reportsProjecting() }.getOrDefault(false)
@@ -5650,17 +5654,17 @@ class CarPlayHostActivity : ComponentActivity() {
                         )
                     }
                 }
-                if (!decided) {
-                    if (open) {
-                        decided = true
-                        appendLog("Cluster watcher: 启动时投屏通道已就绪，不发激活序列")
-                    } else if (SystemClock.elapsedRealtime() - startedAtMs >= WATCHER_READY_WAIT_MS) {
-                        // Waited the full window and the channel is still closed: send once.
-                        decided = true
-                        clusterPrewarmAtMs = SystemClock.elapsedRealtime()
+                if (!open) {
+                    val now = SystemClock.elapsedRealtime()
+                    // First send waits from start-up; every later one waits from the previous send.
+                    val waitingSinceMs = if (lastSentAtMs == 0L) startedAtMs else lastSentAtMs
+                    if (now - waitingSinceMs >= WATCHER_READY_WAIT_MS) {
+                        lastSentAtMs = now
+                        sentCount++
+                        clusterPrewarmAtMs = now
                         appendLog(
-                            "Cluster watcher: 等待 ${WATCHER_READY_WAIT_MS}ms 通道仍未就绪，" +
-                                "发一次完整激活序列（全程仅此一次）",
+                            "Cluster watcher: 投屏通道未就绪（第 ${sentCount} 次）" +
+                                "距上次 ${(now - waitingSinceMs)}ms，发完整激活序列",
                         )
                         mainHandler.post {
                             if (!shuttingDown.get() && !isFinishing && !isDestroyed) {
