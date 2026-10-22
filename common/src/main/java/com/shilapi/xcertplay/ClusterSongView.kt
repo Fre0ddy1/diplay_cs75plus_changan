@@ -41,10 +41,12 @@ internal class ClusterSongView(context: Context) : View(context) {
     private var posY = Float.NaN
     private var overlayScale = Float.NaN
     private var lastLine1 = ""
+    private var lastLine2 = ""
     private var lastLine3 = ""
     private var lastLineH = 0f
     private var lastFontScale = 0
     private var measured1 = 0f
+    private var measured2 = 0f
     private var measured3 = 0f
     private var maxChars = 0
     private var settingsAtMs = 0L
@@ -106,14 +108,18 @@ internal class ClusterSongView(context: Context) : View(context) {
         textPaint.textSize = lineH * 0.62f * scale
         artistPaint.textSize = lineH * 0.5f * scale
 
-        val line1 = cut(next.title)
+        val (line1, line2) = splitTitle(next.title)
         val line3 = cut(next.artist)
-        if (line1 != lastLine1 || line3 != lastLine3 || lineH != lastLineH || fontScale != lastFontScale) {
+        if (line1 != lastLine1 || line2 != lastLine2 || line3 != lastLine3 ||
+            lineH != lastLineH || fontScale != lastFontScale
+        ) {
             lastLine1 = line1
+            lastLine2 = line2
             lastLine3 = line3
             lastLineH = lineH
             lastFontScale = fontScale
             measured1 = textPaint.measureText(line1)
+            measured2 = if (line2.isEmpty()) 0f else textPaint.measureText(line2)
             measured3 = if (line3.isEmpty()) 0f else artistPaint.measureText(line3)
         }
 
@@ -128,17 +134,24 @@ internal class ClusterSongView(context: Context) : View(context) {
         // Text size follows the space the cover leaves: the panel minus the cover and the padding is
         // what the words may occupy, so a large cover gets smaller text instead of an oversized card.
         val available = (width - artSize - gap - padH * 2f).coerceAtLeast(lineH * 3f)
-        var textW = maxOf(measured1, measured3)
+        var textW = maxOf(measured1, measured2, measured3)
         if (textW > available && textW > 0f) {
             val fit = available / textW
             textPaint.textSize *= fit
             artistPaint.textSize *= fit
             measured1 = textPaint.measureText(line1)
+            measured2 = if (line2.isEmpty()) 0f else textPaint.measureText(line2)
             measured3 = if (line3.isEmpty()) 0f else artistPaint.measureText(line3)
-            textW = maxOf(measured1, measured3)
+            textW = maxOf(measured1, measured2, measured3)
         }
 
-        val lines = if (line3.isEmpty()) 1 else 3
+        // Slots 1 and 2 hold the song name (a long one wraps into slot 2), slot 3 holds the artist.
+        // An artist keeps its own row even when the name fits on one line, so the two never move.
+        val lines = when {
+            line3.isNotEmpty() -> 3
+            line2.isNotEmpty() -> 2
+            else -> 1
+        }
         val textH = lineH * lines
 
         val w: Float
@@ -211,16 +224,33 @@ internal class ClusterSongView(context: Context) : View(context) {
             canvas.restoreToCount(saved)
         }
 
-        // Slot 1 always holds the song name; slot 3 holds the artist when there is one. Slot 2 is
-        // left for a lyric line the protocol does not currently provide.
+        // Slot 1 (and slot 2 when the name is long) hold the song name; slot 3 holds the artist.
         val m1 = textPaint.fontMetrics
         val baseline1 = textTop - (m1.ascent + m1.descent) / 2f
         canvas.drawText(line1, textLeft, baseline1, textPaint)
+        if (line2.isNotEmpty()) {
+            val baseline2 = textTop + lineH - (m1.ascent + m1.descent) / 2f
+            canvas.drawText(line2, textLeft, baseline2, textPaint)
+        }
         if (line3.isNotEmpty()) {
             val m3 = artistPaint.fontMetrics
             val baseline3 = textTop + lineH * 2f - (m3.ascent + m3.descent) / 2f
             canvas.drawText(line3, textLeft, baseline3, artistPaint)
         }
+    }
+
+    /**
+     * Splits a song name across slots 1 and 2.
+     *
+     * The configured character count is the width of one slot, so a longer name simply continues on
+     * the second line rather than being cut off; anything past two slots is dropped. No ellipsis.
+     */
+    private fun splitTitle(title: String): Pair<String, String> {
+        if (maxChars <= 0 || title.length <= maxChars) return title to ""
+        val first = title.substring(0, maxChars)
+        val rest = title.substring(maxChars)
+        val second = if (rest.length <= maxChars) rest else rest.substring(0, maxChars)
+        return first to second
     }
 
     /** Hard cut at the configured character count: no ellipsis, by request. */
