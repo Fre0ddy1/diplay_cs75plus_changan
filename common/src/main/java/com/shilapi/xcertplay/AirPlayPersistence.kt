@@ -959,6 +959,68 @@ object AirPlayPersistence {
     }
 
     /**
+     * Every saved setting, one line per group, for the diagnostic report and the startup log.
+     *
+     * Written so a report never has to be read alongside a message from the driver saying what they
+     * had configured: guessing which preset was active cost a whole round trip on 2026-10-22, when
+     * the music buffer was assumed to be 1000 ms while the log's 700 ms track was in fact the 500 ms
+     * preset plus headroom.
+     */
+    fun describeSavedSettings(context: Context): String = buildString {
+        appendLine(
+            "Saved audio: musicBufferMs=${loadMediaBufferMillis(context)} " +
+                "duckPercent=${loadNavDuckPercent(context)} " +
+                "audioFocus=${loadAudioFocusEnabled(context)} " +
+                "mediaViaCarBluetooth=${loadMediaViaCarBluetooth(context)}",
+        )
+        appendLine(
+            "Saved video: hevc=${loadHevcEnabled(context)} fps=${loadFps(context)} " +
+                "resolution=${loadDisplayScaleTenths(context) * 10}% " +
+                "widthPhysicalMm=${loadWidthPhysicalMm(context)}",
+        )
+        appendLine(
+            "Saved dashboard: content=${loadClusterContent(context).name} " +
+                "mirrorMain=${loadClusterMirrorMain(context)} " +
+                "mirrorLeftCropPx=${loadClusterMirrorLeftCropPx(context)} " +
+                "markerStep=${loadClusterMarkerHorizontalStep(context)}/" +
+                "${loadClusterMarkerVerticalStep(context)}",
+        )
+        appendLine(
+            "Saved dashboard crop: left=${loadClusterCropLeftPercent(context)} " +
+                "top=${loadClusterCropTopPercent(context)} " +
+                "width=${loadClusterCropWidthPercent(context)} " +
+                "height=${loadClusterCropHeightPercent(context)}",
+        )
+        appendLine(
+            "Saved cards: turn=${loadClusterTurnCardX(context)},${loadClusterTurnCardY(context)} " +
+                "scale=${loadClusterCardScalePercent(context, "turn")} " +
+                "visible=${loadClusterTurnCardVisible(context)} | " +
+                "eta=${loadClusterCardX(context, "eta")},${loadClusterCardY(context, "eta")} " +
+                "scale=${loadClusterCardScalePercent(context, "eta")} " +
+                "visible=${loadClusterCardVisible(context, "eta")} | " +
+                "road=${loadClusterCardX(context, "road")},${loadClusterCardY(context, "road")} " +
+                "scale=${loadClusterCardScalePercent(context, "road")} " +
+                "visible=${loadClusterCardVisible(context, "road")}",
+        )
+        appendLine(
+            "Saved lyrics card: pos=${loadClusterCardX(context, "song")}," +
+                "${loadClusterCardY(context, "song")} " +
+                "scale=${loadClusterCardScalePercent(context, "song")} " +
+                "visible=${loadClusterCardVisible(context, "song")} " +
+                "maxChars=${loadClusterSongMaxChars(context)} " +
+                "cardAlpha=${loadClusterSongCardAlpha(context)} " +
+                "showArtwork=${loadClusterSongShowArtwork(context)} " +
+                "artworkSide=${loadClusterSongArtworkSide(context)} " +
+                "artworkScale=${loadClusterSongArtworkScale(context)} " +
+                "fontScale=${loadClusterSongFontScale(context)}",
+        )
+        appendLine(
+            "Saved input: settingsGestureFingers=${loadSettingsGestureFingers(context)} " +
+                "wireless=${loadWirelessEnabled(context)}",
+        )
+    }
+
+    /**
      * Longest song line shown in the song card, in characters.
      *
      * A CarPlay NowPlayingUpdate title can be arbitrarily long, and the card grows with the text -

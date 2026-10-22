@@ -773,6 +773,14 @@ class CarPlayHostActivity : ComponentActivity() {
             "Host started; MFI target=${mfiTargetLabel(mfiTarget)}; " +
                 "transport=${if (wirelessEnabled) "wireless" else "wired"}",
         )
+        // Every saved setting goes to the log at startup, so a report never needs the driver to
+        // describe what they had configured (2026-10-22: the music buffer was assumed to be
+        // 1000 ms while the 700 ms track in the log was really the 500 ms preset plus headroom).
+        runCatching {
+            AirPlayPersistence.describeSavedSettings(this).lineSequence()
+                .filter { it.isNotBlank() }
+                .forEach { appendLog(it) }
+        }
         val reusedBackgroundSession = adoptBackgroundSession()
         microphoneAvailable =
             checkSelfPermission(Manifest.permission.RECORD_AUDIO) == PackageManager.PERMISSION_GRANTED

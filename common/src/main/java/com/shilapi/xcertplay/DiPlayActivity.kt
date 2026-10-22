@@ -2962,6 +2962,8 @@ class DiPlayActivity : ComponentActivity() {
                 "audioFocus=${AirPlayPersistence.loadAudioFocusEnabled(appContext)}",
         )
         appendLine("Session: ${if (CarPlayBackgroundSession.active) "active" else if (CarPlayBackgroundSession.hasSession()) "connecting" else "stopped"}")
+        // Every saved setting, so a report never needs the driver to say what they had configured.
+        append(AirPlayPersistence.describeSavedSettings(appContext))
         appendLine("Head-unit board: ${Build.BOARD}; hardware: ${Build.HARDWARE}; build: ${Build.DISPLAY}")
         // The version number does not change between test builds, so name the installed package:
         // it is the only way to tell whether a report came from the APK that was just built.
