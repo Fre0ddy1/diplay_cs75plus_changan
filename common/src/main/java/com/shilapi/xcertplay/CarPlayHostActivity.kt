@@ -1379,13 +1379,16 @@ class CarPlayHostActivity : ComponentActivity() {
                 AirPlayPersistence.loadClusterCardScalePercent(this, "turn"),
             )
             presentation.setSong(clusterSong)
-            // Apple's own cluster views already contain the turn instructions, the lane guidance
-            // and the junction picture. Drawing our cards over them put a second, smaller turn card
-            // on top of Apple's (field 2026-10-22, right after choosing "Apple 完整导航界面"), so in
-            // those modes every overlay card is cleared instead.
+            // Apple's own cluster views already contain the turn instruction and the road name, so
+            // those two overlays are cleared in those modes - drawing them again put a second,
+            // smaller turn card on top of Apple's (field 2026-10-22).
+            //
+            // The ETA card is different: like the song card it is drawn entirely by us, so it stays
+            // available in every content mode and remains under the driver's own show/hide switch.
+            // Its visibility is still gated on nav-only + that switch by applyCardsVisibility().
             if (appleClusterContent) {
                 presentation.setTurnCardGuidance(null)
-                presentation.setEtaGuidance(null)
+                presentation.setEtaGuidance(clusterTurnGuidance)
                 presentation.setRoadNameGuidance(null)
             } else if (changanCards) {
                 presentation.setTurnCardGuidance(clusterTurnGuidance)
