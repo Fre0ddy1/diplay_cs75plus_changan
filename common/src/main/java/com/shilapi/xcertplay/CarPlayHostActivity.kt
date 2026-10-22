@@ -356,13 +356,6 @@ class CarPlayHostActivity : ComponentActivity() {
             applyClusterTurnOverlay()
         }
     }
-    private var clusterLaneGuidance: com.shilapi.xcertplay.hud.BydLaneGuidance? = null
-    private val clusterLaneOverlayListener: (com.shilapi.xcertplay.hud.BydLaneGuidance?) -> Unit = { guidance ->
-        runOnUiThread {
-            clusterLaneGuidance = guidance
-            applyClusterTurnOverlay()
-        }
-    }
     // Experimental route-guidance TLV trace (0x5201/0x5202/0x5204). The full iAP2 layout is
     // undocumented; the raw TLV trace goes to the diagnostics log so a real capture can be
     // decoded later. Throttled to avoid flooding the log when the iPhone pushes frames often.
@@ -1126,7 +1119,6 @@ class CarPlayHostActivity : ComponentActivity() {
         }
         com.shilapi.xcertplay.hud.BydNavigationOutputs.setTurnOverlayListener(clusterTurnOverlayListener)
         com.shilapi.xcertplay.hud.BydNavigationOutputs.setSongListener(clusterSongListener)
-        com.shilapi.xcertplay.hud.BydNavigationOutputs.setLaneOverlayListener(clusterLaneOverlayListener)
         com.shilapi.xcertplay.hud.BydNavigationOutputs.routeTraceListener = routeTraceListener
         mainHandler.removeCallbacks(refreshTurnOverlay)
         mainHandler.post(refreshTurnOverlay)
@@ -1366,7 +1358,6 @@ class CarPlayHostActivity : ComponentActivity() {
         val cardsLog = "Cluster cards: mode=${if (clusterPresentation?.isMirrorMode() == true) "mirror" else "nav-only"} " +
             "turn=${g != null} road=${g?.road?.isNotEmpty() == true || g?.currentRoad?.isNotEmpty() == true} " +
             "eta=${g?.arrivalEpochSeconds != null || g?.remainingSeconds != null} " +
-            "exit=${g?.exitLabel?.isNotEmpty() == true} lane=${clusterLaneGuidance != null} " +
             "contentTop=${AirPlayPersistence.loadClusterCardContentTopPx(this)} " +
             "turnXY=${AirPlayPersistence.loadClusterTurnCardX(this)}/" +
             "${AirPlayPersistence.loadClusterTurnCardY(this)} " +
@@ -1387,15 +1378,11 @@ class CarPlayHostActivity : ComponentActivity() {
             if (changanCards) {
                 presentation.setTurnCardGuidance(clusterTurnGuidance)
                 presentation.setEtaGuidance(clusterTurnGuidance)
-                presentation.setLaneGuidance(clusterLaneGuidance)
                 presentation.setRoadNameGuidance(clusterTurnGuidance)
-                presentation.setExitGuidance(clusterTurnGuidance)
             } else {
                 presentation.setTurnCardGuidance(if (overlay) clusterTurnGuidance else null)
                 presentation.setEtaGuidance(null)
-                presentation.setLaneGuidance(null)
                 presentation.setRoadNameGuidance(null)
-                presentation.setExitGuidance(null)
             }
         }
     }

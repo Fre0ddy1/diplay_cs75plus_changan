@@ -49,11 +49,9 @@ internal class ClusterMapPresentation(
     private var waitingLabel: TextView? = null
     private var turnCardView: ClusterTurnCardView? = null
     private var etaCardView: ClusterEtaCardView? = null
-    private var laneCardView: ClusterLaneGuidanceView? = null
     private var roadNameCardView: ClusterRoadNameView? = null
     /** Song now playing, top centre. Title/artist only - the protocol carries no lyrics. */
     private var songView: ClusterSongView? = null
-    private var exitBadgeView: ClusterExitBadgeView? = null
     private var genericTextureView: TextureView? = null
     private var navTextureView: TextureView? = null
     private val projectionSize: Point = sizeOf(display)
@@ -69,9 +67,7 @@ internal class ClusterMapPresentation(
     private var mirrorMode = true
     private var lastTurnGuidance: ClusterTurnGuidance? = null
     private var lastEtaGuidance: ClusterTurnGuidance? = null
-    private var lastLaneGuidance: BydLaneGuidance? = null
     private var lastRoadNameGuidance: ClusterTurnGuidance? = null
-    private var lastExitGuidance: ClusterTurnGuidance? = null
 
     // Per-frame cost killers: card show/hide switches and the fronted-card set are cached.
     // applyCardsVisibility runs on every guidance tick (per second); reading SharedPreferences
@@ -292,15 +288,11 @@ internal class ClusterMapPresentation(
         root.addView(turnCardView, FrameLayout.LayoutParams(-1, -1))
         etaCardView = ClusterEtaCardView(context).apply { visibility = View.GONE }
         root.addView(etaCardView, FrameLayout.LayoutParams(-1, -1))
-        laneCardView = ClusterLaneGuidanceView(context).apply { visibility = View.GONE }
-        root.addView(laneCardView, FrameLayout.LayoutParams(-1, -1))
         roadNameCardView = ClusterRoadNameView(context).apply { visibility = View.GONE }
         root.addView(roadNameCardView, FrameLayout.LayoutParams(-1, -1))
         // Added last so it draws above the guidance cards.
         songView = ClusterSongView(context).apply { visibility = View.GONE }
         root.addView(songView, FrameLayout.LayoutParams(-1, -1))
-        exitBadgeView = ClusterExitBadgeView(context).apply { visibility = View.GONE }
-        root.addView(exitBadgeView, FrameLayout.LayoutParams(-1, -1))
         setContentView(root)
     }
 
@@ -364,11 +356,9 @@ internal class ClusterMapPresentation(
         )
         // Drop each card's cached position so the next draw reloads the saved coordinates.
         etaCardView?.notifyPositionChanged()
-        laneCardView?.notifyPositionChanged()
         roadNameCardView?.notifyPositionChanged()
         // Deliberately outside the nav-only group: the mirror mode shows it as well.
         songView?.notifyPositionChanged()
-        exitBadgeView?.notifyPositionChanged()
         // Reload the show/hide switches, then a saved switch change re-applies visibility right away.
         reloadCardVisibilityCache()
         if (navOnlyCards) applyCardsVisibility()
@@ -391,21 +381,9 @@ internal class ClusterMapPresentation(
         if (navOnlyCards) applyCardsVisibility()
     }
 
-    fun setLaneGuidance(guidance: BydLaneGuidance?) {
-        lastLaneGuidance = guidance
-        laneCardView?.setLaneGuidance(guidance)
-        if (navOnlyCards) applyCardsVisibility()
-    }
-
     fun setRoadNameGuidance(guidance: ClusterTurnGuidance?) {
         lastRoadNameGuidance = guidance
         roadNameCardView?.setGuidance(guidance)
-        if (navOnlyCards) applyCardsVisibility()
-    }
-
-    fun setExitGuidance(guidance: ClusterTurnGuidance?) {
-        lastExitGuidance = guidance
-        exitBadgeView?.setGuidance(guidance)
         if (navOnlyCards) applyCardsVisibility()
     }
 
@@ -415,20 +393,17 @@ internal class ClusterMapPresentation(
      * data is present. DiLink 5.1 (navOnlyCards=false) never reaches this branch.
      *
      * Each view's setGuidance() is the authority on its own visibility (turn needs guidance,
-     * ETA needs arrival/remaining, lane needs a non-empty lane list, road needs a road name,
-     * exit needs a label), so here we only hide everything in mirror mode, honour the user's
-     * per-card show/hide switch, and raise the visible cards above the video layer in
-     * nav-only mode. Never force a card VISIBLE here without the same data check - that
-     * would show an empty glass block.
+     * ETA needs arrival/remaining, road needs a road name), so here we only hide everything in
+     * mirror mode, honour the user's per-card show/hide switch, and raise the visible cards above
+     * the video layer in nav-only mode. Never force a card VISIBLE here without the same data
+     * check - that would show an empty glass block.
      */
     private fun applyCardsVisibility() {
         if (!navOnlyCards) return
         if (mirrorMode) {
             turnCardView?.visibility = View.GONE
             etaCardView?.visibility = View.GONE
-            laneCardView?.visibility = View.GONE
             roadNameCardView?.visibility = View.GONE
-            exitBadgeView?.visibility = View.GONE
             return
         }
         fun applyVisible(card: String, turn: Boolean, v: View?) {
@@ -444,12 +419,10 @@ internal class ClusterMapPresentation(
         }
         applyVisible("turn", true, turnCardView)
         applyVisible("eta", false, etaCardView)
-        applyVisible("lane", false, laneCardView)
         applyVisible("road", false, roadNameCardView)
-        applyVisible("exit", false, exitBadgeView)
         // bringToFront() triggers a layout pass, so only re-front when the visible set
         // actually changed — guidance ticks every second and must not requestLayout each time.
-        val visibleNow = listOfNotNull(turnCardView, etaCardView, laneCardView, roadNameCardView, exitBadgeView)
+        val visibleNow = listOfNotNull(turnCardView, etaCardView, roadNameCardView)
             .filter { it.visibility == View.VISIBLE }
         if (visibleNow != frontedCards) {
             frontedCards = visibleNow
@@ -461,9 +434,7 @@ internal class ClusterMapPresentation(
     private fun reloadCardVisibilityCache() {
         cardVisibleCache = mapOf(
             "eta" to AirPlayPersistence.loadClusterCardVisible(context, "eta"),
-            "lane" to AirPlayPersistence.loadClusterCardVisible(context, "lane"),
             "road" to AirPlayPersistence.loadClusterCardVisible(context, "road"),
-            "exit" to AirPlayPersistence.loadClusterCardVisible(context, "exit"),
         )
         turnCardVisibleCache = AirPlayPersistence.loadClusterTurnCardVisible(context)
     }

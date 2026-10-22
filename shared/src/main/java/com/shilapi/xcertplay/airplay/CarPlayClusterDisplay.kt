@@ -83,7 +83,14 @@ object CarPlayClusterDisplay {
         // centre, leaving the panel's right column to its own info strip. The centred area
         // makes Amap show the overview with the marker dead centre, which is what the driver
         // wants on this head unit; the marker steps still move it from there.
-        val safe = safeArea(width, height, horizontalStep, verticalStep)
+        // Apple's own views lay the content out themselves and must get the whole panel: the
+        // centred area below exists only to move the car marker on OUR map stream, and applying it
+        // to the instruction card or the full instruments view would letterbox them.
+        val safe = if (usesOfficialTurnCard(content)) {
+            AirPlayInsets(top = 0, bottom = 0, left = 0, right = 0)
+        } else {
+            safeArea(width, height, horizontalStep, verticalStep)
+        }
         return AirPlayDisplayConfig(
             widthPixels = width,
             heightPixels = height,

@@ -107,6 +107,8 @@ object AirPlayPersistence {
     // use that stream region as its base, not the full panel, or cards drift into the
     // OEM chrome ("flying out"). 360 = (1440-720)/2 for UNI-V; adjustable in settings.
     private const val KEY_CLUSTER_CARD_CONTENT_TOP = "cluster_card_content_top_px"
+    /** Which cluster content the iPhone streams: Apple's own views, or our map plus cards. */
+    private const val KEY_CLUSTER_CONTENT = "cluster_content"
     private const val KEY_CENTER_MAP_FOLLOWS_DASHBOARD = "center_map_follows_dashboard"
     private const val KEY_SETTINGS_GESTURE_FINGERS = "settings_gesture_fingers"
     private const val KEY_WIDTH_PHYSICAL_MM = "display_width_physical_mm"
@@ -754,10 +756,23 @@ object AirPlayPersistence {
      * driver configures here. A stored value is deliberately ignored - an install that once
      * picked Apple's turn card would otherwise stay on it with no way back, because the picker
      * that changed it no longer exists.
+     * @see CarPlayClusterDisplay.Content
      */
-    @Suppress("UNUSED_PARAMETER")
-    fun loadClusterContent(context: Context): CarPlayClusterDisplay.Content =
-        CarPlayClusterDisplay.Content.MAP_WITH_CUSTOM_CARD
+    fun loadClusterContent(context: Context): CarPlayClusterDisplay.Content {
+        val stored = context.getSharedPreferences(PREFS, Context.MODE_PRIVATE)
+            .getString(KEY_CLUSTER_CONTENT, null)
+        // Default: Apple's own instrument-cluster navigation view. It is the only source of the
+        // lane guidance and the junction zoom image, which the accessory cannot draw itself.
+        return CarPlayClusterDisplay.Content.entries.firstOrNull { it.name == stored }
+            ?: CarPlayClusterDisplay.Content.INSTRUMENTS
+    }
+
+    fun saveClusterContent(context: Context, content: CarPlayClusterDisplay.Content) {
+        context.getSharedPreferences(PREFS, Context.MODE_PRIVATE)
+            .edit()
+            .putString(KEY_CLUSTER_CONTENT, content.name)
+            .apply()
+    }
 
     /** Fingers for the swipe-down that opens settings; some head units reserve three. */
     fun loadSettingsGestureFingers(context: Context): Int =

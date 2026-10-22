@@ -746,6 +746,36 @@ class DiPlayActivity : ComponentActivity() {
                     AirPlayPersistence.saveClusterMirrorMain(this, idx == 0)
                     reconnectForClusterMap()
                 }
+                // Which cluster content the iPhone streams for the nav-only view. Apple's own views
+                // are the only source of lane guidance and the junction zoom image; the "map + cards"
+                // entry keeps the locally drawn, movable cards.
+                choice(
+                    card,
+                    getString(R.string.cluster_content_title),
+                    listOf(
+                        getString(R.string.cluster_content_instruments),
+                        getString(R.string.cluster_content_turn_card),
+                        getString(R.string.cluster_content_custom),
+                    ),
+                    when (AirPlayPersistence.loadClusterContent(this)) {
+                        CarPlayClusterDisplay.Content.INSTRUMENTS -> 0
+                        CarPlayClusterDisplay.Content.TURN_CARD -> 1
+                        else -> 2
+                    },
+                ) { idx ->
+                    AirPlayPersistence.saveClusterContent(
+                        this,
+                        when (idx) {
+                            0 -> CarPlayClusterDisplay.Content.INSTRUMENTS
+                            1 -> CarPlayClusterDisplay.Content.TURN_CARD
+                            else -> CarPlayClusterDisplay.Content.MAP_WITH_CUSTOM_CARD
+                        },
+                    )
+                    reconnectForClusterMap()
+                }
+                card.addView(label(getString(R.string.cluster_content_hint), 13, MUTED).apply {
+                    setPadding(0, 0, 0, dp(10))
+                })
                 card.addView(button(getString(R.string.cluster_crop_adjust), false) {
                     startActivity(Intent(this, CarPlayHostActivity::class.java)
                         .putExtra("cluster_crop_controls", true).addFlags(Intent.FLAG_ACTIVITY_REORDER_TO_FRONT))
@@ -993,10 +1023,8 @@ class DiPlayActivity : ComponentActivity() {
                         })
                     }
                 }
-                addCardOffsetInputs(getString(R.string.cluster_card_lane_title), "lane", R.string.card_scale_lane) { id, x, y -> positionPreview.setOffset(id, x, y) }
                 addCardOffsetInputs(getString(R.string.cluster_card_eta_title), "eta", R.string.card_scale_eta) { id, x, y -> positionPreview.setOffset(id, x, y) }
                 addCardOffsetInputs(getString(R.string.cluster_card_road_title), "road", R.string.card_scale_road) { id, x, y -> positionPreview.setOffset(id, x, y) }
-                addCardOffsetInputs(getString(R.string.cluster_card_exit_title), "exit", null) { id, x, y -> positionPreview.setOffset(id, x, y) }
                 addCardOffsetInputs(getString(R.string.cluster_card_song_title), "song", R.string.card_scale_song) { id, x, y -> positionPreview.setOffset(id, x, y) }
                 card.addView(button(getString(R.string.cluster_card_position_apply), false) {
                     pendingXY.forEach { (id, pair) ->
