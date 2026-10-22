@@ -380,6 +380,12 @@
     <string name="cluster_content_hint">只有 Apple 界面才带路口放大示意图；切换后需重连生效。</string>
     <string name="cluster_card_song_max_chars">歌曲卡最大字数</string>
     <string name="cluster_card_song_max_chars_desc">超出的部分会被截断，并以 ... 结尾。</string>
+    <string name="cluster_card_song_artwork">显示专辑封面</string>
+    <string name="cluster_card_song_artwork_desc">关闭后歌曲卡只显示文字。</string>
+    <string name="cluster_card_song_artwork_scale">封面大小</string>
+    <string name="cluster_card_song_artwork_position">封面位置微调</string>
+    <string name="cluster_card_song_alpha">卡片背景浓度</string>
+    <string name="cluster_card_song_alpha_desc">100 为默认玻璃效果，0 完全透明；只影响背景底色。</string>
     <string name="start_carplay_automatically_after_device_boot">设备启动后自动启动 CarPlay</string>
     <string name="starting">正在启动</string>
     <string name="starting_airplay_service">正在启动 AirPlay 服务</string>

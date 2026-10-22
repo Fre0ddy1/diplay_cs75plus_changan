@@ -369,6 +369,16 @@ internal class ClusterMapPresentation(
         songView?.setSong(song)
     }
 
+    /** Album art for the current item; null draws the text-only card or hides the art. */
+    fun setSongArtwork(artwork: android.graphics.Bitmap?) {
+        songView?.setArtwork(artwork)
+    }
+
+    /** A song-card setting changed; the view drops its caches on the next draw. */
+    fun notifySongSettingsChanged() {
+        songView?.notifySettingsChanged()
+    }
+
     fun setTurnCardGuidance(guidance: ClusterTurnGuidance?) {
         lastTurnGuidance = guidance
         turnCardView?.setGuidance(guidance)

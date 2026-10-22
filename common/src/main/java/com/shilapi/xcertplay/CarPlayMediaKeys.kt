@@ -56,6 +56,7 @@ internal object CarPlayMediaKeys {
     private var nowPlaying = CarPlayNowPlaying()
     private var elapsedUpdatedAt = 0L
     private var artwork: Bitmap? = null
+    private var artworkListener: ((Bitmap?) -> Unit)? = null
     private val artworkCache = LinkedHashMap<Int, Bitmap?>()
 
     @Synchronized
@@ -138,7 +139,24 @@ internal object CarPlayMediaKeys {
         if (nowPlaying.artworkTransferId == id) {
             artwork = decoded
             session?.setMetadata(androidMetadata(nowPlaying, artwork))
+            val notify = artworkListener
+            if (notify != null) mainHandler.post { notify(decoded) } else Unit
         }
+    }
+
+    /**
+     * The album art CarPlay sent for the current item, for the dashboard song card.
+     *
+     * Owned here because this is where CarPlay's artwork transfers already land; the card only ever
+     * draws it, never recycles it.
+     */
+    @Synchronized
+    fun currentArtwork(): Bitmap? = artwork
+
+    /** Called on the main thread whenever the current artwork changes (null included). */
+    @Synchronized
+    fun setArtworkListener(listener: ((Bitmap?) -> Unit)?) {
+        artworkListener = listener
     }
 
     // Another car app (its own Spotify, the radio) took audio focus and with it the steering-wheel

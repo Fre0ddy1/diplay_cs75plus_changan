@@ -1052,6 +1052,57 @@ class DiPlayActivity : ComponentActivity() {
                         )
                     })
                 }
+                // CarPlay sends album art with the now-playing item; the card can show it or not.
+                cardGroup(card, getString(R.string.cluster_card_song_artwork)) { group ->
+                    toggle(group, getString(R.string.cluster_card_song_artwork),
+                        getString(R.string.cluster_card_song_artwork_desc),
+                        AirPlayPersistence.loadClusterSongArtworkVisible(this)) { visible ->
+                        AirPlayPersistence.saveClusterSongArtworkVisible(this, visible)
+                    }
+                    percentRow(group, getString(R.string.cluster_card_song_artwork_scale),
+                        AirPlayPersistence.loadClusterSongArtworkScale(this)) { percent ->
+                        AirPlayPersistence.saveClusterSongArtworkScale(this, percent)
+                    }
+                    group.addView(label(getString(R.string.cluster_card_song_artwork_position), 15, TEXT, true).apply {
+                        setPadding(0, dp(8), 0, 0)
+                    })
+                    group.addView(LinearLayout(this@DiPlayActivity).apply {
+                        orientation = LinearLayout.HORIZONTAL
+                        gravity = Gravity.CENTER_VERTICAL
+                        addView(label(getString(R.string.cluster_card_horizontal), 15, TEXT, true),
+                            LinearLayout.LayoutParams(0, -2, 1f))
+                        addView(
+                            numberInput(AirPlayPersistence.loadClusterSongArtworkX(this@DiPlayActivity), 400) { v ->
+                                AirPlayPersistence.saveClusterSongArtworkX(this@DiPlayActivity, v)
+                            },
+                            LinearLayout.LayoutParams(dp(150), dp(48)),
+                        )
+                    })
+                    group.addView(LinearLayout(this@DiPlayActivity).apply {
+                        orientation = LinearLayout.HORIZONTAL
+                        gravity = Gravity.CENTER_VERTICAL
+                        setPadding(0, dp(6), 0, 0)
+                        addView(label(getString(R.string.cluster_card_vertical), 15, TEXT, true),
+                            LinearLayout.LayoutParams(0, -2, 1f))
+                        addView(
+                            numberInput(AirPlayPersistence.loadClusterSongArtworkY(this@DiPlayActivity), 200) { v ->
+                                AirPlayPersistence.saveClusterSongArtworkY(this@DiPlayActivity, v)
+                            },
+                            LinearLayout.LayoutParams(dp(150), dp(48)),
+                        )
+                    })
+                }
+                // Background strength of the one card that can sit over the map: the driver may want
+                // it to nearly vanish. Only the fill fades, the bevel stays.
+                cardGroup(card, getString(R.string.cluster_card_song_alpha)) { group ->
+                    group.addView(label(getString(R.string.cluster_card_song_alpha_desc), 13, MUTED).apply {
+                        setPadding(0, 0, 0, dp(6))
+                    })
+                    percentRow(group, getString(R.string.cluster_card_song_alpha),
+                        AirPlayPersistence.loadClusterSongCardAlpha(this)) { percent ->
+                        AirPlayPersistence.saveClusterSongCardAlpha(this, percent)
+                    }
+                }
                 card.addView(button(getString(R.string.cluster_card_position_apply), false) {
                     pendingXY.forEach { (id, pair) ->
                         if (id == "turn") {
@@ -1635,6 +1686,38 @@ class DiPlayActivity : ComponentActivity() {
      * cards in place without a reconnect, so the driver sizes a card against the real panel instead
      * of guessing a number and applying it blind.
      */
+    /**
+     * A labelled 0-100 % slider. Used by the song card's artwork size and background strength,
+     * where the exact number matters less than feeling the change.
+     */
+    private fun percentRow(parent: LinearLayout, title: String, current: Int, onChange: (Int) -> Unit) {
+        val value = label("$current%", 15, ACCENT, true)
+        if (parent.childCount > 0) parent.addView(divider())
+        val head = LinearLayout(this).apply {
+            orientation = LinearLayout.HORIZONTAL
+            gravity = Gravity.CENTER_VERTICAL
+            setPadding(0, dp(10), 0, dp(2))
+        }
+        head.addView(label(title, 15, TEXT, true), LinearLayout.LayoutParams(0, -2, 1f))
+        head.addView(value)
+        parent.addView(head, LinearLayout.LayoutParams(-1, -2))
+        parent.addView(SeekBar(this).apply {
+            max = 100
+            progress = current.coerceIn(0, 100)
+            setOnSeekBarChangeListener(object : SeekBar.OnSeekBarChangeListener {
+                override fun onProgressChanged(seek: SeekBar?, progress: Int, fromUser: Boolean) {
+                    value.text = "$progress%"
+                }
+
+                override fun onStartTrackingTouch(seek: SeekBar?) = Unit
+
+                override fun onStopTrackingTouch(seek: SeekBar?) {
+                    onChange(seek?.progress ?: current)
+                }
+            })
+        }, LinearLayout.LayoutParams(-1, -2))
+    }
+
     private fun cardScaleRow(parent: LinearLayout, title: String, card: String) {
         val current = AirPlayPersistence.loadClusterCardScalePercent(this, card)
         val value = label("$current%", 15, ACCENT, true)

@@ -1202,6 +1202,10 @@ class CarPlayHostActivity : ComponentActivity() {
                 // changes are visible on the dashboard immediately after saving.
                 (clusterLayers.values + listOfNotNull(clusterPresentation)).distinct()
                     .forEach { runCatching { it.refreshCardOverlays() } }
+                // The song card caches its own limits (max characters, artwork size/offset, card
+                // alpha), so it needs an explicit nudge to pick a change up.
+                (clusterLayers.values + listOfNotNull(clusterPresentation)).distinct()
+                    .forEach { runCatching { it.notifySongSettingsChanged() } }
                 refreshClusterCrop()
             }
         }
@@ -1474,6 +1478,7 @@ class CarPlayHostActivity : ComponentActivity() {
                 AirPlayPersistence.loadClusterCardScalePercent(this, "turn"),
             )
             presentation.setSong(clusterSong)
+            presentation.setSongArtwork(CarPlayMediaKeys.currentArtwork())
             // Every card here is drawn by us, so none of them depends on which cluster picture the
             // iPhone streams. Apple's "instruments" view turned out to contain no turn card at all
             // (field 2026-10-22: hiding our card left the panel without one), so the content mode
@@ -4820,6 +4825,12 @@ class CarPlayHostActivity : ComponentActivity() {
         )
         controller = next
         CarPlayMediaKeys.attach(this, next)
+        // Album art for the dashboard song card. CarPlay's artwork transfers already land in
+        // CarPlayMediaKeys, so the card just mirrors whatever is current there.
+        CarPlayMediaKeys.setArtworkListener { bitmap ->
+            (clusterLayers.values + listOfNotNull(clusterPresentation)).distinct()
+                .forEach { it.setSongArtwork(bitmap) }
+        }
         if (airPlayConfig.videoInCar) CarPlayVideo.attach(this, next)
         val display = CarPlaySessionDisplay(airPlayConfig.main.widthPixels, airPlayConfig.main.heightPixels,
             displayRotation(), hideTopBar, hideBottomBar, size.width, size.height,

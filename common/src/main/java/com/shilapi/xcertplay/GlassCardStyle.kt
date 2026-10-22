@@ -74,8 +74,12 @@ internal object GlassCardStyle {
     /**
      * Draws a glass capsule (background + sheen + bevel + outline + shadow) into [rect].
      * [radius] is the corner radius; the shadow is drawn first so the fill sits on top of it.
+     *
+     * [fillAlphaScale] fades only the translucent fill, 1.0 being the standard look. The song card
+     * uses it so the driver can make that one card vanish into a bright map. A throwaway paint is
+     * used when scaling, because the shared one is what every other card draws with.
      */
-    fun drawCapsule(canvas: Canvas, rect: RectF, radius: Float) {
+    fun drawCapsule(canvas: Canvas, rect: RectF, radius: Float, fillAlphaScale: Float = 1f) {
         // A small, fixed drop shadow. saveLayer bounds where the soft edge may paint.
         canvas.saveLayer(rect.left - radius, rect.top - radius, rect.right + radius, rect.bottom + radius, null)
         val shadowRect = RectF(rect)
@@ -84,7 +88,15 @@ internal object GlassCardStyle {
         canvas.restore()
 
         // Base translucent fill.
-        canvas.drawRoundRect(rect, radius, radius, fillPaint)
+        if (fillAlphaScale >= 0.999f) {
+            canvas.drawRoundRect(rect, radius, radius, fillPaint)
+        } else {
+            val scaledAlpha = (FILL_ALPHA * fillAlphaScale.coerceIn(0f, 1f)).toInt().coerceIn(0, 255)
+            val faded = Paint(Paint.ANTI_ALIAS_FLAG).apply {
+                color = Color.argb(scaledAlpha, FILL_R, FILL_G, FILL_B)
+            }
+            canvas.drawRoundRect(rect, radius, radius, faded)
+        }
 
         // Top sheen band.
         sheenPaint.shader = LinearGradient(

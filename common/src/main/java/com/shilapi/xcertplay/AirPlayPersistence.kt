@@ -110,6 +110,11 @@ object AirPlayPersistence {
     /** Which cluster content the iPhone streams: Apple's own views, or our map plus cards. */
     private const val KEY_CLUSTER_CONTENT = "cluster_content"
     private const val KEY_CLUSTER_SONG_MAX_CHARS = "cluster_song_max_chars"
+    private const val KEY_CLUSTER_SONG_ARTWORK_VISIBLE = "cluster_song_artwork_visible"
+    private const val KEY_CLUSTER_SONG_ARTWORK_SCALE = "cluster_song_artwork_scale"
+    private const val KEY_CLUSTER_SONG_ARTWORK_X = "cluster_song_artwork_x_px"
+    private const val KEY_CLUSTER_SONG_ARTWORK_Y = "cluster_song_artwork_y_px"
+    private const val KEY_CLUSTER_SONG_CARD_ALPHA = "cluster_song_card_alpha"
     /** Sixty characters fits roughly half the panel at the default card scale. */
     const val DEFAULT_SONG_MAX_CHARS = 60
     const val MIN_SONG_MAX_CHARS = 10
@@ -966,6 +971,67 @@ object AirPlayPersistence {
         context.getSharedPreferences(PREFS, Context.MODE_PRIVATE).edit()
             .putInt(KEY_CLUSTER_SONG_MAX_CHARS, chars.coerceIn(MIN_SONG_MAX_CHARS, MAX_SONG_MAX_CHARS))
             .apply()
+        overlaySettingsListener?.invoke()
+    }
+
+    /** Whether the song card draws the album artwork CarPlay sends with the now-playing item. */
+    fun loadClusterSongArtworkVisible(context: Context): Boolean =
+        context.getSharedPreferences(PREFS, Context.MODE_PRIVATE)
+            .getBoolean(KEY_CLUSTER_SONG_ARTWORK_VISIBLE, true)
+
+    fun saveClusterSongArtworkVisible(context: Context, visible: Boolean) {
+        context.getSharedPreferences(PREFS, Context.MODE_PRIVATE).edit()
+            .putBoolean(KEY_CLUSTER_SONG_ARTWORK_VISIBLE, visible).apply()
+        overlaySettingsListener?.invoke()
+    }
+
+    /** Artwork diameter as a percentage of the card height. */
+    fun loadClusterSongArtworkScale(context: Context): Int =
+        context.getSharedPreferences(PREFS, Context.MODE_PRIVATE)
+            .getInt(KEY_CLUSTER_SONG_ARTWORK_SCALE, 80)
+            .coerceIn(10, 100)
+
+    fun saveClusterSongArtworkScale(context: Context, percent: Int) {
+        context.getSharedPreferences(PREFS, Context.MODE_PRIVATE).edit()
+            .putInt(KEY_CLUSTER_SONG_ARTWORK_SCALE, percent.coerceIn(10, 100)).apply()
+        overlaySettingsListener?.invoke()
+    }
+
+    /** Artwork offset from its default slot inside the card, in dashboard pixels. */
+    fun loadClusterSongArtworkX(context: Context): Int =
+        context.getSharedPreferences(PREFS, Context.MODE_PRIVATE)
+            .getInt(KEY_CLUSTER_SONG_ARTWORK_X, 0).coerceIn(-400, 400)
+
+    fun loadClusterSongArtworkY(context: Context): Int =
+        context.getSharedPreferences(PREFS, Context.MODE_PRIVATE)
+            .getInt(KEY_CLUSTER_SONG_ARTWORK_Y, 0).coerceIn(-200, 200)
+
+    fun saveClusterSongArtworkX(context: Context, px: Int) {
+        context.getSharedPreferences(PREFS, Context.MODE_PRIVATE).edit()
+            .putInt(KEY_CLUSTER_SONG_ARTWORK_X, px.coerceIn(-400, 400)).apply()
+        overlaySettingsListener?.invoke()
+    }
+
+    fun saveClusterSongArtworkY(context: Context, px: Int) {
+        context.getSharedPreferences(PREFS, Context.MODE_PRIVATE).edit()
+            .putInt(KEY_CLUSTER_SONG_ARTWORK_Y, px.coerceIn(-200, 200)).apply()
+        overlaySettingsListener?.invoke()
+    }
+
+    /**
+     * Song card background strength, 0-100.
+     *
+     * 100 keeps the standard glass look; lower values fade only the translucent fill, so white end
+     * caps (bevel and outline) stay visible and the card does not turn into a grey smear.
+     */
+    fun loadClusterSongCardAlpha(context: Context): Int =
+        context.getSharedPreferences(PREFS, Context.MODE_PRIVATE)
+            .getInt(KEY_CLUSTER_SONG_CARD_ALPHA, 100)
+            .coerceIn(0, 100)
+
+    fun saveClusterSongCardAlpha(context: Context, percent: Int) {
+        context.getSharedPreferences(PREFS, Context.MODE_PRIVATE).edit()
+            .putInt(KEY_CLUSTER_SONG_CARD_ALPHA, percent.coerceIn(0, 100)).apply()
         overlaySettingsListener?.invoke()
     }
 

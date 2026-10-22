@@ -383,6 +383,12 @@
     <string name="cluster_content_hint">Only Apple\'s views carry the junction zoom image; reconnect after switching.</string>
     <string name="cluster_card_song_max_chars">Song card maximum characters</string>
     <string name="cluster_card_song_max_chars_desc">Anything longer is cut and ends with "...".</string>
+    <string name="cluster_card_song_artwork">Show album artwork</string>
+    <string name="cluster_card_song_artwork_desc">Off keeps the song card text-only.</string>
+    <string name="cluster_card_song_artwork_scale">Artwork size</string>
+    <string name="cluster_card_song_artwork_position">Artwork offset</string>
+    <string name="cluster_card_song_alpha">Card background strength</string>
+    <string name="cluster_card_song_alpha_desc">100 is the standard glass look, 0 fully transparent; only the fill changes.</string>
     <string name="start_carplay_automatically_after_device_boot">Start CarPlay automatically after device boot</string>
     <string name="starting">Starting</string>
     <string name="starting_airplay_service">Starting AirPlay service</string>

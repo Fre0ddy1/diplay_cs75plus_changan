@@ -1,7 +1,9 @@
 package com.shilapi.xcertplay
 
 import android.content.Context
+import android.graphics.Bitmap
 import android.graphics.Canvas
+import android.graphics.Path
 import android.graphics.RectF
 import android.view.View
 import com.shilapi.xcertplay.hud.ClusterSong
@@ -22,8 +24,14 @@ import com.shilapi.xcertplay.hud.ClusterSong
  */
 internal class ClusterSongView(context: Context) : View(context) {
     private val rect = RectF()
+    private val artRect = RectF()
     private val textPaint = GlassCardStyle.labelPaint(0f, 235, true)
+    private val artworkPaint = android.graphics.Paint(android.graphics.Paint.ANTI_ALIAS_FLAG).apply {
+        isFilterBitmap = true
+        isAntiAlias = true
+    }
     private var song: ClusterSong? = null
+    private var artwork: Bitmap? = null
     private var posX = Float.NaN
     private var posY = Float.NaN
     private var overlayScale = Float.NaN
@@ -32,6 +40,12 @@ internal class ClusterSongView(context: Context) : View(context) {
     private var measured = 0f
     private var maxChars = 0
     private var maxCharsAtMs = 0L
+    private var settingsAtMs = 0L
+    private var artworkVisible = true
+    private var artworkScale = 80
+    private var artworkX = 0
+    private var artworkY = 0
+    private var cardAlpha = 100
 
     fun setSong(next: ClusterSong?) {
         // Obey the same show/hide switch as the guidance cards. This is read here rather than in
@@ -73,6 +87,7 @@ internal class ClusterSongView(context: Context) : View(context) {
         if (overlayScale.isNaN()) {
             overlayScale = AirPlayPersistence.clusterCardScale(context, CARD)
         }
+        refreshSettingsIfDue()
         val unit = minOf(width, height).coerceAtLeast(1).toFloat() * overlayScale
         val h = unit * 0.095f
         val radius = h * 0.5f
@@ -86,34 +101,82 @@ internal class ClusterSongView(context: Context) : View(context) {
             measured = textPaint.measureText(label)
         }
         val padH = h * 0.55f
-        val w = measured + padH * 2f
+        // The artwork sits in the card's leading slot and pushes the text along; without it the card
+        // is exactly the text capsule it was before.
+        // The artwork comes from CarPlayMediaKeys, which recycles its own bitmaps when a transfer
+        // is superseded or the session changes. Drawing a recycled one throws, so check first.
+        val art = artwork?.takeIf { artworkVisible && !it.isRecycled }
+        val artSize = if (art != null) h * (artworkScale / 100f) else 0f
+        val artGap = if (art != null) h * 0.3f else 0f
+        val textShift = if (art != null) artSize + artGap else 0f
+        val w = measured + padH * 2f + textShift
         val left = posX.coerceIn(0f, (width - w).coerceAtLeast(0f))
         val top = posY.coerceIn(0f, (height - h).coerceAtLeast(0f))
         rect.set(left, top, left + w, top + h)
-        GlassCardStyle.drawCapsule(canvas, rect, radius)
+        GlassCardStyle.drawCapsule(canvas, rect, radius, cardAlpha / 100f)
+        if (art != null) {
+            val half = artSize / 2f
+            val cx = rect.left + padH + half + artworkX
+            val cy = rect.centerY() + artworkY
+            artRect.set(cx - half, cy - half, cx + half, cy + half)
+            // Rounded like the capsule it sits in; clipPath is safe on the presentation surface.
+            val saved = canvas.save()
+            runCatching {
+                canvas.clipPath(
+                    Path().apply { addRoundRect(artRect, artSize * 0.18f, artSize * 0.18f, Path.Direction.CW) },
+                )
+            }
+            canvas.drawBitmap(art, null, artRect, artworkPaint)
+            canvas.restoreToCount(saved)
+        }
         val metrics = textPaint.fontMetrics
         val baseline = rect.centerY() - (metrics.ascent + metrics.descent) / 2f
-        canvas.drawText(label, rect.left + padH, baseline, textPaint)
+        canvas.drawText(label, rect.left + padH + textShift, baseline, textPaint)
+    }
+
+    /** The album art CarPlay sent for the current item, or null to draw a text-only card. */
+    fun setArtwork(next: Bitmap?) {
+        if (artwork === next) return
+        artwork = next
+        invalidate()
+    }
+
+    /** A settings change arrived; drop the caches so the next draw picks it up at once. */
+    fun notifySettingsChanged() {
+        settingsAtMs = 0L
+        maxCharsAtMs = 0L
+        posX = Float.NaN
+        posY = Float.NaN
+        overlayScale = Float.NaN
+        invalidate()
+    }
+
+    private fun refreshSettingsIfDue() {
+        val now = android.os.SystemClock.elapsedRealtime()
+        if (settingsAtMs != 0L && now - settingsAtMs < SETTINGS_REFRESH_MS) return
+        settingsAtMs = now
+        maxChars = AirPlayPersistence.loadClusterSongMaxChars(context)
+        maxCharsAtMs = now
+        artworkVisible = AirPlayPersistence.loadClusterSongArtworkVisible(context)
+        artworkScale = AirPlayPersistence.loadClusterSongArtworkScale(context)
+        artworkX = AirPlayPersistence.loadClusterSongArtworkX(context)
+        artworkY = AirPlayPersistence.loadClusterSongArtworkY(context)
+        cardAlpha = AirPlayPersistence.loadClusterSongCardAlpha(context)
     }
 
     /**
      * Cuts a song line down to the configured number of characters.
      *
      * The card is sized by its text, so a long title used to widen it until it crossed the panel
-     * and sat in the driver's view. The limit is re-read at most every couple of seconds so a
-     * settings change shows up without touching SharedPreferences on every frame.
+     * and sat in the driver's view. [refreshSettingsIfDue] keeps [maxChars] current.
      */
     private fun clipped(text: String): String {
-        val now = android.os.SystemClock.elapsedRealtime()
-        if (maxChars == 0 || now - maxCharsAtMs > 2_000L) {
-            maxChars = AirPlayPersistence.loadClusterSongMaxChars(context)
-            maxCharsAtMs = now
-        }
         if (maxChars <= 0 || text.length <= maxChars) return text
         return text.take(maxChars) + "..."
     }
 
     private companion object {
         const val CARD = "song"
+        const val SETTINGS_REFRESH_MS = 2_000L
     }
 }
