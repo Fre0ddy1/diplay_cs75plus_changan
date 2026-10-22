@@ -1352,6 +1352,10 @@ class CarPlayHostActivity : ComponentActivity() {
         // independent of the "dashboard shows" content setting. DiLink 5.1 keeps the upstream
         // behavior: turn card follows the content setting, no ETA card.
         val changanCards = !DiLink51ClusterLayout.supported()
+        // Apple's own cluster views carry their own instructions: no overlay cards in those modes.
+        val appleClusterContent = AirPlayPersistence.loadClusterContent(this).let {
+            it == CarPlayClusterDisplay.Content.INSTRUMENTS || it == CarPlayClusterDisplay.Content.TURN_CARD
+        }
         val g = clusterTurnGuidance
         // Dedupe the card-state line: ETA seconds tick every second, so log once per state
         // change (or at least every 5 s) instead of once per refresh tick.
@@ -1375,7 +1379,15 @@ class CarPlayHostActivity : ComponentActivity() {
                 AirPlayPersistence.loadClusterCardScalePercent(this, "turn"),
             )
             presentation.setSong(clusterSong)
-            if (changanCards) {
+            // Apple's own cluster views already contain the turn instructions, the lane guidance
+            // and the junction picture. Drawing our cards over them put a second, smaller turn card
+            // on top of Apple's (field 2026-10-22, right after choosing "Apple 完整导航界面"), so in
+            // those modes every overlay card is cleared instead.
+            if (appleClusterContent) {
+                presentation.setTurnCardGuidance(null)
+                presentation.setEtaGuidance(null)
+                presentation.setRoadNameGuidance(null)
+            } else if (changanCards) {
                 presentation.setTurnCardGuidance(clusterTurnGuidance)
                 presentation.setEtaGuidance(clusterTurnGuidance)
                 presentation.setRoadNameGuidance(clusterTurnGuidance)

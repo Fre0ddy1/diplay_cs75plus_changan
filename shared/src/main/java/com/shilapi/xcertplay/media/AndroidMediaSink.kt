@@ -598,6 +598,11 @@ class AndroidMediaSink(
     override fun onMicrophoneStarted(id: AudioStreamId, config: MicrophoneConfig) {
         // This callback runs on the downlink thread; microphone failures must not stop playback.
         try {
+            // Snapshot the media level before the car lowers it for the call. The mode poll cannot
+            // do this on this head unit - it never reports a call at all - so the snapshot never
+            // existed and a lowered stream level survived the hang-up. CarPlay mirrors that level
+            // onto the iPhone's own volume, which is why the driver saw "手机音量被调到 50%".
+            snapshotMusicVolume("microphone started")
             if (config.audioType == "telephony") enterCommunicationMode(id)
             val uplink = microphoneUplinks.computeIfAbsent(id) { MicrophoneUplink(config, onAudioDiagnostic) }
             if (!uplink.start()) {
@@ -621,6 +626,7 @@ class AndroidMediaSink(
             // this session never entered communication mode, which is the case for a WeChat clip
             // and for a call the head unit handles itself - the exact "the music stayed quiet after
             // a call, only a reconnect brought it back" report.
+            restoreMusicVolume("microphone stopped", ignoreTtl = true)
             audioFocusCoordinator.resetPlaybackVolume("microphone stopped")
         }
     }
@@ -645,7 +651,28 @@ class AndroidMediaSink(
      * Puts the music level back to what it was before the call. Only the head unit's own stream
      * volume is touched; our per-track duck rides on top of it and is restored by its own logic.
      */
-    private fun restoreMusicVolume(reason: String) {
+    /**
+     * Remembers the media stream level before a call can lower it.
+     *
+     * Taken when the uplink opens rather than when a mode change is polled: this head unit never
+     * moves AudioManager.mode for a call, so the mode-driven snapshot in pollAudioMode() stays
+     * null here and nothing could ever be restored.
+     */
+    private fun snapshotMusicVolume(reason: String) {
+        val manager = audioManager ?: return
+        val music = runCatching { manager.getStreamVolume(AudioManager.STREAM_MUSIC) }.getOrNull()
+            ?: return
+        val muted = runCatching { manager.isStreamMute(AudioManager.STREAM_MUSIC) }.getOrNull() ?: false
+        synchronized(audioModeLock) {
+            if (savedMusicVolume != null) return
+            savedMusicVolume = music
+            savedMusicMuted = muted
+            savedMusicVolumeAtMs = SystemClock.elapsedRealtime()
+            onAudioDiagnostic("Audio: music snapshot=$music ($reason)")
+        }
+    }
+
+    private fun restoreMusicVolume(reason: String, ignoreTtl: Boolean = false) {
         val manager = audioManager ?: return
         val saved = savedMusicVolume ?: return
         // A mute does not change the level at all, so it has to be checked on its own: a car that
@@ -667,7 +694,8 @@ class AndroidMediaSink(
         // Only ever correct a level the head unit lowered. A higher level than the snapshot is the
         // driver's own doing (he raised it during the call), and replaying an old snapshot over it
         // is what made "I turn the volume up and it comes back down" (field report 2026-10-20).
-        val stale = SystemClock.elapsedRealtime() - savedMusicVolumeAtMs > MUSIC_SNAPSHOT_TTL_MS
+        val stale = !ignoreTtl &&
+            SystemClock.elapsedRealtime() - savedMusicVolumeAtMs > MUSIC_SNAPSHOT_TTL_MS
         if (stale || current >= saved) {
             savedMusicVolume = null
             onAudioDiagnostic(
