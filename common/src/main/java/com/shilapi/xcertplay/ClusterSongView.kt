@@ -20,13 +20,13 @@ import com.shilapi.xcertplay.hud.ClusterSong
  *   slot 2  lyric line - CarPlay's iAP2 NowPlayingUpdate (0x5001) carries only title (1) and
  *           artist (12) and has no lyric attribute at all, so this slot stays empty for now
  *   slot 3  artist, always
- * A song with no artist collapses to a single line in slot 1 rather than leaving two blank rows.
+ * The block always reserves three lines, artist or not, so the capsule height is stable.
  *
- * Alignment follows the cover: side by side, the text block is vertically centred against the
- * cover; stacked, every line is centred horizontally. The text block is a fixed size rather than
- * the measured length of the current song: [maxChars] Chinese characters wide, even when the title
- * or artist is shorter. That keeps the capsule - and with it the album cover - in exactly the same
- * place from one song to the next, which is what the driver needs to line the card up once.
+ * Alignment follows the cover: side by side, the three-line block is vertically centred against
+ * the cover; stacked, every line is centred horizontally. The text block is a fixed size rather
+ * than the measured length of the current song: [maxChars] Chinese characters wide, even when the
+ * title or artist is shorter. That keeps the capsule - and with it the album cover - in exactly the
+ * same place from one song to the next, which is what the driver needs to line the card up once.
  * A longer title wraps into slot 2 and a longer artist is hard-cut, both without an ellipsis.
  */
 internal class ClusterSongView(context: Context) : View(context) {
@@ -129,14 +129,9 @@ internal class ClusterSongView(context: Context) : View(context) {
             textW = fixedTextWidth()
         }
 
-        // Slots 1 and 2 hold the song name (a long one wraps into slot 2), slot 3 holds the artist.
-        // An artist keeps its own row even when the name fits on one line, so the two never move.
-        val lines = when {
-            line3.isNotEmpty() -> 3
-            line2.isNotEmpty() -> 2
-            else -> 1
-        }
-        val textH = lineH * lines
+        // The card is sized for three lines even when the current song has no artist: the driver
+        // wants one stable block, not a card that changes height with the metadata.
+        val textH = lineH * 3f
 
         val w: Float
         val h: Float
@@ -217,16 +212,19 @@ internal class ClusterSongView(context: Context) : View(context) {
         val textX = if (centred) textLeft + textW / 2f else textLeft
 
         // Slot 1 (and slot 2 when the name is long) hold the song name; slot 3 holds the artist.
+        // A baseline is the slot's vertical centre plus half the font box: writing it as
+        // slotTop - (ascent + descent) / 2 centres the glyphs on the slot's TOP edge and lifts the
+        // whole block by half a line, which is what pinned the title to the capsule's upper edge.
         val m1 = textPaint.fontMetrics
-        val baseline1 = textTop - (m1.ascent + m1.descent) / 2f
+        val baseline1 = textTop + lineH * 0.5f - (m1.ascent + m1.descent) / 2f
         canvas.drawText(line1, textX, baseline1, textPaint)
         if (line2.isNotEmpty()) {
-            val baseline2 = textTop + lineH - (m1.ascent + m1.descent) / 2f
+            val baseline2 = textTop + lineH * 1.5f - (m1.ascent + m1.descent) / 2f
             canvas.drawText(line2, textX, baseline2, textPaint)
         }
         if (line3.isNotEmpty()) {
             val m3 = artistPaint.fontMetrics
-            val baseline3 = textTop + lineH * 2f - (m3.ascent + m3.descent) / 2f
+            val baseline3 = textTop + lineH * 2.5f - (m3.ascent + m3.descent) / 2f
             canvas.drawText(line3, textX, baseline3, artistPaint)
         }
     }
