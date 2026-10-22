@@ -5634,10 +5634,10 @@ class CarPlayHostActivity : ComponentActivity() {
         if (shuttingDown.get() || isFinishing || isDestroyed) return
         watcherThread = Thread({
             val startedAtMs = SystemClock.elapsedRealtime()
-            // Throttle only. It is deliberately NOT a one-shot latch: if the driver closes the
-            // projection channel by hand, `open` turns false again and this has to fire once more,
-            // which a "decided" flag would make impossible.
-            var lastSentAtMs = 0L
+            // The one piece of clock state: the earliest moment the next sequence may be sent.
+            // It is pushed forward instead of using a latch, so a channel the driver closes by
+            // hand is picked up again - a "decided" flag made that impossible.
+            var nextSendEligibleAtMs = startedAtMs + WATCHER_READY_WAIT_MS
             var sentCount = 0
             while (!shuttingDown.get() && !isFinishing && !isDestroyed) {
                 // 1) Sample the channel. Read-only: incall's own report, nothing goes out here.
@@ -5658,23 +5658,21 @@ class CarPlayHostActivity : ComponentActivity() {
                     }
                 }
 
-                // 3) Decide on the clock alone, outside the state branch: the loop must never sit
-                //    in a long wait, so every period runs all three steps and the sleep below stays
-                //    a fixed WATCHER_PERIOD_MS.
+                // 3) The channel is up: reset the retry bookkeeping, and start a fresh 5 s window
+                //    from now so a later close waits again instead of firing on a stale stamp.
                 val now = SystemClock.elapsedRealtime()
-                // First send waits from start-up; every later one waits from the previous send.
-                val waitingSinceMs = if (lastSentAtMs == 0L) startedAtMs else lastSentAtMs
-                val due = now - waitingSinceMs >= WATCHER_READY_WAIT_MS
-
-                // 4) Not ready and the throttle expired: send, and only then.
-                if (!open && due) {
-                    lastSentAtMs = now
+                if (open) {
+                    sentCount = 0
+                    nextSendEligibleAtMs = now + WATCHER_READY_WAIT_MS
+                } else if (now >= nextSendEligibleAtMs) {
+                    // 4) Not ready and the throttle expired: send, then slide the window forward.
                     sentCount++
                     clusterPrewarmAtMs = now
                     appendLog(
-                        "Cluster watcher: 投屏通道未就绪（第 ${sentCount} 次）" +
-                            "距上次 ${(now - waitingSinceMs)}ms，发完整激活序列",
+                        "Cluster watcher: 投屏通道未就绪（第 ${sentCount} 次，距上次 " +
+                            "${now - (nextSendEligibleAtMs - WATCHER_READY_WAIT_MS)}ms），发完整激活序列",
                     )
+                    nextSendEligibleAtMs = now + WATCHER_READY_WAIT_MS
                     mainHandler.post {
                         if (!shuttingDown.get() && !isFinishing && !isDestroyed) {
                             InCallClusterBridge.openProjection(this)
