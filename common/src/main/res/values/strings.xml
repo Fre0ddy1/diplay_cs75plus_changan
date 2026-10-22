@@ -376,7 +376,7 @@
     <string name="instrument_cluster_content">Dashboard content</string>
     <string name="instrument_cluster_entire_interface">Entire CarPlay screen (mirror, stays in sync)</string>
     <string name="instrument_cluster_navigation_stream">Navigation cluster stream (guidance only)</string>
-    <string name="cluster_content_title">Dashboard picture source</string>
+    <string name="cluster_content_title">Cluster picture source in nav-only mode</string>
     <string name="cluster_content_instruments">Apple navigation view (lane guidance + junction zoom)</string>
     <string name="cluster_content_turn_card">Apple lane guidance card</string>
     <string name="cluster_content_custom">Map + cards drawn here (movable)</string>
@@ -388,7 +388,9 @@
     <string name="cluster_card_song_artwork_scale">Artwork size</string>
     <string name="cluster_card_song_artwork_position">Artwork offset</string>
     <string name="cluster_card_song_alpha">Card background strength</string>
-    <string name="cluster_card_song_alpha_desc">100 is the standard glass look, 0 fully transparent; only the fill changes.</string>
+    <string name="cluster_card_song_alpha_desc">100 is an opaque black card, 0 fully transparent.</string>
+    <string name="cluster_card_album_title">Album artwork</string>
+    <string name="card_scale_album">Album artwork size</string>
     <string name="start_carplay_automatically_after_device_boot">Start CarPlay automatically after device boot</string>
     <string name="starting">Starting</string>
     <string name="starting_airplay_service">Starting AirPlay service</string>

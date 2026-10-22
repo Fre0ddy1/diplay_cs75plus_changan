@@ -905,6 +905,10 @@ class DiPlayActivity : ComponentActivity() {
                         AirPlayPersistence.loadClusterCardX(this, "song"),
                         AirPlayPersistence.loadClusterCardY(this, "song"),
                     ),
+                    "album" to Pair(
+                        AirPlayPersistence.loadClusterCardX(this, "album"),
+                        AirPlayPersistence.loadClusterCardY(this, "album"),
+                    ),
                 )
                 val positionPreview = CardPositionPreviewView(this).apply {
                     setTurnOffset(
@@ -1052,46 +1056,14 @@ class DiPlayActivity : ComponentActivity() {
                         )
                     })
                 }
-                // CarPlay sends album art with the now-playing item; the card can show it or not.
-                cardGroup(card, getString(R.string.cluster_card_song_artwork)) { group ->
-                    toggle(group, getString(R.string.cluster_card_song_artwork),
-                        getString(R.string.cluster_card_song_artwork_desc),
-                        AirPlayPersistence.loadClusterSongArtworkVisible(this)) { visible ->
-                        AirPlayPersistence.saveClusterSongArtworkVisible(this, visible)
-                    }
-                    percentRow(group, getString(R.string.cluster_card_song_artwork_scale),
-                        AirPlayPersistence.loadClusterSongArtworkScale(this)) { percent ->
-                        AirPlayPersistence.saveClusterSongArtworkScale(this, percent)
-                    }
-                    group.addView(label(getString(R.string.cluster_card_song_artwork_position), 15, TEXT, true).apply {
-                        setPadding(0, dp(8), 0, 0)
-                    })
-                    group.addView(LinearLayout(this@DiPlayActivity).apply {
-                        orientation = LinearLayout.HORIZONTAL
-                        gravity = Gravity.CENTER_VERTICAL
-                        addView(label(getString(R.string.cluster_card_horizontal), 15, TEXT, true),
-                            LinearLayout.LayoutParams(0, -2, 1f))
-                        addView(
-                            numberInput(AirPlayPersistence.loadClusterSongArtworkX(this@DiPlayActivity), 400) { v ->
-                                AirPlayPersistence.saveClusterSongArtworkX(this@DiPlayActivity, v)
-                            },
-                            LinearLayout.LayoutParams(dp(150), dp(48)),
-                        )
-                    })
-                    group.addView(LinearLayout(this@DiPlayActivity).apply {
-                        orientation = LinearLayout.HORIZONTAL
-                        gravity = Gravity.CENTER_VERTICAL
-                        setPadding(0, dp(6), 0, 0)
-                        addView(label(getString(R.string.cluster_card_vertical), 15, TEXT, true),
-                            LinearLayout.LayoutParams(0, -2, 1f))
-                        addView(
-                            numberInput(AirPlayPersistence.loadClusterSongArtworkY(this@DiPlayActivity), 200) { v ->
-                                AirPlayPersistence.saveClusterSongArtworkY(this@DiPlayActivity, v)
-                            },
-                            LinearLayout.LayoutParams(dp(150), dp(48)),
-                        )
-                    })
-                }
+                // CarPlay sends album art with the now-playing item. It is its own card, so it takes
+                // the same show/hide, size and position controls as every other card instead of
+                // being stuck inside the song text capsule.
+                addCardOffsetInputs(
+                    getString(R.string.cluster_card_album_title),
+                    "album",
+                    R.string.card_scale_album,
+                ) { id, x, y -> positionPreview.setOffset(id, x, y) }
                 // Background strength of the one card that can sit over the map: the driver may want
                 // it to nearly vanish. Only the fill fades, the bevel stays.
                 cardGroup(card, getString(R.string.cluster_card_song_alpha)) { group ->

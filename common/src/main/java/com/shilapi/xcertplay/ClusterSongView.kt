@@ -1,9 +1,7 @@
 package com.shilapi.xcertplay
 
 import android.content.Context
-import android.graphics.Bitmap
 import android.graphics.Canvas
-import android.graphics.Path
 import android.graphics.RectF
 import android.view.View
 import com.shilapi.xcertplay.hud.ClusterSong
@@ -14,24 +12,20 @@ import com.shilapi.xcertplay.hud.ClusterSong
  * Title and artist only. CarPlay's iAP2 NowPlayingUpdate (0x5001) carries MediaItemAttributes -
  * title (1) and artist (12) - and the protocol has no lyric attribute at all: the lyrics a phone
  * displays are drawn by the music app itself as pixels on the centre screen, so there is no text
- * stream to forward. The field logs show exactly that and nothing more - 0x5001 frames plus artwork
- * transfers, no lyric field.
+ * stream to forward.
+ *
+ * The album art is NOT here: it is a separate card ([ClusterAlbumArtView]) so the driver can place
+ * it freely instead of being stuck with wherever this text capsule happens to be.
  *
  * Positioned and scaled exactly like the guidance cards (absolute canvas coordinates plus a
- * percentage), so it takes the same two controls instead of being pinned to one spot. Unlike those
- * cards it is not part of the nav-only group: the whole-screen mirror can carry a song card too, and
- * ClusterMapPresentation.applyCardsVisibility deliberately leaves this view alone.
+ * percentage). Unlike those cards it is not part of the nav-only group: the whole-screen mirror can
+ * carry a song card too, and ClusterMapPresentation.applyCardsVisibility deliberately leaves this
+ * view alone.
  */
 internal class ClusterSongView(context: Context) : View(context) {
     private val rect = RectF()
-    private val artRect = RectF()
     private val textPaint = GlassCardStyle.labelPaint(0f, 235, true)
-    private val artworkPaint = android.graphics.Paint(android.graphics.Paint.ANTI_ALIAS_FLAG).apply {
-        isFilterBitmap = true
-        isAntiAlias = true
-    }
     private var song: ClusterSong? = null
-    private var artwork: Bitmap? = null
     private var posX = Float.NaN
     private var posY = Float.NaN
     private var overlayScale = Float.NaN
@@ -39,12 +33,7 @@ internal class ClusterSongView(context: Context) : View(context) {
     private var lastSize = 0f
     private var measured = 0f
     private var maxChars = 0
-    private var maxCharsAtMs = 0L
     private var settingsAtMs = 0L
-    private var artworkVisible = true
-    private var artworkScale = 80
-    private var artworkX = 0
-    private var artworkY = 0
     private var cardAlpha = 100
 
     fun setSong(next: ClusterSong?) {
@@ -67,6 +56,7 @@ internal class ClusterSongView(context: Context) : View(context) {
         posX = Float.NaN
         posY = Float.NaN
         overlayScale = Float.NaN
+        settingsAtMs = 0L
         invalidate()
     }
 
@@ -101,61 +91,31 @@ internal class ClusterSongView(context: Context) : View(context) {
             measured = textPaint.measureText(label)
         }
         val padH = h * 0.55f
-        // The artwork sits in the card's leading slot and pushes the text along; without it the card
-        // is exactly the text capsule it was before.
-        // The artwork comes from CarPlayMediaKeys, which recycles its own bitmaps when a transfer
-        // is superseded or the session changes. Drawing a recycled one throws, so check first.
-        val art = artwork?.takeIf { artworkVisible && !it.isRecycled }
-        val artSize = if (art != null) h * (artworkScale / 100f) else 0f
-        val artGap = if (art != null) h * 0.3f else 0f
-        val textShift = if (art != null) artSize + artGap else 0f
-        val w = measured + padH * 2f + textShift
+        val w = measured + padH * 2f
         val left = posX.coerceIn(0f, (width - w).coerceAtLeast(0f))
         val top = posY.coerceIn(0f, (height - h).coerceAtLeast(0f))
         rect.set(left, top, left + w, top + h)
-        // Background strength: 100 % is an opaque black card, 0 % leaves only the text and artwork.
-        // The glass tint the other cards share would top out at 23 % and never look solid, which is
-        // what "the setting does nothing" meant.
+        // Background strength: 100 % is an opaque black card, 0 % leaves only the text. The glass
+        // tint the other cards share tops out at 23 % and would never look solid.
         val cardFill = android.graphics.Color.argb(
             (255 * cardAlpha.coerceIn(0, 100) / 100f).toInt().coerceIn(0, 255),
             0, 0, 0,
         )
         GlassCardStyle.drawCapsule(canvas, rect, radius, cardFill)
-        if (art != null) {
-            val half = artSize / 2f
-            val cx = rect.left + padH + half + artworkX
-            val cy = rect.centerY() + artworkY
-            artRect.set(cx - half, cy - half, cx + half, cy + half)
-            // Rounded like the capsule it sits in; clipPath is safe on the presentation surface.
-            val saved = canvas.save()
-            runCatching {
-                canvas.clipPath(
-                    Path().apply { addRoundRect(artRect, artSize * 0.18f, artSize * 0.18f, Path.Direction.CW) },
-                )
-            }
-            canvas.drawBitmap(art, null, artRect, artworkPaint)
-            canvas.restoreToCount(saved)
-        }
         val metrics = textPaint.fontMetrics
         val baseline = rect.centerY() - (metrics.ascent + metrics.descent) / 2f
-        canvas.drawText(label, rect.left + padH + textShift, baseline, textPaint)
+        canvas.drawText(label, rect.left + padH, baseline, textPaint)
     }
 
-    /** The album art CarPlay sent for the current item, or null to draw a text-only card. */
-    fun setArtwork(next: Bitmap?) {
-        if (artwork === next) return
-        artwork = next
-        invalidate()
-    }
-
-    /** A settings change arrived; drop the caches so the next draw picks it up at once. */
-    fun notifySettingsChanged() {
-        settingsAtMs = 0L
-        maxCharsAtMs = 0L
-        posX = Float.NaN
-        posY = Float.NaN
-        overlayScale = Float.NaN
-        invalidate()
+    /**
+     * Cuts a song line down to the configured number of characters.
+     *
+     * The card is sized by its text, so a long title used to widen it until it crossed the panel
+     * and sat in the driver's view. [refreshSettingsIfDue] keeps the limit current.
+     */
+    private fun clipped(text: String): String {
+        if (maxChars <= 0 || text.length <= maxChars) return text
+        return text.take(maxChars) + "..."
     }
 
     private fun refreshSettingsIfDue() {
@@ -163,23 +123,7 @@ internal class ClusterSongView(context: Context) : View(context) {
         if (settingsAtMs != 0L && now - settingsAtMs < SETTINGS_REFRESH_MS) return
         settingsAtMs = now
         maxChars = AirPlayPersistence.loadClusterSongMaxChars(context)
-        maxCharsAtMs = now
-        artworkVisible = AirPlayPersistence.loadClusterSongArtworkVisible(context)
-        artworkScale = AirPlayPersistence.loadClusterSongArtworkScale(context)
-        artworkX = AirPlayPersistence.loadClusterSongArtworkX(context)
-        artworkY = AirPlayPersistence.loadClusterSongArtworkY(context)
         cardAlpha = AirPlayPersistence.loadClusterSongCardAlpha(context)
-    }
-
-    /**
-     * Cuts a song line down to the configured number of characters.
-     *
-     * The card is sized by its text, so a long title used to widen it until it crossed the panel
-     * and sat in the driver's view. [refreshSettingsIfDue] keeps [maxChars] current.
-     */
-    private fun clipped(text: String): String {
-        if (maxChars <= 0 || text.length <= maxChars) return text
-        return text.take(maxChars) + "..."
     }
 
     private companion object {

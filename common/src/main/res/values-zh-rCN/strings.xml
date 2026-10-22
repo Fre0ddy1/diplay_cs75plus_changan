@@ -373,7 +373,7 @@
     <string name="instrument_cluster_content">仪表盘显示内容</string>
     <string name="instrument_cluster_entire_interface">整个 CarPlay 界面（镜像同步）</string>
     <string name="instrument_cluster_navigation_stream">导航仪表流（仅导航画面）</string>
-    <string name="cluster_content_title">仪表盘画面来源</string>
+    <string name="cluster_content_title">仅导航模式下仪表盘画面来源</string>
     <string name="cluster_content_instruments">Apple 完整导航界面（含车道指引与路口放大）</string>
     <string name="cluster_content_turn_card">Apple 车道指引卡片</string>
     <string name="cluster_content_custom">地图 + 自绘卡片（位置可调）</string>
@@ -385,7 +385,9 @@
     <string name="cluster_card_song_artwork_scale">封面大小</string>
     <string name="cluster_card_song_artwork_position">封面位置微调</string>
     <string name="cluster_card_song_alpha">卡片背景浓度</string>
-    <string name="cluster_card_song_alpha_desc">100 为默认玻璃效果，0 完全透明；只影响背景底色。</string>
+    <string name="cluster_card_song_alpha_desc">100 为完全不透明黑底，0 完全透明。</string>
+    <string name="cluster_card_album_title">专辑封面</string>
+    <string name="card_scale_album">专辑封面大小</string>
     <string name="start_carplay_automatically_after_device_boot">设备启动后自动启动 CarPlay</string>
     <string name="starting">正在启动</string>
     <string name="starting_airplay_service">正在启动 AirPlay 服务</string>
