@@ -358,6 +358,8 @@ class AndroidMediaSink(
     @Volatile private var lastNavigationPcmAtMs = 0L
     /** Last time a microphone stream was open; also set when it closes to keep a short window. */
     @Volatile private var lastMicrophoneAtMs = 0L
+    /** Streams whose microphone is still open; Siri can hold one for longer than the window. */
+    private val openMicrophoneIds = mutableSetOf<AudioStreamId>()
 
     fun onNavigationAudioFrame() {
         lastNavigationPcmAtMs = SystemClock.elapsedRealtime()
@@ -377,6 +379,7 @@ class AndroidMediaSink(
      * treating a Siri screen as a frozen CarPlay session.
      */
     fun microphoneActive(windowMs: Long = 3_000L): Boolean {
+        if (synchronized(openMicrophoneIds) { openMicrophoneIds.isNotEmpty() }) return true
         val last = lastMicrophoneAtMs
         return last != 0L && SystemClock.elapsedRealtime() - last <= windowMs
     }
@@ -631,6 +634,7 @@ class AndroidMediaSink(
         // This callback runs on the downlink thread; microphone failures must not stop playback.
         try {
             lastMicrophoneAtMs = SystemClock.elapsedRealtime()
+            synchronized(openMicrophoneIds) { openMicrophoneIds.add(id) }
             // Snapshot the media level before the car lowers it for the call. The mode poll cannot
             // do this on this head unit - it never reports a call at all - so the snapshot never
             // existed and a lowered stream level survived the hang-up. CarPlay mirrors that level
@@ -654,6 +658,7 @@ class AndroidMediaSink(
             microphoneUplinks.remove(id)?.close()
         } finally {
             lastMicrophoneAtMs = SystemClock.elapsedRealtime()
+            synchronized(openMicrophoneIds) { openMicrophoneIds.remove(id) }
             restoreAudioMode(id)
             // The uplink ending means the call or voice-clip capture is over, and the music must be
             // back at full level. restoreAudioMode() cannot cover this: it returns immediately when
@@ -902,6 +907,7 @@ class AndroidMediaSink(
             microphoneUplinks.values.forEach(MicrophoneUplink::close)
         } finally {
             microphoneUplinks.clear()
+            synchronized(openMicrophoneIds) { openMicrophoneIds.clear() }
             restoreAudioMode(null)
         }
         // Leaving the session must not leave the car quiet: the head unit may have lowered the
