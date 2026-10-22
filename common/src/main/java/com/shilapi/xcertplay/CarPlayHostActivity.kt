@@ -5616,11 +5616,15 @@ class CarPlayHostActivity : ComponentActivity() {
     /**
      * Samples the projection channel for the whole life of the activity.
      *
-     * This is the ONLY place allowed to send the activation sequence. It sends it once, and only
-     * when the channel is not open yet; every other part of the app just shows or hides the window.
-     * Re-sending anywhere else is exactly what made the head unit announce
-     * "全屏镜像/导航已开启" on swipes and reconnects, and what left the state machine disagreeing
-     * with the panel.
+     * This is the ONLY place allowed to send the activation sequence. It keeps sampling, and while
+     * it has not decided yet it also keeps waiting: [WATCHER_READY_WAIT_MS] after start-up, if the
+     * channel is still closed, it sends the sequence exactly once and never again. If the channel
+     * reports open at any point inside that window, nothing is sent at all. Every other part of the
+     * app only shows or hides the window - re-sending from there is what made the head unit
+     * announce "全屏镜像/导航已开启" on swipes and reconnects.
+     *
+     * `InCallClusterBridge.reportsProjecting()` is a plain read of the state incall reported through
+     * its callback; it sends nothing, which is why the loop can call it every period.
      *
      * The first dashboard display it sees is kept, so later window builds use a display that was
      * sampled while incall was idle instead of one taken mid-reconfiguration.
@@ -5629,11 +5633,10 @@ class CarPlayHostActivity : ComponentActivity() {
         if (watcherThread != null || DiLink51ClusterLayout.supported()) return
         if (shuttingDown.get() || isFinishing || isDestroyed) return
         watcherThread = Thread({
-            // Let incall report its current state first: a force-stop + relaunch must not fire the
-            // announcing sequence at a panel that is already ours.
-            quietSleep(PREWARM_SETTLE_MS)
-            var sequenceSent = false
+            val startedAtMs = SystemClock.elapsedRealtime()
+            var decided = false
             while (!shuttingDown.get() && !isFinishing && !isDestroyed) {
+                // Read-only: incall's own report, no request of any kind goes out here.
                 val open = runCatching { InCallClusterBridge.reportsProjecting() }.getOrDefault(false)
                 watcherChannelOpen = open
                 if (watcherDisplay == null) {
@@ -5647,13 +5650,22 @@ class CarPlayHostActivity : ComponentActivity() {
                         )
                     }
                 }
-                if (!open && !sequenceSent) {
-                    sequenceSent = true
-                    clusterPrewarmAtMs = SystemClock.elapsedRealtime()
-                    appendLog("Cluster watcher: 启动时投屏通道未开，发完整激活序列（全程仅此一次）")
-                    mainHandler.post {
-                        if (!shuttingDown.get() && !isFinishing && !isDestroyed) {
-                            InCallClusterBridge.openProjection(this)
+                if (!decided) {
+                    if (open) {
+                        decided = true
+                        appendLog("Cluster watcher: 启动时投屏通道已就绪，不发激活序列")
+                    } else if (SystemClock.elapsedRealtime() - startedAtMs >= WATCHER_READY_WAIT_MS) {
+                        // Waited the full window and the channel is still closed: send once.
+                        decided = true
+                        clusterPrewarmAtMs = SystemClock.elapsedRealtime()
+                        appendLog(
+                            "Cluster watcher: 等待 ${WATCHER_READY_WAIT_MS}ms 通道仍未就绪，" +
+                                "发一次完整激活序列（全程仅此一次）",
+                        )
+                        mainHandler.post {
+                            if (!shuttingDown.get() && !isFinishing && !isDestroyed) {
+                                InCallClusterBridge.openProjection(this)
+                            }
                         }
                     }
                 }
@@ -6099,6 +6111,12 @@ class CarPlayHostActivity : ComponentActivity() {
         const val PREWARM_SETTLE_MS = 1_500L
         /** How often the start-up watcher samples the projection channel. */
         const val WATCHER_PERIOD_MS = 500L
+        /**
+         * How long the watcher gives incall to report an already-open channel before it sends the
+         * sequence itself. The report arrives within tens of milliseconds when the channel is up,
+         * so this window only has to cover a channel that incall is still bringing up.
+         */
+        const val WATCHER_READY_WAIT_MS = 5_000L
         /**
          * After a start-up prewarm, a connect within this window re-asserts silently instead of
          * running the announcing sequence a second time.
