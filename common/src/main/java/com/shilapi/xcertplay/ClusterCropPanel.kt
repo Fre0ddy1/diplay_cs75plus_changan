@@ -21,15 +21,27 @@ internal class ClusterCropPanel(
     private val close: () -> Unit,
     private val onAdjust: () -> Unit = {},
 ) : LinearLayout(context) {
-    private val steps = listOf(0, 5, 10, 15, 20, 25, 30, 35, 40, 45, 50, 55, 60, 65, 70, 75, 80, 85, 90)
-    private val sizeSteps = listOf(10, 15, 20, 25, 30, 35, 40, 45, 50, 55, 60, 65, 70, 75, 80, 85, 90, 95, 100)
-
     private fun dp(n: Int) = (n * resources.displayMetrics.density).toInt()
     private fun text(value: String, size: Int = 15, color: Int = Color.WHITE) = TextView(context).apply {
         text = value; textSize = size.toFloat(); setTextColor(color)
     }
 
-    private fun row(title: String, values: List<Int>, current: Int, format: (Int) -> String, save: (Int) -> Unit) {
+    /**
+     * One labelled slider over [min]..[max] in steps of [step].
+     *
+     * All four values now share the same -50..150 % range with 1 % steps: negative offsets push the
+     * picture off the panel and sizes above 100 % enlarge it past the edges, which is how a driver
+     * lines the stream up with an edge they can actually see.
+     */
+    private fun row(
+        title: String,
+        min: Int,
+        max: Int,
+        step: Int,
+        current: Int,
+        format: (Int) -> String,
+        save: (Int) -> Unit,
+    ) {
         val label = text(format(current), 15, Color.rgb(166, 200, 255))
         val head = LinearLayout(context).apply {
             orientation = HORIZONTAL
@@ -39,14 +51,15 @@ internal class ClusterCropPanel(
         head.addView(text(title), LayoutParams(0, -2, 1f))
         head.addView(label)
         addView(head)
+        val slots = ((max - min) / step).coerceAtLeast(1)
         addView(SeekBar(context).apply {
-            max = values.lastIndex
-            progress = values.indexOf(current).coerceIn(values.indices)
+            this.max = slots
+            progress = ((current - min) / step).coerceIn(0, slots)
             // Do NOT set minHeight here: the head-unit ROM strips SeekBar#setMinHeight and
             // throws NoSuchMethodError; the row LayoutParams already fixes the height.
             setOnSeekBarChangeListener(object : SeekBar.OnSeekBarChangeListener {
                 override fun onProgressChanged(seek: SeekBar?, progress: Int, fromUser: Boolean) {
-                    val value = values[progress.coerceIn(values.indices)]
+                    val value = min + progress.coerceIn(0, slots) * step
                     label.text = format(value)
                     if (fromUser) {
                         save(value)
@@ -70,22 +83,22 @@ internal class ClusterCropPanel(
         addView(scroll, LayoutParams(-1, 0, 1f))
         rows.addView(text(context.getString(R.string.cluster_crop_hint), 13, Color.rgb(168, 182, 202)))
         row(
-            context.getString(R.string.cluster_crop_left), steps,
+            context.getString(R.string.cluster_crop_left), CROP_MIN, CROP_MAX, CROP_STEP,
             AirPlayPersistence.loadClusterCropLeftPercent(context),
             { "${it}%" }, { AirPlayPersistence.saveClusterCrop(context, it, AirPlayPersistence.loadClusterCropTopPercent(context), AirPlayPersistence.loadClusterCropWidthPercent(context), AirPlayPersistence.loadClusterCropHeightPercent(context)) },
         )
         row(
-            context.getString(R.string.cluster_crop_top), steps,
+            context.getString(R.string.cluster_crop_top), CROP_MIN, CROP_MAX, CROP_STEP,
             AirPlayPersistence.loadClusterCropTopPercent(context),
             { "${it}%" }, { AirPlayPersistence.saveClusterCrop(context, AirPlayPersistence.loadClusterCropLeftPercent(context), it, AirPlayPersistence.loadClusterCropWidthPercent(context), AirPlayPersistence.loadClusterCropHeightPercent(context)) },
         )
         row(
-            context.getString(R.string.cluster_crop_width), sizeSteps,
+            context.getString(R.string.cluster_crop_width), CROP_MIN, CROP_MAX, CROP_STEP,
             AirPlayPersistence.loadClusterCropWidthPercent(context),
             { "${it}%" }, { AirPlayPersistence.saveClusterCrop(context, AirPlayPersistence.loadClusterCropLeftPercent(context), AirPlayPersistence.loadClusterCropTopPercent(context), it, AirPlayPersistence.loadClusterCropHeightPercent(context)) },
         )
         row(
-            context.getString(R.string.cluster_crop_height), sizeSteps,
+            context.getString(R.string.cluster_crop_height), CROP_MIN, CROP_MAX, CROP_STEP,
             AirPlayPersistence.loadClusterCropHeightPercent(context),
             { "${it}%" }, { AirPlayPersistence.saveClusterCrop(context, AirPlayPersistence.loadClusterCropLeftPercent(context), AirPlayPersistence.loadClusterCropTopPercent(context), AirPlayPersistence.loadClusterCropWidthPercent(context), it) },
         )
@@ -102,5 +115,12 @@ internal class ClusterCropPanel(
             setOnClickListener { close() }
         }, LayoutParams(0, dp(48), 1f))
         addView(actions)
+    }
+
+    private companion object {
+        /** Shared range for all four values: negative pushes off-panel, above 100 enlarges. */
+        const val CROP_MIN = -50
+        const val CROP_MAX = 150
+        const val CROP_STEP = 1
     }
 }

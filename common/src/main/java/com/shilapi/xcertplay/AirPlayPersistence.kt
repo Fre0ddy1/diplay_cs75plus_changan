@@ -708,25 +708,28 @@ object AirPlayPersistence {
     private const val KEY_CLUSTER_CROP_TOP = "cluster_crop_top"
     private const val KEY_CLUSTER_CROP_WIDTH = "cluster_crop_width"
     private const val KEY_CLUSTER_CROP_HEIGHT = "cluster_crop_height"
+    /** The picture-adjust box: negative offsets push the frame off-panel, values above 100 enlarge it. */
+    const val CROP_MIN = -50
+    const val CROP_MAX = 150
 
     fun loadClusterCropLeftPercent(context: Context): Int =
-        context.getSharedPreferences(PREFS, Context.MODE_PRIVATE).getInt(KEY_CLUSTER_CROP_LEFT, 0).coerceIn(0, 90)
+        context.getSharedPreferences(PREFS, Context.MODE_PRIVATE).getInt(KEY_CLUSTER_CROP_LEFT, 0).coerceIn(CROP_MIN, CROP_MAX)
 
     fun loadClusterCropTopPercent(context: Context): Int =
-        context.getSharedPreferences(PREFS, Context.MODE_PRIVATE).getInt(KEY_CLUSTER_CROP_TOP, 0).coerceIn(0, 90)
+        context.getSharedPreferences(PREFS, Context.MODE_PRIVATE).getInt(KEY_CLUSTER_CROP_TOP, 0).coerceIn(CROP_MIN, CROP_MAX)
 
     fun loadClusterCropWidthPercent(context: Context): Int =
-        context.getSharedPreferences(PREFS, Context.MODE_PRIVATE).getInt(KEY_CLUSTER_CROP_WIDTH, 100).coerceIn(10, 100)
+        context.getSharedPreferences(PREFS, Context.MODE_PRIVATE).getInt(KEY_CLUSTER_CROP_WIDTH, 100).coerceIn(CROP_MIN, CROP_MAX)
 
     fun loadClusterCropHeightPercent(context: Context): Int =
-        context.getSharedPreferences(PREFS, Context.MODE_PRIVATE).getInt(KEY_CLUSTER_CROP_HEIGHT, 100).coerceIn(10, 100)
+        context.getSharedPreferences(PREFS, Context.MODE_PRIVATE).getInt(KEY_CLUSTER_CROP_HEIGHT, 100).coerceIn(CROP_MIN, CROP_MAX)
 
     fun saveClusterCrop(context: Context, left: Int, top: Int, width: Int, height: Int) {
         context.getSharedPreferences(PREFS, Context.MODE_PRIVATE).edit()
-            .putInt(KEY_CLUSTER_CROP_LEFT, left.coerceIn(0, 90))
-            .putInt(KEY_CLUSTER_CROP_TOP, top.coerceIn(0, 90))
-            .putInt(KEY_CLUSTER_CROP_WIDTH, width.coerceIn(10, 100))
-            .putInt(KEY_CLUSTER_CROP_HEIGHT, height.coerceIn(10, 100))
+            .putInt(KEY_CLUSTER_CROP_LEFT, left.coerceIn(CROP_MIN, CROP_MAX))
+            .putInt(KEY_CLUSTER_CROP_TOP, top.coerceIn(CROP_MIN, CROP_MAX))
+            .putInt(KEY_CLUSTER_CROP_WIDTH, width.coerceIn(CROP_MIN, CROP_MAX))
+            .putInt(KEY_CLUSTER_CROP_HEIGHT, height.coerceIn(CROP_MIN, CROP_MAX))
             .apply()
         overlaySettingsListener?.invoke()
     }

@@ -107,15 +107,18 @@ internal class ClusterMapPresentation(
         // set once by the driver; the old percent-based crop default cropped too much).
         val cropLeftPx = AirPlayPersistence.loadClusterMirrorLeftCropPx(context)
         val availW = baseW - cropLeftPx
-        // Step 2 - dashboard picture adjust target rect (percent of the dashboard panel).
+        // Step 2 - dashboard picture adjust target rect (percent of the dashboard panel). The values
+        // may be negative or above 100: the driver uses them to push the picture off an edge or
+        // enlarge it past the panel, so no clamping to 0..100 happens here - only a floor of one
+        // pixel keeps the matrix invertible.
         val xPct = AirPlayPersistence.loadClusterCropLeftPercent(context)
         val yPct = AirPlayPersistence.loadClusterCropTopPercent(context)
-        val wPct = AirPlayPersistence.loadClusterCropWidthPercent(context).coerceIn(10, 100)
-        val hPct = AirPlayPersistence.loadClusterCropHeightPercent(context).coerceIn(10, 100)
-        val w = wPct * baseW / 100
-        val h = hPct * baseH / 100
-        val x = minOf(xPct, 100 - wPct) * baseW / 100
-        val y = minOf(yPct, 100 - hPct) * baseH / 100
+        val wPct = AirPlayPersistence.loadClusterCropWidthPercent(context)
+        val hPct = AirPlayPersistence.loadClusterCropHeightPercent(context)
+        val w = (wPct * baseW / 100).coerceAtLeast(1)
+        val h = (hPct * baseH / 100).coerceAtLeast(1)
+        val x = xPct * baseW / 100
+        val y = yPct * baseH / 100
         // Pipeline (10-08 field requirements): FIRST crop the left rail out of the SOURCE
         // picture, THEN fit the remaining picture into the target rect. Fit - not cover - so
         // every adjustment to the frame is immediately visible: making the frame smaller
