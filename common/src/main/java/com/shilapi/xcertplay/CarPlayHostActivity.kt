@@ -5759,11 +5759,17 @@ class CarPlayHostActivity : ComponentActivity() {
         if (shuttingDown.get() || isFinishing || isDestroyed) return
         watcherThread = Thread({
             val startedAtMs = SystemClock.elapsedRealtime()
-            // The one piece of clock state: the earliest moment the next sequence may be sent.
-            // It is pushed forward instead of using a latch, so a channel the driver closes by
-            // hand is picked up again - a "decided" flag made that impossible.
-            var nextSendEligibleAtMs = startedAtMs + WATCHER_READY_WAIT_MS
-            var sentCount = 0
+            // Backoff schedule, and a hard cap on how many times this may fire.
+            //
+            // The first send is the normal one; the rest only cover a channel that is still coming
+            // up. It MUST be bounded: a head unit that never enters projection mode (the driver is
+            // not using the dashboard at all) would otherwise be flooded with the full sequence
+            // forever, and each sequence is dozens of binder broadcasts - at one every five seconds
+            // the whole system started stuttering, audio included. The field log for 2026-10-22
+            // shows "第 163 次", thirteen minutes of it, with broadcast 10019 lines every 100 ms.
+            val retryDelaysMs = longArrayOf(WATCHER_FIRST_SEND_DELAY_MS, 15_000L, 30_000L, 60_000L)
+            var attempts = 0
+            var lastSentAtMs = 0L
             while (!shuttingDown.get() && !isFinishing && !isDestroyed) {
                 // 1) Sample the channel. Read-only: incall's own report, nothing goes out here.
                 val open = runCatching { InCallClusterBridge.reportsProjecting() }.getOrDefault(false)
@@ -5783,24 +5789,30 @@ class CarPlayHostActivity : ComponentActivity() {
                     }
                 }
 
-                // 3) The channel is up: reset the retry bookkeeping, and start a fresh 5 s window
-                //    from now so a later close waits again instead of firing on a stale stamp.
+                // 3) The channel is up: the budget starts over, so a channel the driver closes by
+                //    hand later is picked up again from the first (shortest) delay.
                 val now = SystemClock.elapsedRealtime()
                 if (open) {
-                    sentCount = 0
-                    nextSendEligibleAtMs = now + WATCHER_READY_WAIT_MS
-                } else if (now >= nextSendEligibleAtMs) {
-                    // 4) Not ready and the throttle expired: send, then slide the window forward.
-                    sentCount++
-                    clusterPrewarmAtMs = now
-                    appendLog(
-                        "Cluster watcher: 投屏通道未就绪（第 ${sentCount} 次，距上次 " +
-                            "${now - (nextSendEligibleAtMs - WATCHER_READY_WAIT_MS)}ms），发完整激活序列",
-                    )
-                    nextSendEligibleAtMs = now + WATCHER_READY_WAIT_MS
-                    mainHandler.post {
-                        if (!shuttingDown.get() && !isFinishing && !isDestroyed) {
-                            InCallClusterBridge.openProjection(this)
+                    attempts = 0
+                    lastSentAtMs = 0L
+                } else if (attempts < retryDelaysMs.size) {
+                    val delay = if (lastSentAtMs == 0L) {
+                        retryDelaysMs[0] - (now - startedAtMs)
+                    } else {
+                        retryDelaysMs[attempts] - (now - lastSentAtMs)
+                    }
+                    if (delay <= 0L) {
+                        attempts++
+                        lastSentAtMs = now
+                        clusterPrewarmAtMs = now
+                        appendLog(
+                            "Cluster watcher: 投屏通道未就绪，发完整激活序列" +
+                                "（第 $attempts/${retryDelaysMs.size} 次）",
+                        )
+                        mainHandler.post {
+                            if (!shuttingDown.get() && !isFinishing && !isDestroyed) {
+                                InCallClusterBridge.openProjection(this)
+                            }
                         }
                     }
                 }
@@ -6261,11 +6273,11 @@ class CarPlayHostActivity : ComponentActivity() {
         /** First attempts only ask the phone to repaint; after that the session is rebuilt. */
         const val FREEZE_REFRESH_ATTEMPTS = 2
         /**
-         * How long the watcher gives incall to report an already-open channel before it sends the
-         * sequence itself. The report arrives within tens of milliseconds when the channel is up,
-         * so this window only has to cover a channel that incall is still bringing up.
+         * The watcher's first send waits this long for incall to report an already-open channel.
+         * The report arrives within tens of milliseconds when the channel is up, so this window
+         * only has to cover a channel that incall is still bringing up.
          */
-        const val WATCHER_READY_WAIT_MS = 5_000L
+        const val WATCHER_FIRST_SEND_DELAY_MS = 5_000L
         /**
          * After a start-up prewarm, a connect within this window re-asserts silently instead of
          * running the announcing sequence a second time.
