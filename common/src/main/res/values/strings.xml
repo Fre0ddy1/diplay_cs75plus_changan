@@ -381,6 +381,8 @@
     <string name="cluster_content_turn_card">Apple lane guidance card</string>
     <string name="cluster_content_custom">Map + cards drawn here (movable)</string>
     <string name="cluster_content_hint">Only Apple\'s views carry the junction zoom image; reconnect after switching.</string>
+    <string name="cluster_card_song_max_chars">Song card maximum characters</string>
+    <string name="cluster_card_song_max_chars_desc">Anything longer is cut and ends with "...".</string>
     <string name="start_carplay_automatically_after_device_boot">Start CarPlay automatically after device boot</string>
     <string name="starting">Starting</string>
     <string name="starting_airplay_service">Starting AirPlay service</string>

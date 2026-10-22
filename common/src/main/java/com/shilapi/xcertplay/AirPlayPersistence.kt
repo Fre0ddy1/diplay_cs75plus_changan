@@ -109,6 +109,11 @@ object AirPlayPersistence {
     private const val KEY_CLUSTER_CARD_CONTENT_TOP = "cluster_card_content_top_px"
     /** Which cluster content the iPhone streams: Apple's own views, or our map plus cards. */
     private const val KEY_CLUSTER_CONTENT = "cluster_content"
+    private const val KEY_CLUSTER_SONG_MAX_CHARS = "cluster_song_max_chars"
+    /** Sixty characters fits roughly half the panel at the default card scale. */
+    const val DEFAULT_SONG_MAX_CHARS = 60
+    const val MIN_SONG_MAX_CHARS = 10
+    const val MAX_SONG_MAX_CHARS = 200
     private const val KEY_CENTER_MAP_FOLLOWS_DASHBOARD = "center_map_follows_dashboard"
     private const val KEY_SETTINGS_GESTURE_FINGERS = "settings_gesture_fingers"
     private const val KEY_WIDTH_PHYSICAL_MM = "display_width_physical_mm"
@@ -942,6 +947,25 @@ object AirPlayPersistence {
     fun saveClusterCardVisible(context: Context, card: String, visible: Boolean) {
         context.getSharedPreferences(PREFS, Context.MODE_PRIVATE).edit()
             .putBoolean(clusterCardKey(card, "visible"), visible).apply()
+        overlaySettingsListener?.invoke()
+    }
+
+    /**
+     * Longest song line shown in the song card, in characters.
+     *
+     * A CarPlay NowPlayingUpdate title can be arbitrarily long, and the card grows with the text -
+     * a long title used to stretch across the dashboard and sit in the driver's view. Anything past
+     * this limit is cut and ends with "...".
+     */
+    fun loadClusterSongMaxChars(context: Context): Int =
+        context.getSharedPreferences(PREFS, Context.MODE_PRIVATE)
+            .getInt(KEY_CLUSTER_SONG_MAX_CHARS, DEFAULT_SONG_MAX_CHARS)
+            .coerceIn(MIN_SONG_MAX_CHARS, MAX_SONG_MAX_CHARS)
+
+    fun saveClusterSongMaxChars(context: Context, chars: Int) {
+        context.getSharedPreferences(PREFS, Context.MODE_PRIVATE).edit()
+            .putInt(KEY_CLUSTER_SONG_MAX_CHARS, chars.coerceIn(MIN_SONG_MAX_CHARS, MAX_SONG_MAX_CHARS))
+            .apply()
         overlaySettingsListener?.invoke()
     }
 

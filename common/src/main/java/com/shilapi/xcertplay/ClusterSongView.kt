@@ -30,6 +30,8 @@ internal class ClusterSongView(context: Context) : View(context) {
     private var lastText = ""
     private var lastSize = 0f
     private var measured = 0f
+    private var maxChars = 0
+    private var maxCharsAtMs = 0L
 
     fun setSong(next: ClusterSong?) {
         // Obey the same show/hide switch as the guidance cards. This is read here rather than in
@@ -75,7 +77,7 @@ internal class ClusterSongView(context: Context) : View(context) {
         val h = unit * 0.095f
         val radius = h * 0.5f
         textPaint.textSize = h * 0.42f
-        val label = next.text
+        val label = clipped(next.text)
         // Cached measurement: the card redraws on every guidance tick, and measureText on a stable
         // string is pure waste there.
         if (label != lastText || textPaint.textSize != lastSize) {
@@ -92,6 +94,23 @@ internal class ClusterSongView(context: Context) : View(context) {
         val metrics = textPaint.fontMetrics
         val baseline = rect.centerY() - (metrics.ascent + metrics.descent) / 2f
         canvas.drawText(label, rect.left + padH, baseline, textPaint)
+    }
+
+    /**
+     * Cuts a song line down to the configured number of characters.
+     *
+     * The card is sized by its text, so a long title used to widen it until it crossed the panel
+     * and sat in the driver's view. The limit is re-read at most every couple of seconds so a
+     * settings change shows up without touching SharedPreferences on every frame.
+     */
+    private fun clipped(text: String): String {
+        val now = android.os.SystemClock.elapsedRealtime()
+        if (maxChars == 0 || now - maxCharsAtMs > 2_000L) {
+            maxChars = AirPlayPersistence.loadClusterSongMaxChars(context)
+            maxCharsAtMs = now
+        }
+        if (maxChars <= 0 || text.length <= maxChars) return text
+        return text.take(maxChars) + "..."
     }
 
     private companion object {

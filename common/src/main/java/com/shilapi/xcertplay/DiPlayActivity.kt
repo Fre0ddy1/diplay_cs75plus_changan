@@ -1030,6 +1030,28 @@ class DiPlayActivity : ComponentActivity() {
                 addCardOffsetInputs(getString(R.string.cluster_card_eta_title), "eta", R.string.card_scale_eta) { id, x, y -> positionPreview.setOffset(id, x, y) }
                 addCardOffsetInputs(getString(R.string.cluster_card_road_title), "road", R.string.card_scale_road) { id, x, y -> positionPreview.setOffset(id, x, y) }
                 addCardOffsetInputs(getString(R.string.cluster_card_song_title), "song", R.string.card_scale_song) { id, x, y -> positionPreview.setOffset(id, x, y) }
+                // The song card is sized by its text, so a long title stretches it across the panel.
+                // This caps the text instead, in characters, with "..." marking the cut.
+                cardGroup(card, getString(R.string.cluster_card_song_max_chars)) { group ->
+                    group.addView(label(getString(R.string.cluster_card_song_max_chars_desc), 13, MUTED).apply {
+                        setPadding(0, 0, 0, dp(6))
+                    })
+                    group.addView(LinearLayout(this@DiPlayActivity).apply {
+                        orientation = LinearLayout.HORIZONTAL
+                        gravity = Gravity.CENTER_VERTICAL
+                        addView(
+                            numberInput(
+                                AirPlayPersistence.loadClusterSongMaxChars(this@DiPlayActivity),
+                                AirPlayPersistence.MAX_SONG_MAX_CHARS,
+                            ) { value ->
+                                // Saves and notifies the dashboard immediately: the card re-reads the
+                                // limit on its next draw.
+                                AirPlayPersistence.saveClusterSongMaxChars(this@DiPlayActivity, value)
+                            },
+                            LinearLayout.LayoutParams(dp(150), dp(48)),
+                        )
+                    })
+                }
                 card.addView(button(getString(R.string.cluster_card_position_apply), false) {
                     pendingXY.forEach { (id, pair) ->
                         if (id == "turn") {
