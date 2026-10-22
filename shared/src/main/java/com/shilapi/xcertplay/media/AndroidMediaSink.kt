@@ -504,9 +504,15 @@ class AndroidMediaSink(
     }
 
     override fun onAudioStopped(id: AudioStreamId) {
+        val wasMedia = mediaAudioTypes.contains(id)
         audioRenderers.remove(id)?.close()
         updateMediaAudio(id, false)
         updateNavigationAudio(id, null, false)
+        // A call or announcement stream ending is the moment the music has to be back at full
+        // level. The mode poll cannot be trusted for this head unit: it never reports a call at all
+        // (no "call detected" line in a whole day of logs), so a level the call lowered used to
+        // survive until the next reconnect.
+        if (!wasMedia) audioFocusCoordinator.resetPlaybackVolume("非媒体流结束 $id")
     }
 
     private fun updateMediaAudio(id: AudioStreamId, active: Boolean) {
@@ -610,6 +616,12 @@ class AndroidMediaSink(
             microphoneUplinks.remove(id)?.close()
         } finally {
             restoreAudioMode(id)
+            // The uplink ending means the call or voice-clip capture is over, and the music must be
+            // back at full level. restoreAudioMode() cannot cover this: it returns immediately when
+            // this session never entered communication mode, which is the case for a WeChat clip
+            // and for a call the head unit handles itself - the exact "the music stayed quiet after
+            // a call, only a reconnect brought it back" report.
+            audioFocusCoordinator.resetPlaybackVolume("microphone stopped")
         }
     }
 

@@ -1681,7 +1681,8 @@ class CarPlayHostActivity : ComponentActivity() {
         if (activeAirPlaySession != null &&
             CarPlayVideo.activity == null &&
             isWheelMediaKey(event.keyCode) &&
-            AirPlayPersistence.loadMediaViaCarBluetooth(this)
+            AirPlayPersistence.loadMediaViaCarBluetooth(this) &&
+            carBluetoothIsPlaying()
         ) {
             if (event.action == KeyEvent.ACTION_DOWN && event.repeatCount == 0) {
                 appendLog(
@@ -1724,6 +1725,20 @@ class CarPlayHostActivity : ComponentActivity() {
     private fun inCarPlayCall(): Boolean =
         (getSystemService(Context.AUDIO_SERVICE) as? AudioManager)?.mode
             ?.let { it != AudioManager.MODE_NORMAL } == true
+
+    /**
+     * Whether the head unit's own Bluetooth really has the media keys.
+     *
+     * The "media via car Bluetooth" switch says the car should own the wheel's media keys, but that
+     * only makes sense while the car is actually playing over A2DP. Music here comes through CarPlay,
+     * so with no A2DP link the keys were handed to a player that has no source - the driver's "the
+     * wheel cannot pause or skip any more" report. When the link is down, the CarPlay window claims
+     * them again.
+     */
+    private fun carBluetoothIsPlaying(): Boolean =
+        runCatching {
+            (getSystemService(Context.AUDIO_SERVICE) as? AudioManager)?.isBluetoothA2dpOn
+        }.getOrNull() == true
 
     /**
      * True while a call runs on CarPlay's own audio path. The sink switches the head unit to
