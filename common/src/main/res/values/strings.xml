@@ -382,7 +382,7 @@
     <string name="cluster_content_custom">Map + cards drawn here (movable)</string>
     <string name="cluster_content_hint">Only Apple\'s views carry the junction zoom image; reconnect after switching.</string>
     <string name="cluster_card_song_max_chars">Song card maximum characters</string>
-    <string name="cluster_card_song_max_chars_desc">Anything longer is cut and ends with "...".</string>
+    <string name="cluster_card_song_max_chars_desc">Each line is sized to this many characters: shorter text keeps the full width, longer text wraps to the next line.</string>
     <string name="cluster_card_song_artwork">Show album artwork</string>
     <string name="cluster_card_song_show_artwork">Show album artwork</string>
     <string name="cluster_card_song_alpha">Card background strength</string>
@@ -393,7 +393,7 @@
     <string name="cluster_card_song_artwork_side">Artwork position</string>
     <string name="cluster_card_song_artwork_scale">Artwork size</string>
     <string name="cluster_card_song_font_scale">Text size</string>
-    <string name="cluster_card_song_font_scale_desc">Long lines shrink automatically to fit the free space.</string>
+    <string name="cluster_card_song_font_scale_desc">Shrinks automatically when the panel cannot fit the configured width.</string>
     <string name="song_art_top">Above (text below)</string>
     <string name="song_art_bottom">Below (text above)</string>
     <string name="song_art_left">Left (text right)</string>

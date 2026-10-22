@@ -23,8 +23,11 @@ import com.shilapi.xcertplay.hud.ClusterSong
  * A song with no artist collapses to a single line in slot 1 rather than leaving two blank rows.
  *
  * Alignment follows the cover: side by side, the text block is vertically centred against the
- * cover; stacked, it is centred horizontally. Each line is hard-cut at the configured character
- * count with no ellipsis, and the whole block shrinks to fit whatever space the cover leaves.
+ * cover; stacked, every line is centred horizontally. The text block is a fixed size rather than
+ * the measured length of the current song: [maxChars] Chinese characters wide, even when the title
+ * or artist is shorter. That keeps the capsule - and with it the album cover - in exactly the same
+ * place from one song to the next, which is what the driver needs to line the card up once.
+ * A longer title wraps into slot 2 and a longer artist is hard-cut, both without an ellipsis.
  */
 internal class ClusterSongView(context: Context) : View(context) {
     private val rect = RectF()
@@ -40,14 +43,6 @@ internal class ClusterSongView(context: Context) : View(context) {
     private var posX = Float.NaN
     private var posY = Float.NaN
     private var overlayScale = Float.NaN
-    private var lastLine1 = ""
-    private var lastLine2 = ""
-    private var lastLine3 = ""
-    private var lastLineH = 0f
-    private var lastFontScale = 0
-    private var measured1 = 0f
-    private var measured2 = 0f
-    private var measured3 = 0f
     private var maxChars = 0
     private var settingsAtMs = 0L
     private var cardAlpha = 100
@@ -110,18 +105,6 @@ internal class ClusterSongView(context: Context) : View(context) {
 
         val (line1, line2) = splitTitle(next.title)
         val line3 = cut(next.artist)
-        if (line1 != lastLine1 || line2 != lastLine2 || line3 != lastLine3 ||
-            lineH != lastLineH || fontScale != lastFontScale
-        ) {
-            lastLine1 = line1
-            lastLine2 = line2
-            lastLine3 = line3
-            lastLineH = lineH
-            lastFontScale = fontScale
-            measured1 = textPaint.measureText(line1)
-            measured2 = if (line2.isEmpty()) 0f else textPaint.measureText(line2)
-            measured3 = if (line3.isEmpty()) 0f else artistPaint.measureText(line3)
-        }
 
         val padH = lineH * 0.72f
         val padV = lineH * 0.34f
@@ -131,18 +114,19 @@ internal class ClusterSongView(context: Context) : View(context) {
         val gap = if (art != null) lineH * 0.3f else 0f
         val sideBySide = artworkSide == 2 || artworkSide == 3
 
-        // Text size follows the space the cover leaves: the panel minus the cover and the padding is
-        // what the words may occupy, so a large cover gets smaller text instead of an oversized card.
-        val available = (width - artSize - gap - padH * 2f).coerceAtLeast(lineH * 3f)
-        var textW = maxOf(measured1, measured2, measured3)
-        if (textW > available && textW > 0f) {
+        // The text block is one fixed size: [maxChars] Chinese characters wide even when the current
+        // title and artist are shorter. Measuring the actual words instead let the capsule - and the
+        // cover pinned to its edge - change width with every song, so nothing could be lined up.
+        // The width is capped by what the panel leaves; a big cover or a huge character count then
+        // shrinks the font rather than letting the capsule run off the screen.
+        val room = width - padH * 2f - (if (sideBySide) artSize + gap else 0f)
+        val available = room.coerceAtLeast(lineH)
+        var textW = fixedTextWidth()
+        if (textW > available) {
             val fit = available / textW
             textPaint.textSize *= fit
             artistPaint.textSize *= fit
-            measured1 = textPaint.measureText(line1)
-            measured2 = if (line2.isEmpty()) 0f else textPaint.measureText(line2)
-            measured3 = if (line3.isEmpty()) 0f else artistPaint.measureText(line3)
-            textW = maxOf(measured1, measured2, measured3)
+            textW = fixedTextWidth()
         }
 
         // Slots 1 and 2 hold the song name (a long one wraps into slot 2), slot 3 holds the artist.
@@ -224,20 +208,32 @@ internal class ClusterSongView(context: Context) : View(context) {
             canvas.restoreToCount(saved)
         }
 
+        // Stacked layouts centre every line inside the fixed-width block, so a short title sits
+        // under the middle of the cover instead of hanging off to one side. Side-by-side layouts
+        // keep the lines left-aligned and move the whole block to the cover's vertical centre.
+        val centred = !sideBySide
+        textPaint.textAlign = if (centred) Paint.Align.CENTER else Paint.Align.LEFT
+        artistPaint.textAlign = textPaint.textAlign
+        val textX = if (centred) textLeft + textW / 2f else textLeft
+
         // Slot 1 (and slot 2 when the name is long) hold the song name; slot 3 holds the artist.
         val m1 = textPaint.fontMetrics
         val baseline1 = textTop - (m1.ascent + m1.descent) / 2f
-        canvas.drawText(line1, textLeft, baseline1, textPaint)
+        canvas.drawText(line1, textX, baseline1, textPaint)
         if (line2.isNotEmpty()) {
             val baseline2 = textTop + lineH - (m1.ascent + m1.descent) / 2f
-            canvas.drawText(line2, textLeft, baseline2, textPaint)
+            canvas.drawText(line2, textX, baseline2, textPaint)
         }
         if (line3.isNotEmpty()) {
             val m3 = artistPaint.fontMetrics
             val baseline3 = textTop + lineH * 2f - (m3.ascent + m3.descent) / 2f
-            canvas.drawText(line3, textLeft, baseline3, artistPaint)
+            canvas.drawText(line3, textX, baseline3, artistPaint)
         }
     }
+
+    /** One line's width: the configured character count at full-width (Chinese) advances. */
+    private fun fixedTextWidth(): Float =
+        textPaint.measureText(REFERENCE_CHAR) * maxChars.coerceAtLeast(1)
 
     /**
      * Splits a song name across slots 1 and 2.
@@ -274,5 +270,8 @@ internal class ClusterSongView(context: Context) : View(context) {
     private companion object {
         const val CARD = "song"
         const val SETTINGS_REFRESH_MS = 2_000L
+
+        /** The reference glyph for one "character": all full-width CJK glyphs share its advance. */
+        const val REFERENCE_CHAR = "中"
     }
 }

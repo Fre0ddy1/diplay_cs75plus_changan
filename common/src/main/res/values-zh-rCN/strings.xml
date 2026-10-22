@@ -379,7 +379,7 @@
     <string name="cluster_content_custom">地图 + 自绘卡片（位置可调）</string>
     <string name="cluster_content_hint">只有 Apple 界面才带路口放大示意图；切换后需重连生效。</string>
     <string name="cluster_card_song_max_chars">歌曲卡最大字数</string>
-    <string name="cluster_card_song_max_chars_desc">超出的部分会被截断，并以 ... 结尾。</string>
+    <string name="cluster_card_song_max_chars_desc">每行按这里的字数排版：不足也保留同样宽度，超出的字换到下一行。</string>
     <string name="cluster_card_song_artwork">显示专辑封面</string>
     <string name="cluster_card_song_show_artwork">显示专辑封面</string>
     <string name="cluster_card_song_alpha">卡片背景浓度</string>
@@ -390,7 +390,7 @@
     <string name="cluster_card_song_artwork_side">专辑封面位置</string>
     <string name="cluster_card_song_artwork_scale">专辑封面大小</string>
     <string name="cluster_card_song_font_scale">文字大小</string>
-    <string name="cluster_card_song_font_scale_desc">文字过长时会自动缩小以放进空白区域。</string>
+    <string name="cluster_card_song_font_scale_desc">画面放不下设定字数时会自动缩小。</string>
     <string name="song_art_top">上方（文字在下）</string>
     <string name="song_art_bottom">下方（文字在上）</string>
     <string name="song_art_left">左侧（文字在右）</string>
