@@ -114,8 +114,8 @@ object AirPlayPersistence {
     private const val KEY_CLUSTER_SONG_SHOW_ARTWORK = "cluster_song_show_artwork"
     private const val KEY_CLUSTER_SONG_ARTWORK_SIDE = "cluster_song_artwork_side"
     private const val KEY_CLUSTER_SONG_ARTWORK_SCALE = "cluster_song_artwork_scale"
-    /** Sixty characters fits roughly half the panel at the default card scale. */
-    const val DEFAULT_SONG_MAX_CHARS = 60
+    /** Ten characters: the driver asked for a short card that never crowds the dashboard. */
+    const val DEFAULT_SONG_MAX_CHARS = 10
     const val MIN_SONG_MAX_CHARS = 10
     const val MAX_SONG_MAX_CHARS = 200
     private const val KEY_CENTER_MAP_FOLLOWS_DASHBOARD = "center_map_follows_dashboard"

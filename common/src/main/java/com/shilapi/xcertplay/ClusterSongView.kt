@@ -41,7 +41,7 @@ internal class ClusterSongView(context: Context) : View(context) {
     private var overlayScale = Float.NaN
     private var lastLine1 = ""
     private var lastLine2 = ""
-    private var lastSize = 0f
+    private var lastLineH = 0f
     private var measured1 = 0f
     private var measured2 = 0f
     private var maxChars = 0
@@ -104,16 +104,21 @@ internal class ClusterSongView(context: Context) : View(context) {
 
         val line1 = cut(next.title)
         val line2 = if (next.artist.isEmpty()) "" else cut(next.artist)
-        if (line1 != lastLine1 || line2 != lastLine2 || textPaint.textSize != lastSize) {
+        // Cache on the layout size, not on one paint's text size: the artist paint changes with it
+        // but was not part of the old key, so a panel resize could keep a stale width and let the
+        // text spill out of the capsule.
+        if (line1 != lastLine1 || line2 != lastLine2 || lineH != lastLineH) {
             lastLine1 = line1
             lastLine2 = line2
-            lastSize = textPaint.textSize
+            lastLineH = lineH
             measured1 = textPaint.measureText(line1)
             measured2 = if (line2.isEmpty()) 0f else artistPaint.measureText(line2)
         }
 
-        val padH = lineH * 0.55f
-        val padV = lineH * 0.28f
+        // A little more breathing room than before: with the width cached too small the text used to
+        // press right against the capsule edge (field 2026-10-22).
+        val padH = lineH * 0.72f
+        val padV = lineH * 0.34f
         val textW = maxOf(measured1, measured2)
         val textH = if (line2.isEmpty()) lineH else lineH * 2f
 
@@ -152,6 +157,10 @@ internal class ClusterSongView(context: Context) : View(context) {
         val artTop: Float
         val textLeft: Float
         val textTop: Float
+        // The text block and the cover are top-aligned whenever they sit side by side: centring the
+        // shorter one left the words floating below the cover's top edge (field 2026-10-22). In the
+        // stacked layouts the text is centred horizontally instead, which is what looks right when
+        // the cover is above or below it.
         when (artworkSide) {
             0 -> { // cover above, text below
                 artLeft = contentLeft + (contentW - artSize) / 2f
@@ -165,17 +174,17 @@ internal class ClusterSongView(context: Context) : View(context) {
                 artLeft = contentLeft + (contentW - artSize) / 2f
                 artTop = contentTop + textH + gap
             }
-            2 -> { // cover left, text right
+            2 -> { // cover left, text right - both start at the top
                 artLeft = contentLeft
-                artTop = contentTop + (contentH - artSize) / 2f
+                artTop = contentTop
                 textLeft = contentLeft + artSize + gap
-                textTop = contentTop + (contentH - textH) / 2f
+                textTop = contentTop
             }
-            else -> { // cover right, text left
+            else -> { // cover right, text left - both start at the top
                 textLeft = contentLeft
-                textTop = contentTop + (contentH - textH) / 2f
+                textTop = contentTop
                 artLeft = contentLeft + contentW - artSize
-                artTop = contentTop + (contentH - artSize) / 2f
+                artTop = contentTop
             }
         }
 
