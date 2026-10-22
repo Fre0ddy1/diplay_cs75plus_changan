@@ -565,8 +565,94 @@ class CarPlayHostActivity : ComponentActivity() {
     private val expireOldLogLines = Runnable { refreshLogView(System.currentTimeMillis()) }
     private val refreshTurnOverlay = object : Runnable {
         override fun run() {
-            com.shilapi.xcertplay.hud.BydNavigationOutputs.refreshTurnOverlay()
-            mainHandler.postDelayed(this, 1_000L)
+            // The periodic refresh must never be able to stop itself: an exception thrown here used
+            // to skip the postDelayed below, which killed the loop permanently and silently.
+            try {
+                com.shilapi.xcertplay.hud.BydNavigationOutputs.refreshTurnOverlay()
+            } catch (error: Throwable) {
+                appendLog("Overlay refresh failed: ${error.javaClass.simpleName}: ${error.message}")
+            } finally {
+                mainHandler.postDelayed(this, 1_000L)
+            }
+        }
+    }
+
+    // Freeze detection.
+    //
+    // iOS can stop repainting CarPlay after a navigation session ends while the video stream keeps
+    // delivering frames at full rate: the picture sits on one frame, touches still go out, and the
+    // only visible symptom is a collapse in bitrate (field 2026-10-22: main screen 9066 -> 1012
+    // kbps, cluster 4673 -> 91 kbps, both still "23.0fps"). Nothing in the decoder or the network
+    // reports a problem, so the bitrate is what this watches.
+    private var freezeStreak = 0
+    private var freezeStrikes = 0
+    private var lastFreezeActionMs = 0L
+    private var lastNavigatingState: Boolean? = null
+
+    // showUI/forceKeyFrame are RTSP writes. They are cheap, but they take the session's event write
+    // lock and do socket I/O, so they must never run on the thread that draws CarPlay.
+    private val repaintExecutor = java.util.concurrent.Executors.newSingleThreadExecutor { runnable ->
+        Thread(runnable, "cluster-repaint").apply { isDaemon = true }
+    }
+
+    private fun requestClusterRepaint(reason: String) {
+        repaintExecutor.execute {
+            val sent = runCatching { controller?.refreshClusterUi(reason) }.getOrDefault(false)
+            appendLog("Cluster repaint ($reason) sent=$sent")
+        }
+    }
+
+    private val checkVideoFreeze = object : Runnable {
+        override fun run() {
+            try {
+                checkVideoFreezeNow()
+            } catch (error: Throwable) {
+                appendLog("Freeze check failed: ${error.javaClass.simpleName}: ${error.message}")
+            } finally {
+                mainHandler.postDelayed(this, FREEZE_CHECK_PERIOD_MS)
+            }
+        }
+    }
+
+    private fun checkVideoFreezeNow() {
+        val mediaSink = sink ?: return
+        if (activeAirPlaySession == null || shuttingDown.get() || isFinishing || isDestroyed) {
+            freezeStreak = 0
+            return
+        }
+        // Judge the stream the dashboard is actually showing: nav-only mode watches 111, the
+        // whole-screen mirror watches 110.
+        val watchingAlt = clusterPresentation?.isMirrorMode() != true
+        val streamType = if (watchingAlt) 111 else 110
+        val kbps = mediaSink.videoKbps(streamType)
+        val ageMs = mediaSink.videoWindowAgeMs(streamType)
+        // No recent window at all means the stream stopped, which is a different problem (and the
+        // existing recovery paths own it) - not a freeze.
+        if (kbps < 0 || ageMs > FREEZE_STALE_MS) {
+            freezeStreak = 0
+            return
+        }
+        // Anything at or above the "active" level proves the picture is being repainted.
+        if (kbps >= FREEZE_ACTIVE_KBPS || kbps > FREEZE_KBPS) {
+            freezeStreak = 0
+            return
+        }
+        freezeStreak++
+        if (freezeStreak < FREEZE_WINDOWS) return
+        val now = SystemClock.elapsedRealtime()
+        if (now - lastFreezeActionMs < FREEZE_COOLDOWN_MS) return
+        lastFreezeActionMs = now
+        freezeStrikes++
+        appendLog(
+            "Video freeze: stream=$streamType kbps=$kbps age=${ageMs}ms 连续 $freezeStreak 个窗口" +
+                "（第 $freezeStrikes 次，${if (watchingAlt) "导航画面" else "镜像画面"}）",
+        )
+        if (freezeStrikes <= FREEZE_REFRESH_ATTEMPTS) {
+            requestClusterRepaint("frozen stream=$streamType kbps=$kbps")
+        } else {
+            appendLog("Video freeze: 重绘无效，重建 CarPlay 会话")
+            freezeStrikes = 0
+            restartCarPlay("video frozen on stream $streamType")
         }
     }
     // Some head units (e.g. BYD DiLink) update resources.configuration for day/night
@@ -1091,6 +1177,8 @@ class CarPlayHostActivity : ComponentActivity() {
         // only shows or hides the window - re-sending the sequence anywhere else is what made the
         // head unit announce "全屏镜像/导航已开启" on swipes and reconnects.
         startClusterChannelWatcher()
+        mainHandler.removeCallbacks(checkVideoFreeze)
+        mainHandler.postDelayed(checkVideoFreeze, FREEZE_CHECK_PERIOD_MS)
         ensureClusterPresentation()
         // Watch for the dashboard display arriving late. Cold boot: the driver can open the app
         // before the instrument cluster has come up, findDisplay() then returns nothing, the
@@ -1353,6 +1441,17 @@ class CarPlayHostActivity : ComponentActivity() {
         // behavior: turn card follows the content setting, no ETA card.
         val changanCards = !DiLink51ClusterLayout.supported()
         val g = clusterTurnGuidance
+        // Navigation starting or ending is exactly the moment iOS stops repainting the cluster: the
+        // alt screen keeps the previous route on screen (field report: "退出导航后重新导航，仪表盘
+        // 还是上一次的路线"). Ask for a repaint on every transition so the new route appears.
+        val navigating = g != null
+        if (lastNavigatingState != navigating) {
+            val first = lastNavigatingState == null
+            lastNavigatingState = navigating
+            if (!first) {
+                requestClusterRepaint(if (navigating) "navigation started" else "navigation ended")
+            }
+        }
         // Dedupe the card-state line: ETA seconds tick every second, so log once per state
         // change (or at least every 5 s) instead of once per refresh tick.
         val cardsLog = "Cluster cards: mode=${if (clusterPresentation?.isMirrorMode() == true) "mirror" else "nav-only"} " +
@@ -1828,6 +1927,8 @@ class CarPlayHostActivity : ComponentActivity() {
             clusterDisplayListenerRegistered = false
         }
         mainHandler.removeCallbacks(refreshTurnOverlay)
+        mainHandler.removeCallbacks(checkVideoFreeze)
+        runCatching { repaintExecutor.shutdownNow() }
         mainHandler.removeCallbacks(hideDashboardAfterDisconnect)
         mainHandler.removeCallbacks(releaseDashboardAfterLongLoss)
         // Leaving only hides the window: no broadcast, no activation. The channel is left as the
@@ -6128,6 +6229,20 @@ class CarPlayHostActivity : ComponentActivity() {
         const val PREWARM_SETTLE_MS = 1_500L
         /** How often the start-up watcher samples the projection channel. */
         const val WATCHER_PERIOD_MS = 500L
+        /**
+         * Freeze detection. Aligned with the five-second video stats window: three consecutive
+         * windows below [FREEZE_KBPS] means the picture has not changed for ~15 s while frames keep
+         * arriving. [FREEZE_ACTIVE_KBPS] proves repainting, so a normal static map (which settles
+         * around 300-800 kbps) does not trip it.
+         */
+        const val FREEZE_CHECK_PERIOD_MS = 5_000L
+        const val FREEZE_WINDOWS = 3
+        const val FREEZE_KBPS = 250L
+        const val FREEZE_ACTIVE_KBPS = 800L
+        const val FREEZE_STALE_MS = 15_000L
+        const val FREEZE_COOLDOWN_MS = 20_000L
+        /** First attempts only ask the phone to repaint; after that the session is rebuilt. */
+        const val FREEZE_REFRESH_ATTEMPTS = 2
         /**
          * How long the watcher gives incall to report an already-open channel before it sends the
          * sequence itself. The report arrives within tens of milliseconds when the channel is up,

@@ -484,6 +484,24 @@ class AndroidMediaSink(
         }
     }
 
+    /**
+     * Newest measured bitrate of a video stream (110 main screen, 111 cluster), -1 when unknown.
+     *
+     * The freeze detector reads this: frames can keep arriving at full rate while the iPhone has
+     * stopped repainting, and the only visible symptom is the bitrate collapsing.
+     */
+    fun videoKbps(streamType: Int): Long = VideoStats.latestKbps(streamType)
+
+    /** Newest measured frame rate of a video stream, -1 when unknown. */
+    fun videoFps(streamType: Int): Double = VideoStats.latestFps(streamType)
+
+    /** How long ago the newest window for [streamType] closed, in milliseconds. */
+    fun videoWindowAgeMs(streamType: Int): Long {
+        val at = VideoStats.latestWindowAtMs(streamType)
+        if (at == 0L) return Long.MAX_VALUE
+        return (System.nanoTime() / 1_000_000 - at).coerceAtLeast(0L)
+    }
+
     override fun onAudioStarted(id: AudioStreamId, format: AudioFormat, firstSample: Int) {
         // NOTE (2026-10-18, do NOT reintroduce): the iPhone's media stream used to be dropped
         // outright when "music via car Bluetooth" was on, on the theory that iOS would then play
@@ -944,7 +962,10 @@ private class VideoDecoder(
     private var failureReports = 0
     private val referenceChain = VideoReferenceChain()
     private var lastKeyFrameRequestNs = 0L
-    private val stats = VideoStats(statsLabel ?: if (streamType == 110) "" else " stream=$streamType")
+    private val stats = VideoStats(
+        statsLabel ?: if (streamType == 110) "" else " stream=$streamType",
+        streamType = streamType,
+    )
     private val thread = Thread(::run, "carplay-video").apply { isDaemon = true; start() }
 
     fun configure(codec: VideoCodec, codecData: ByteArray) {

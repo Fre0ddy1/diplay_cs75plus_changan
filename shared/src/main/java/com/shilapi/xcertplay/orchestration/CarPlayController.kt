@@ -586,6 +586,25 @@ class CarPlayController(
         }
     }
 
+    /**
+     * Re-asks the iPhone to draw the cluster UI, even when nothing about the request changed.
+     *
+     * [applyClusterUi] deliberately de-duplicates: it only sends a command when the wanted state
+     * differs from the last one. That is right for normal operation, but iOS sometimes stops
+     * repainting the alt screen after a navigation session ends - the frames keep coming and the
+     * picture stays frozen - and the only way out is to ask again. Sends showUI plus a keyframe.
+     */
+    fun refreshClusterUi(reason: String): Boolean {
+        val session = activeSession ?: return false
+        if (session.clusterStream <= 0) return false
+        val sent = session.setClusterUiShown(true)
+        debugLog("Cluster UI refresh ($reason) sent=$sent")
+        // The state is unchanged, so keep the de-duplicating bookkeeping consistent with what we
+        // just asked the phone to draw.
+        if (sent) synchronized(clusterUiLock) { clusterUiShown = true }
+        return sent
+    }
+
     /** Waits for USB, iAP2, MFi and VPN teardown; intended for a non-main lifecycle thread. */
     fun awaitClosed(timeoutMillis: Long): Boolean {
         require(timeoutMillis >= 0) { "timeoutMillis must not be negative" }
