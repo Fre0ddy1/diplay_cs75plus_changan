@@ -195,5 +195,13 @@ object BydNavigationOutputs {
         synchronized(overlayLock) { overlayRoute.clear() }
         refreshTurnOverlay()
         refreshLaneOverlay()
+        // The song belongs to the session that just ended. Keeping it would make the next
+        // session's card show the last track until the iPhone's StartNowPlayingUpdates response
+        // arrives - the field report after a settings round trip: new audio, old lyrics.
+        synchronized(songState) {
+            songState.clear()
+            publishedSong = null
+        }
+        songListener?.invoke(null)
     }
 }
