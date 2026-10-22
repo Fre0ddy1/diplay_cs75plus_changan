@@ -905,10 +905,6 @@ class DiPlayActivity : ComponentActivity() {
                         AirPlayPersistence.loadClusterCardX(this, "song"),
                         AirPlayPersistence.loadClusterCardY(this, "song"),
                     ),
-                    "album" to Pair(
-                        AirPlayPersistence.loadClusterCardX(this, "album"),
-                        AirPlayPersistence.loadClusterCardY(this, "album"),
-                    ),
                 )
                 val positionPreview = CardPositionPreviewView(this).apply {
                     setTurnOffset(
@@ -1056,14 +1052,35 @@ class DiPlayActivity : ComponentActivity() {
                         )
                     })
                 }
-                // CarPlay sends album art with the now-playing item. It is its own card, so it takes
-                // the same show/hide, size and position controls as every other card instead of
-                // being stuck inside the song text capsule.
-                addCardOffsetInputs(
-                    getString(R.string.cluster_card_album_title),
-                    "album",
-                    R.string.card_scale_album,
-                ) { id, x, y -> positionPreview.setOffset(id, x, y) }
+                // The lyrics card = song name + artist + album cover in one capsule. The cover's
+                // side decides where the text goes (it always takes the opposite side).
+                cardGroup(card, getString(R.string.cluster_card_song_show_artwork)) { group ->
+                    toggle(group, getString(R.string.cluster_card_song_show_artwork),
+                        getString(R.string.cluster_card_song_show_artwork_desc),
+                        AirPlayPersistence.loadClusterSongShowArtwork(this)) { show ->
+                        AirPlayPersistence.saveClusterSongShowArtwork(this, show)
+                    }
+                    choice(
+                        group,
+                        getString(R.string.cluster_card_song_artwork_side),
+                        listOf(
+                            getString(R.string.song_art_top),
+                            getString(R.string.song_art_bottom),
+                            getString(R.string.song_art_left),
+                            getString(R.string.song_art_right),
+                        ),
+                        AirPlayPersistence.loadClusterSongArtworkSide(this),
+                    ) { index ->
+                        AirPlayPersistence.saveClusterSongArtworkSide(this, index)
+                    }
+                    percentRow(
+                        group,
+                        getString(R.string.cluster_card_song_artwork_scale),
+                        AirPlayPersistence.loadClusterSongArtworkScale(this),
+                    ) { percent ->
+                        AirPlayPersistence.saveClusterSongArtworkScale(this, percent)
+                    }
+                }
                 // Background strength of the one card that can sit over the map: the driver may want
                 // it to nearly vanish. Only the fill fades, the bevel stays.
                 cardGroup(card, getString(R.string.cluster_card_song_alpha)) { group ->

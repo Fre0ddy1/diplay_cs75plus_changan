@@ -111,6 +111,9 @@ object AirPlayPersistence {
     private const val KEY_CLUSTER_CONTENT = "cluster_content"
     private const val KEY_CLUSTER_SONG_MAX_CHARS = "cluster_song_max_chars"
     private const val KEY_CLUSTER_SONG_CARD_ALPHA = "cluster_song_card_alpha"
+    private const val KEY_CLUSTER_SONG_SHOW_ARTWORK = "cluster_song_show_artwork"
+    private const val KEY_CLUSTER_SONG_ARTWORK_SIDE = "cluster_song_artwork_side"
+    private const val KEY_CLUSTER_SONG_ARTWORK_SCALE = "cluster_song_artwork_scale"
     /** Sixty characters fits roughly half the panel at the default card scale. */
     const val DEFAULT_SONG_MAX_CHARS = 60
     const val MIN_SONG_MAX_CHARS = 10
@@ -984,6 +987,45 @@ object AirPlayPersistence {
     fun saveClusterSongCardAlpha(context: Context, percent: Int) {
         context.getSharedPreferences(PREFS, Context.MODE_PRIVATE).edit()
             .putInt(KEY_CLUSTER_SONG_CARD_ALPHA, percent.coerceIn(0, 100)).apply()
+        overlaySettingsListener?.invoke()
+    }
+
+    /** Whether the lyrics card includes the album art CarPlay sends with the item. */
+    fun loadClusterSongShowArtwork(context: Context): Boolean =
+        context.getSharedPreferences(PREFS, Context.MODE_PRIVATE)
+            .getBoolean(KEY_CLUSTER_SONG_SHOW_ARTWORK, true)
+
+    fun saveClusterSongShowArtwork(context: Context, show: Boolean) {
+        context.getSharedPreferences(PREFS, Context.MODE_PRIVATE).edit()
+            .putBoolean(KEY_CLUSTER_SONG_SHOW_ARTWORK, show).apply()
+        overlaySettingsListener?.invoke()
+    }
+
+    /**
+     * Which side of the text the artwork takes: 0 above, 1 below, 2 left, 3 right.
+     * The text always sits on the opposite side, so choosing a corner of the panel also decides
+     * whether the words end up above or beside the cover.
+     */
+    fun loadClusterSongArtworkSide(context: Context): Int =
+        context.getSharedPreferences(PREFS, Context.MODE_PRIVATE)
+            .getInt(KEY_CLUSTER_SONG_ARTWORK_SIDE, 3)
+            .coerceIn(0, 3)
+
+    fun saveClusterSongArtworkSide(context: Context, side: Int) {
+        context.getSharedPreferences(PREFS, Context.MODE_PRIVATE).edit()
+            .putInt(KEY_CLUSTER_SONG_ARTWORK_SIDE, side.coerceIn(0, 3)).apply()
+        overlaySettingsListener?.invoke()
+    }
+
+    /** Artwork size as a percentage of the card's text block, 10-100. */
+    fun loadClusterSongArtworkScale(context: Context): Int =
+        context.getSharedPreferences(PREFS, Context.MODE_PRIVATE)
+            .getInt(KEY_CLUSTER_SONG_ARTWORK_SCALE, 90)
+            .coerceIn(10, 100)
+
+    fun saveClusterSongArtworkScale(context: Context, percent: Int) {
+        context.getSharedPreferences(PREFS, Context.MODE_PRIVATE).edit()
+            .putInt(KEY_CLUSTER_SONG_ARTWORK_SCALE, percent.coerceIn(10, 100)).apply()
         overlaySettingsListener?.invoke()
     }
 

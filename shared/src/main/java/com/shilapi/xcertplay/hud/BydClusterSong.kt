@@ -10,8 +10,23 @@ import com.shilapi.xcertplay.iap2.wire.Iap2Frame
 import java.lang.reflect.InvocationTargetException
 import java.util.concurrent.Executors
 
-/** What the dashboard's music card shows. */
-data class ClusterSong(val text: String, val playing: Boolean)
+/**
+ * What the dashboard's music card shows.
+ *
+ * [text] is the single-line "title — artist" form used by the plain card and by the tests;
+ * [title] and [artist] are the same information split apart for the two-line card.
+ */
+data class ClusterSong(
+    val text: String,
+    val playing: Boolean,
+    val title: String = text.substringBefore(SEPARATOR).trim(),
+    val artist: String = text.substringAfter(SEPARATOR, "").trim(),
+) {
+    companion object {
+        /** Must match the joiner inside [text] so the split above stays exact. */
+        const val SEPARATOR = " — "
+    }
+}
 
 /**
  * The CarPlay song for the dashboard, from iAP2 NowPlayingUpdate (0x5001): title (1) and artist (12)

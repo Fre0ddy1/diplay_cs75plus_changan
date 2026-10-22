@@ -52,8 +52,6 @@ internal class ClusterMapPresentation(
     private var roadNameCardView: ClusterRoadNameView? = null
     /** Song now playing, top centre. Title/artist only - the protocol carries no lyrics. */
     private var songView: ClusterSongView? = null
-    /** Album art, placed independently of the song text card. */
-    private var albumArtView: ClusterAlbumArtView? = null
     private var genericTextureView: TextureView? = null
     private var navTextureView: TextureView? = null
     private val projectionSize: Point = sizeOf(display)
@@ -292,10 +290,7 @@ internal class ClusterMapPresentation(
         root.addView(etaCardView, FrameLayout.LayoutParams(-1, -1))
         roadNameCardView = ClusterRoadNameView(context).apply { visibility = View.GONE }
         root.addView(roadNameCardView, FrameLayout.LayoutParams(-1, -1))
-        // Added last so they draw above the guidance cards. The album art is its own card, so the
-        // driver places it independently of the song text capsule.
-        albumArtView = ClusterAlbumArtView(context).apply { visibility = View.GONE }
-        root.addView(albumArtView, FrameLayout.LayoutParams(-1, -1))
+        // Added last so it draws above the guidance cards.
         songView = ClusterSongView(context).apply { visibility = View.GONE }
         root.addView(songView, FrameLayout.LayoutParams(-1, -1))
         setContentView(root)
@@ -364,7 +359,6 @@ internal class ClusterMapPresentation(
         roadNameCardView?.notifyPositionChanged()
         // Deliberately outside the nav-only group: the mirror mode shows it as well.
         songView?.notifyPositionChanged()
-        albumArtView?.notifyPositionChanged()
         // Reload the show/hide switches, then a saved switch change re-applies visibility right away.
         reloadCardVisibilityCache()
         if (navOnlyCards) applyCardsVisibility()
@@ -375,15 +369,14 @@ internal class ClusterMapPresentation(
         songView?.setSong(song)
     }
 
-    /** Album art for the current item; its own card, so it can be placed independently. */
+    /** Album art for the current item; the lyrics card lays it out beside or above the text. */
     fun setSongArtwork(artwork: android.graphics.Bitmap?) {
-        albumArtView?.setArtwork(artwork)
+        songView?.setArtwork(artwork)
     }
 
-    /** A song-card setting changed; the views drop their caches on the next draw. */
+    /** A song-card setting changed; the view drops its caches on the next draw. */
     fun notifySongSettingsChanged() {
         songView?.notifyPositionChanged()
-        albumArtView?.notifyPositionChanged()
     }
 
     fun setTurnCardGuidance(guidance: ClusterTurnGuidance?) {
