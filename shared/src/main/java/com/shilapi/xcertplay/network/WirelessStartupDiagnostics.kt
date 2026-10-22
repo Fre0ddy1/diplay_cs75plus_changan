@@ -66,6 +66,21 @@ internal class WirelessStartupDiagnostics(
     }
     @Synchronized fun sessionActive() { sessionActive = true }
 
+    /**
+     * Milliseconds since CarPlay was asked to start while no AirPlay connection has arrived, or
+     * null when the link is up or was never requested.
+     *
+     * Read by the controller's stall watchdog. Everything else here only observes; this is the one
+     * value another component acts on, because "the phone was told to connect and never did" is
+     * invisible to the rest of the stack - the hotspot, iAP2 and the Wi-Fi handover all look
+     * healthy while the driver waits (field 2026-10-22).
+     */
+    @Synchronized fun stallAgeMs(): Long? {
+        if (closed.get() || tcpAccepted > 0 || sessionActive) return null
+        val started = firstStartRequestNs ?: return null
+        return elapsedMillis(started)
+    }
+
     @Synchronized fun summary(): String {
         val waitingFor = when {
             sessionActive -> "none"

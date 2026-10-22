@@ -238,6 +238,8 @@ class CarPlayController(
     @Volatile private var hotspot: WirelessHotspotManager? = null
     @Volatile private var bonjour: CarPlayBonjour? = null
     @Volatile private var wirelessDiagnostics: WirelessStartupDiagnostics? = null
+    /** Stall-driven wireless restarts in the current attempt; see startWirelessStallWatchdog. */
+    private val wirelessStallRestarts = java.util.concurrent.atomic.AtomicInteger()
     @Volatile private var bluetoothSocket: BluetoothSocket? = null
     @Volatile private var bluetoothStream: BluetoothRfcommDuplexStream? = null
     @Volatile private var wirelessTunnelChannel: Iap2Session? = null
@@ -972,6 +974,9 @@ class CarPlayController(
             debugLog("location provider prewarmed=$started")
         }
         if (config.transport == CarPlayTransport.WIRELESS) {
+            // A fresh connection attempt, so the stall budget starts over. Deliberately not inside
+            // startWireless(), which the stall recovery also calls.
+            wirelessStallRestarts.set(0)
             startWireless()
         } else {
             startIphone()
@@ -992,7 +997,11 @@ class CarPlayController(
         }
     }
 
-    private fun restartWireless() {
+    private fun restartWireless(fromStallRecovery: Boolean = false) {
+        // A stall-driven restart must NOT reset the counter, or each new bring-up would start
+        // counting from zero again and the app would restart the radio forever. Any other reason to
+        // restart (a network change, a manual reconnect) is a fresh situation and does reset it.
+        if (!fromStallRecovery) wirelessStallRestarts.set(0)
         wirelessGeneration.incrementAndGet()
         Thread(
             {
@@ -1004,6 +1013,50 @@ class CarPlayController(
             isDaemon = true
             start()
         }
+    }
+
+    /**
+     * Watches for the one failure the rest of this stack cannot see: the iPhone was told to start
+     * CarPlay and simply never opened the AirPlay connection.
+     *
+     * Everything looks healthy from here - the hotspot is up, iAP2 authenticated, the Wi-Fi
+     * configuration was handed over twice - and the startup diagnostics only *log* "wireless stall"
+     * while the driver waits indefinitely (field 2026-10-22: tcpAccepted=0 and zero packets received
+     * on p2p0 for the whole attempt, and only a manual app restart helped). The retained P2P group
+     * is the usual suspect, since iOS can still be holding credentials or a channel for the old one.
+     *
+     * After [STALL_RESTART_MS] the wireless bring-up is restarted, which removes that group and
+     * builds a fresh one. Bounded by [MAX_STALL_RESTARTS] so a phone that is simply switched off
+     * cannot make the app restart forever.
+     */
+    private fun startWirelessStallWatchdog(generation: Int, diagnostics: WirelessStartupDiagnostics) {
+        Thread({
+            while (!closed && !isStaleWirelessRun(generation)) {
+                try {
+                    Thread.sleep(STALL_POLL_MS)
+                } catch (_: InterruptedException) {
+                    return@Thread
+                }
+                val ageMs = diagnostics.stallAgeMs() ?: continue
+                if (ageMs < STALL_RESTART_MS) continue
+                // The counter lives on the controller: this watchdog is replaced by every restart,
+                // so a local one would never reach the limit.
+                val attempt = wirelessStallRestarts.incrementAndGet()
+                if (attempt > MAX_STALL_RESTARTS) {
+                    debugLog(
+                        "wireless stall recovery: still no AirPlay connection $ageMs ms after the " +
+                            "start request, giving up after $MAX_STALL_RESTARTS restarts",
+                    )
+                    return@Thread
+                }
+                debugLog(
+                    "wireless stall recovery: $ageMs ms since the start request with no AirPlay " +
+                        "connection, restarting the wireless bring-up (attempt $attempt)",
+                )
+                restartWireless(fromStallRecovery = true)
+                return@Thread
+            }
+        }, "diplay-wireless-stall-watchdog").apply { isDaemon = true; start() }
     }
 
     private fun runWireless(generation: Int) {
@@ -1072,6 +1125,7 @@ class CarPlayController(
                 log = { message -> if (!isStaleWirelessRun(generation)) debugLog(message) },
             )
             wirelessDiagnostics = diagnostics
+            startWirelessStallWatchdog(generation, diagnostics)
             onStatus(
                 CarPlayStatus.HotspotReady(
                     ssid = hotspotInfo.ssid,
@@ -2531,6 +2585,13 @@ class CarPlayController(
         private const val MAXIMUM_REENUMERATION_ATTEMPTS = 2
         private const val EXECUTOR_CLOSE_TIMEOUT_MILLIS = 2_000L
         private const val ADAPTER_ADDRESS_PLACEHOLDER = "02:00:00:00:00:00"
+
+        /** How often the stall watchdog asks whether an AirPlay connection ever arrived. */
+        private const val STALL_POLL_MS = 5_000L
+        /** Long enough for a slow phone to join, short enough to retry inside one attempt. */
+        private const val STALL_RESTART_MS = 15_000L
+        /** Restarting the wireless bring-up is disruptive, so it is bounded. */
+        private const val MAX_STALL_RESTARTS = 3
         private val BLUETOOTH_ADDRESS = Regex("^[0-9A-Fa-f]{2}(:[0-9A-Fa-f]{2}){5}$")
     }
 }
