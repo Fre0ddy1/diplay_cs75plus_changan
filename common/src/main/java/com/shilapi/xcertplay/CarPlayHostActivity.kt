@@ -5640,9 +5640,12 @@ class CarPlayHostActivity : ComponentActivity() {
             var lastSentAtMs = 0L
             var sentCount = 0
             while (!shuttingDown.get() && !isFinishing && !isDestroyed) {
-                // Read-only: incall's own report, no request of any kind goes out here.
+                // 1) Sample the channel. Read-only: incall's own report, nothing goes out here.
                 val open = runCatching { InCallClusterBridge.reportsProjecting() }.getOrDefault(false)
                 watcherChannelOpen = open
+
+                // 2) Sample the dashboard display. Runs every period regardless of the channel
+                //    state, and never waits on anything.
                 if (watcherDisplay == null) {
                     runCatching { ClusterMapPresentation.findDisplay(this) }.getOrNull()?.let { display ->
                         watcherDisplay = display
@@ -5654,22 +5657,27 @@ class CarPlayHostActivity : ComponentActivity() {
                         )
                     }
                 }
-                if (!open) {
-                    val now = SystemClock.elapsedRealtime()
-                    // First send waits from start-up; every later one waits from the previous send.
-                    val waitingSinceMs = if (lastSentAtMs == 0L) startedAtMs else lastSentAtMs
-                    if (now - waitingSinceMs >= WATCHER_READY_WAIT_MS) {
-                        lastSentAtMs = now
-                        sentCount++
-                        clusterPrewarmAtMs = now
-                        appendLog(
-                            "Cluster watcher: 投屏通道未就绪（第 ${sentCount} 次）" +
-                                "距上次 ${(now - waitingSinceMs)}ms，发完整激活序列",
-                        )
-                        mainHandler.post {
-                            if (!shuttingDown.get() && !isFinishing && !isDestroyed) {
-                                InCallClusterBridge.openProjection(this)
-                            }
+
+                // 3) Decide on the clock alone, outside the state branch: the loop must never sit
+                //    in a long wait, so every period runs all three steps and the sleep below stays
+                //    a fixed WATCHER_PERIOD_MS.
+                val now = SystemClock.elapsedRealtime()
+                // First send waits from start-up; every later one waits from the previous send.
+                val waitingSinceMs = if (lastSentAtMs == 0L) startedAtMs else lastSentAtMs
+                val due = now - waitingSinceMs >= WATCHER_READY_WAIT_MS
+
+                // 4) Not ready and the throttle expired: send, and only then.
+                if (!open && due) {
+                    lastSentAtMs = now
+                    sentCount++
+                    clusterPrewarmAtMs = now
+                    appendLog(
+                        "Cluster watcher: 投屏通道未就绪（第 ${sentCount} 次）" +
+                            "距上次 ${(now - waitingSinceMs)}ms，发完整激活序列",
+                    )
+                    mainHandler.post {
+                        if (!shuttingDown.get() && !isFinishing && !isDestroyed) {
+                            InCallClusterBridge.openProjection(this)
                         }
                     }
                 }
