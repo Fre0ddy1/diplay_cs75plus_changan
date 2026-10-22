@@ -114,6 +114,7 @@ object AirPlayPersistence {
     private const val KEY_CLUSTER_SONG_SHOW_ARTWORK = "cluster_song_show_artwork"
     private const val KEY_CLUSTER_SONG_ARTWORK_SIDE = "cluster_song_artwork_side"
     private const val KEY_CLUSTER_SONG_ARTWORK_SCALE = "cluster_song_artwork_scale"
+    private const val KEY_CLUSTER_SONG_FONT_SCALE = "cluster_song_font_scale"
     /** Ten characters: the driver asked for a short card that never crowds the dashboard. */
     const val DEFAULT_SONG_MAX_CHARS = 10
     const val MIN_SONG_MAX_CHARS = 10
@@ -1029,6 +1030,22 @@ object AirPlayPersistence {
     fun saveClusterSongArtworkScale(context: Context, percent: Int) {
         context.getSharedPreferences(PREFS, Context.MODE_PRIVATE).edit()
             .putInt(KEY_CLUSTER_SONG_ARTWORK_SCALE, percent.coerceIn(10, 200)).apply()
+        overlaySettingsListener?.invoke()
+    }
+
+    /**
+     * Lyrics-card text size, as a percentage of the size derived from the panel (50-200, default
+     * 100). The card also shrinks the text automatically when the lines would not fit the space the
+     * artwork leaves, so this is a preference rather than a hard size.
+     */
+    fun loadClusterSongFontScale(context: Context): Int =
+        context.getSharedPreferences(PREFS, Context.MODE_PRIVATE)
+            .getInt(KEY_CLUSTER_SONG_FONT_SCALE, 100)
+            .coerceIn(50, 200)
+
+    fun saveClusterSongFontScale(context: Context, percent: Int) {
+        context.getSharedPreferences(PREFS, Context.MODE_PRIVATE).edit()
+            .putInt(KEY_CLUSTER_SONG_FONT_SCALE, percent.coerceIn(50, 200)).apply()
         overlaySettingsListener?.invoke()
     }
 

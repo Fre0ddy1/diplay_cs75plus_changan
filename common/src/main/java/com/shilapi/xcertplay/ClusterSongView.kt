@@ -12,18 +12,19 @@ import android.view.View
 import com.shilapi.xcertplay.hud.ClusterSong
 
 /**
- * The lyrics card: song name, artist and the album cover, in one capsule.
+ * The lyrics card: song name, lyric line and artist in one capsule, with the album cover on a side
+ * the driver picks.
  *
- * Layout is driven by the artwork side: 0 above the text, 1 below, 2 left, 3 right. The text takes
- * the opposite side automatically, so picking where the cover sits also decides where the words go.
- * The two text lines are title and artist; CarPlay's iAP2 NowPlayingUpdate (0x5001) carries title
- * (1) and artist (12) and has no lyric attribute at all, so there is no third line to draw.
+ * Three text slots, always in the same places so the block is stable from song to song:
+ *   slot 1  song name
+ *   slot 2  lyric line - CarPlay's iAP2 NowPlayingUpdate (0x5001) carries only title (1) and
+ *           artist (12) and has no lyric attribute at all, so this slot stays empty for now
+ *   slot 3  artist, always
+ * A song with no artist collapses to a single line in slot 1 rather than leaving two blank rows.
  *
- * Each line is cut to the configured character count with no ellipsis - the driver asked for the
- * text to simply stop, since "..." made long titles look like errors.
- *
- * Positioned and scaled like the guidance cards (absolute canvas coordinates plus a percentage).
- * It is not part of the nav-only group: the whole-screen mirror shows it too.
+ * Alignment follows the cover: side by side, the text block is vertically centred against the
+ * cover; stacked, it is centred horizontally. Each line is hard-cut at the configured character
+ * count with no ellipsis, and the whole block shrinks to fit whatever space the cover leaves.
  */
 internal class ClusterSongView(context: Context) : View(context) {
     private val rect = RectF()
@@ -40,16 +41,18 @@ internal class ClusterSongView(context: Context) : View(context) {
     private var posY = Float.NaN
     private var overlayScale = Float.NaN
     private var lastLine1 = ""
-    private var lastLine2 = ""
+    private var lastLine3 = ""
     private var lastLineH = 0f
+    private var lastFontScale = 0
     private var measured1 = 0f
-    private var measured2 = 0f
+    private var measured3 = 0f
     private var maxChars = 0
     private var settingsAtMs = 0L
     private var cardAlpha = 100
     private var showArtwork = true
     private var artworkSide = 3
-    private var artworkScale = 90
+    private var artworkScale = 100
+    private var fontScale = 100
 
     fun setSong(next: ClusterSong?) {
         val wanted = if (AirPlayPersistence.loadClusterCardVisible(context, CARD)) next else null
@@ -99,49 +102,59 @@ internal class ClusterSongView(context: Context) : View(context) {
 
         val unit = minOf(width, height).coerceAtLeast(1).toFloat() * overlayScale
         val lineH = unit * 0.075f
-        textPaint.textSize = lineH * 0.62f
-        artistPaint.textSize = lineH * 0.5f
+        val scale = fontScale / 100f
+        textPaint.textSize = lineH * 0.62f * scale
+        artistPaint.textSize = lineH * 0.5f * scale
 
         val line1 = cut(next.title)
-        val line2 = if (next.artist.isEmpty()) "" else cut(next.artist)
-        // Cache on the layout size, not on one paint's text size: the artist paint changes with it
-        // but was not part of the old key, so a panel resize could keep a stale width and let the
-        // text spill out of the capsule.
-        if (line1 != lastLine1 || line2 != lastLine2 || lineH != lastLineH) {
+        val line3 = cut(next.artist)
+        if (line1 != lastLine1 || line3 != lastLine3 || lineH != lastLineH || fontScale != lastFontScale) {
             lastLine1 = line1
-            lastLine2 = line2
+            lastLine3 = line3
             lastLineH = lineH
+            lastFontScale = fontScale
             measured1 = textPaint.measureText(line1)
-            measured2 = if (line2.isEmpty()) 0f else artistPaint.measureText(line2)
+            measured3 = if (line3.isEmpty()) 0f else artistPaint.measureText(line3)
         }
 
-        // A little more breathing room than before: with the width cached too small the text used to
-        // press right against the capsule edge (field 2026-10-22).
         val padH = lineH * 0.72f
         val padV = lineH * 0.34f
-        val textW = maxOf(measured1, measured2)
-        val textH = if (line2.isEmpty()) lineH else lineH * 2f
 
         val art = artwork?.takeIf { showArtwork && !it.isRecycled }
-        val artSize = if (art != null) textH * (artworkScale / 100f) else 0f
+        val artSize = if (art != null) lineH * 3f * (artworkScale / 100f) else 0f
         val gap = if (art != null) lineH * 0.3f else 0f
+        val sideBySide = artworkSide == 2 || artworkSide == 3
 
-        // Total capsule size follows the chosen side; the text always takes the opposite side.
+        // Text size follows the space the cover leaves: the panel minus the cover and the padding is
+        // what the words may occupy, so a large cover gets smaller text instead of an oversized card.
+        val available = (width - artSize - gap - padH * 2f).coerceAtLeast(lineH * 3f)
+        var textW = maxOf(measured1, measured3)
+        if (textW > available && textW > 0f) {
+            val fit = available / textW
+            textPaint.textSize *= fit
+            artistPaint.textSize *= fit
+            measured1 = textPaint.measureText(line1)
+            measured3 = if (line3.isEmpty()) 0f else artistPaint.measureText(line3)
+            textW = maxOf(measured1, measured3)
+        }
+
+        val lines = if (line3.isEmpty()) 1 else 3
+        val textH = lineH * lines
+
         val w: Float
         val h: Float
-        if (artworkSide == 0 || artworkSide == 1) {
-            w = maxOf(textW, artSize.coerceAtLeast(lineH)) + padH * 2f
-            h = artSize + gap + textH + padV * 2f
-        } else {
+        if (sideBySide) {
             w = artSize + gap + textW + padH * 2f
             h = maxOf(artSize, textH) + padV * 2f
+        } else {
+            w = maxOf(textW, artSize.coerceAtLeast(lineH)) + padH * 2f
+            h = artSize + gap + textH + padV * 2f
         }
 
         val left = posX.coerceIn(0f, (width - w).coerceAtLeast(0f))
         val top = posY.coerceIn(0f, (height - h).coerceAtLeast(0f))
         rect.set(left, top, left + w, top + h)
 
-        // Background strength: 100 % is opaque black, 0 % leaves only text and cover.
         val cardFill = Color.argb(
             (255 * cardAlpha.coerceIn(0, 100) / 100f).toInt().coerceIn(0, 255),
             0, 0, 0,
@@ -157,34 +170,30 @@ internal class ClusterSongView(context: Context) : View(context) {
         val artTop: Float
         val textLeft: Float
         val textTop: Float
-        // The text block and the cover are top-aligned whenever they sit side by side: centring the
-        // shorter one left the words floating below the cover's top edge (field 2026-10-22). In the
-        // stacked layouts the text is centred horizontally instead, which is what looks right when
-        // the cover is above or below it.
         when (artworkSide) {
-            0 -> { // cover above, text below
+            0 -> { // cover above: text centred horizontally
                 artLeft = contentLeft + (contentW - artSize) / 2f
                 artTop = contentTop
                 textLeft = contentLeft + (contentW - textW) / 2f
                 textTop = contentTop + artSize + gap
             }
-            1 -> { // cover below, text above
+            1 -> { // cover below: text centred horizontally
                 textLeft = contentLeft + (contentW - textW) / 2f
                 textTop = contentTop
                 artLeft = contentLeft + (contentW - artSize) / 2f
                 artTop = contentTop + textH + gap
             }
-            2 -> { // cover left, text right - both start at the top
+            2 -> { // cover left: text centred vertically against it
                 artLeft = contentLeft
-                artTop = contentTop
+                artTop = contentTop + (contentH - artSize) / 2f
                 textLeft = contentLeft + artSize + gap
-                textTop = contentTop
+                textTop = contentTop + (contentH - textH) / 2f
             }
-            else -> { // cover right, text left - both start at the top
+            else -> { // cover right: text centred vertically against it
                 textLeft = contentLeft
-                textTop = contentTop
+                textTop = contentTop + (contentH - textH) / 2f
                 artLeft = contentLeft + contentW - artSize
-                artTop = contentTop
+                artTop = contentTop + (contentH - artSize) / 2f
             }
         }
 
@@ -202,13 +211,15 @@ internal class ClusterSongView(context: Context) : View(context) {
             canvas.restoreToCount(saved)
         }
 
+        // Slot 1 always holds the song name; slot 3 holds the artist when there is one. Slot 2 is
+        // left for a lyric line the protocol does not currently provide.
         val m1 = textPaint.fontMetrics
         val baseline1 = textTop - (m1.ascent + m1.descent) / 2f
         canvas.drawText(line1, textLeft, baseline1, textPaint)
-        if (line2.isNotEmpty()) {
-            val m2 = artistPaint.fontMetrics
-            val baseline2 = textTop + lineH - (m2.ascent + m2.descent) / 2f
-            canvas.drawText(line2, textLeft, baseline2, artistPaint)
+        if (line3.isNotEmpty()) {
+            val m3 = artistPaint.fontMetrics
+            val baseline3 = textTop + lineH * 2f - (m3.ascent + m3.descent) / 2f
+            canvas.drawText(line3, textLeft, baseline3, artistPaint)
         }
     }
 
@@ -227,6 +238,7 @@ internal class ClusterSongView(context: Context) : View(context) {
         showArtwork = AirPlayPersistence.loadClusterSongShowArtwork(context)
         artworkSide = AirPlayPersistence.loadClusterSongArtworkSide(context)
         artworkScale = AirPlayPersistence.loadClusterSongArtworkScale(context)
+        fontScale = AirPlayPersistence.loadClusterSongFontScale(context)
     }
 
     private companion object {

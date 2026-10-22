@@ -392,6 +392,8 @@
     <string name="cluster_card_song_show_artwork_desc">Off shows only the song name and artist.</string>
     <string name="cluster_card_song_artwork_side">Artwork position</string>
     <string name="cluster_card_song_artwork_scale">Artwork size</string>
+    <string name="cluster_card_song_font_scale">Text size</string>
+    <string name="cluster_card_song_font_scale_desc">Long lines shrink automatically to fit the free space.</string>
     <string name="song_art_top">Above (text below)</string>
     <string name="song_art_bottom">Below (text above)</string>
     <string name="song_art_left">Left (text right)</string>

@@ -389,6 +389,8 @@
     <string name="cluster_card_song_show_artwork_desc">关闭后只显示歌曲名称和歌手。</string>
     <string name="cluster_card_song_artwork_side">专辑封面位置</string>
     <string name="cluster_card_song_artwork_scale">专辑封面大小</string>
+    <string name="cluster_card_song_font_scale">文字大小</string>
+    <string name="cluster_card_song_font_scale_desc">文字过长时会自动缩小以放进空白区域。</string>
     <string name="song_art_top">上方（文字在下）</string>
     <string name="song_art_bottom">下方（文字在上）</string>
     <string name="song_art_left">左侧（文字在右）</string>

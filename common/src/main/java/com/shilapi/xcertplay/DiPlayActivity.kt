@@ -1068,6 +1068,18 @@ class DiPlayActivity : ComponentActivity() {
                     ) { percent ->
                         AirPlayPersistence.saveClusterSongArtworkScale(this, percent)
                     }
+                    group.addView(label(getString(R.string.cluster_card_song_font_scale_desc), 13, MUTED).apply {
+                        setPadding(0, dp(8), 0, 0)
+                    })
+                    percentRow(
+                        group,
+                        getString(R.string.cluster_card_song_font_scale),
+                        AirPlayPersistence.loadClusterSongFontScale(this),
+                        min = 50,
+                        max = 200,
+                    ) { percent ->
+                        AirPlayPersistence.saveClusterSongFontScale(this, percent)
+                    }
                 }
                 // Background strength of the one card that can sit over the map: the driver may want
                 // it to nearly vanish. Only the fill fades, the bevel stays.
