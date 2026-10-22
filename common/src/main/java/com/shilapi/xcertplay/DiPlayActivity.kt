@@ -906,14 +906,6 @@ class DiPlayActivity : ComponentActivity() {
                         AirPlayPersistence.loadClusterCardY(this, "song"),
                     ),
                 )
-                val positionPreview = CardPositionPreviewView(this).apply {
-                    setTurnOffset(
-                        AirPlayPersistence.loadClusterTurnCardX(this@DiPlayActivity),
-                        AirPlayPersistence.loadClusterTurnCardY(this@DiPlayActivity),
-                    )
-                }
-                card.addView(positionPreview, LinearLayout.LayoutParams(ViewGroup.LayoutParams.MATCH_PARENT, dp(170)).apply { topMargin = dp(10) })
-                card.addView(label(getString(R.string.cluster_card_position_preview), 14, MUTED))
                 // The turn card is drawn by us in every cluster content mode, so its settings must
                 // stay reachable whatever "仪表盘画面来源" is set to. Only the upstream BYD path still
                 // ties the card to the content choice.
@@ -941,7 +933,6 @@ class DiPlayActivity : ComponentActivity() {
                             addView(numberInput(pendingXY["turn"]?.first ?: 0, 1920) { v ->
                                 val y = pendingXY["turn"]?.second ?: 0
                                 pendingXY["turn"] = Pair(v, y)
-                                positionPreview.setTurnOffset(v, y)
                                 // Persist on every keystroke: the dashboard is on another screen that is
                                 // visible at the same time as this one, so the driver watches the card move
                                 // while typing instead of applying and going over to look.
@@ -956,7 +947,6 @@ class DiPlayActivity : ComponentActivity() {
                             addView(numberInput(pendingXY["turn"]?.second ?: 0, 720) { v ->
                                 val x = pendingXY["turn"]?.first ?: 0
                                 pendingXY["turn"] = Pair(x, v)
-                                positionPreview.setTurnOffset(x, v)
                                 AirPlayPersistence.saveClusterTurnCardY(this@DiPlayActivity, v)
                             }, LinearLayout.LayoutParams(dp(150), dp(48)).apply { leftMargin = dp(8) })
                         })
@@ -966,7 +956,6 @@ class DiPlayActivity : ComponentActivity() {
                             // would be wiped by render(), which re-initialises pendingXY from disk.)
                             AirPlayPersistence.saveClusterTurnCardX(this, AirPlayPersistence.DEFAULT_CLUSTER_TURN_CARD_X_PX)
                             AirPlayPersistence.saveClusterTurnCardY(this, AirPlayPersistence.DEFAULT_CLUSTER_TURN_CARD_Y_PX)
-                            positionPreview.setTurnOffset(AirPlayPersistence.DEFAULT_CLUSTER_TURN_CARD_X_PX, AirPlayPersistence.DEFAULT_CLUSTER_TURN_CARD_Y_PX)
                             render()
                         }, matchButton(12, 56))
                         group.addView(label(getString(R.string.turn_card_overlay_note), 12, MUTED).apply {
@@ -983,9 +972,6 @@ class DiPlayActivity : ComponentActivity() {
                         })
                     }
                 }
-                card.addView(label(getString(R.string.cluster_card_position_preview_note), 12, MUTED_DIM).apply {
-                    setPadding(0, dp(10), 0, dp(2))
-                })
                 // Per-card absolute position (x, y), origin = top-left of the full dashboard
                 // panel (1920x720 canvas == display). Direct numeric input (not a slider -
                 // sliders are easy to mis-touch on the head unit). Typing only previews into
@@ -1027,9 +1013,9 @@ class DiPlayActivity : ComponentActivity() {
                         })
                     }
                 }
-                addCardOffsetInputs(getString(R.string.cluster_card_eta_title), "eta", R.string.card_scale_eta) { id, x, y -> positionPreview.setOffset(id, x, y) }
-                addCardOffsetInputs(getString(R.string.cluster_card_road_title), "road", R.string.card_scale_road) { id, x, y -> positionPreview.setOffset(id, x, y) }
-                addCardOffsetInputs(getString(R.string.cluster_card_song_title), "song", R.string.card_scale_song) { id, x, y -> positionPreview.setOffset(id, x, y) }
+                addCardOffsetInputs(getString(R.string.cluster_card_eta_title), "eta", R.string.card_scale_eta) { _, _, _ -> }
+                addCardOffsetInputs(getString(R.string.cluster_card_road_title), "road", R.string.card_scale_road) { _, _, _ -> }
+                addCardOffsetInputs(getString(R.string.cluster_card_song_title), "song", R.string.card_scale_song) { _, _, _ -> }
                 // The song card is sized by its text, so a long title stretches it across the panel.
                 // This caps the text instead, in characters, with "..." marking the cut.
                 cardGroup(card, getString(R.string.cluster_card_song_max_chars)) { group ->
@@ -1077,6 +1063,8 @@ class DiPlayActivity : ComponentActivity() {
                         group,
                         getString(R.string.cluster_card_song_artwork_scale),
                         AirPlayPersistence.loadClusterSongArtworkScale(this),
+                        min = 10,
+                        max = 200,
                     ) { percent ->
                         AirPlayPersistence.saveClusterSongArtworkScale(this, percent)
                     }
@@ -1676,10 +1664,17 @@ class DiPlayActivity : ComponentActivity() {
      * of guessing a number and applying it blind.
      */
     /**
-     * A labelled 0-100 % slider. Used by the song card's artwork size and background strength,
-     * where the exact number matters less than feeling the change.
+     * A labelled percentage slider over [min]..[max]. Used by the song card's background strength
+     * (0-100) and artwork size (10-200), where the exact number matters less than feeling it.
      */
-    private fun percentRow(parent: LinearLayout, title: String, current: Int, onChange: (Int) -> Unit) {
+    private fun percentRow(
+        parent: LinearLayout,
+        title: String,
+        current: Int,
+        min: Int = 0,
+        max: Int = 100,
+        onChange: (Int) -> Unit,
+    ) {
         val value = label("$current%", 15, ACCENT, true)
         if (parent.childCount > 0) parent.addView(divider())
         val head = LinearLayout(this).apply {
@@ -1690,18 +1685,19 @@ class DiPlayActivity : ComponentActivity() {
         head.addView(label(title, 15, TEXT, true), LinearLayout.LayoutParams(0, -2, 1f))
         head.addView(value)
         parent.addView(head, LinearLayout.LayoutParams(-1, -2))
+        val slots = (max - min).coerceAtLeast(1)
         parent.addView(SeekBar(this).apply {
-            max = 100
-            progress = current.coerceIn(0, 100)
+            this.max = slots
+            progress = (current - min).coerceIn(0, slots)
             setOnSeekBarChangeListener(object : SeekBar.OnSeekBarChangeListener {
                 override fun onProgressChanged(seek: SeekBar?, progress: Int, fromUser: Boolean) {
-                    value.text = "$progress%"
+                    value.text = "${min + progress.coerceIn(0, slots)}%"
                 }
 
                 override fun onStartTrackingTouch(seek: SeekBar?) = Unit
 
                 override fun onStopTrackingTouch(seek: SeekBar?) {
-                    onChange(seek?.progress ?: current)
+                    onChange(min + (seek?.progress ?: 0).coerceIn(0, slots))
                 }
             })
         }, LinearLayout.LayoutParams(-1, -2))

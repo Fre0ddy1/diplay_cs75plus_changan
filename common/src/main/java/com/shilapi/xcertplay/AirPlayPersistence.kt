@@ -1020,15 +1020,15 @@ object AirPlayPersistence {
         overlaySettingsListener?.invoke()
     }
 
-    /** Artwork size as a percentage of the card's text block, 10-100. */
+    /** Artwork size as a percentage of the card's text block, 10-200 (100 = text height). */
     fun loadClusterSongArtworkScale(context: Context): Int =
         context.getSharedPreferences(PREFS, Context.MODE_PRIVATE)
-            .getInt(KEY_CLUSTER_SONG_ARTWORK_SCALE, 90)
-            .coerceIn(10, 100)
+            .getInt(KEY_CLUSTER_SONG_ARTWORK_SCALE, 100)
+            .coerceIn(10, 200)
 
     fun saveClusterSongArtworkScale(context: Context, percent: Int) {
         context.getSharedPreferences(PREFS, Context.MODE_PRIVATE).edit()
-            .putInt(KEY_CLUSTER_SONG_ARTWORK_SCALE, percent.coerceIn(10, 100)).apply()
+            .putInt(KEY_CLUSTER_SONG_ARTWORK_SCALE, percent.coerceIn(10, 200)).apply()
         overlaySettingsListener?.invoke()
     }
 
