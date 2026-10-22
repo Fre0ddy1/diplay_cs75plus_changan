@@ -638,8 +638,23 @@ class CarPlayHostActivity : ComponentActivity() {
             freezeStreak = 0
             return
         }
-        // Anything at or above the "active" level proves the picture is being repainted.
-        if (kbps >= FREEZE_ACTIVE_KBPS || kbps > FREEZE_KBPS) {
+        // Siri / voice key: while the assistant is listening, and for a short window after it
+        // closes, the navigation stream can legitimately stay on one static picture. Treating that
+        // as a frozen session used to burn through the strike budget during a few Siri requests.
+        if (mediaSink.microphoneActive(10_000L)) {
+            freezeStreak = 0
+            return
+        }
+        // Full-rate repainting proves the session is alive. Clear the strike budget too: it exists
+        // to bound retries for one continuous freeze, not to accumulate static Siri screens across
+        // a whole drive until an unrelated third one restarts CarPlay.
+        if (kbps >= FREEZE_ACTIVE_KBPS) {
+            freezeStreak = 0
+            freezeStrikes = 0
+            return
+        }
+        // Low but not frozen: the picture still changes, so this is not part of a freeze streak.
+        if (kbps > FREEZE_KBPS) {
             freezeStreak = 0
             return
         }
@@ -649,8 +664,13 @@ class CarPlayHostActivity : ComponentActivity() {
         if (now - lastFreezeActionMs < FREEZE_COOLDOWN_MS) return
         lastFreezeActionMs = now
         freezeStrikes++
+        // One strike is one 15 s episode. Without this reset the streak stayed above the threshold
+        // through the cooldown, so every cooldown produced another strike and the third one
+        // restarted CarPlay even when the picture had recovered in between.
+        val streak = freezeStreak
+        freezeStreak = 0
         appendLog(
-            "Video freeze: stream=$streamType kbps=$kbps age=${ageMs}ms 连续 $freezeStreak 个窗口" +
+            "Video freeze: stream=$streamType kbps=$kbps age=${ageMs}ms 连续 $streak 个窗口" +
                 "（第 $freezeStrikes 次，${if (watchingAlt) "导航画面" else "镜像画面"}）",
         )
         if (freezeStrikes <= FREEZE_REFRESH_ATTEMPTS) {

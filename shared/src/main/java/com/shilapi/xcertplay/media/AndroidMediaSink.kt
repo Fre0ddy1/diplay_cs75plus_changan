@@ -356,6 +356,8 @@ class AndroidMediaSink(
      * down as he pressed the keys, 2026-10-20). Actual PCM is the honest signal.
      */
     @Volatile private var lastNavigationPcmAtMs = 0L
+    /** Last time a microphone stream was open; also set when it closes to keep a short window. */
+    @Volatile private var lastMicrophoneAtMs = 0L
 
     fun onNavigationAudioFrame() {
         lastNavigationPcmAtMs = SystemClock.elapsedRealtime()
@@ -364,6 +366,18 @@ class AndroidMediaSink(
     /** True while guidance audio is really flowing, not merely while its stream is open. */
     fun navigationAudioActive(windowMs: Long = 2_500L): Boolean {
         val last = lastNavigationPcmAtMs
+        return last != 0L && SystemClock.elapsedRealtime() - last <= windowMs
+    }
+
+    /**
+     * True while a CarPlay microphone stream is open or just closed.
+     *
+     * Siri listens through this stream, and while the assistant UI is up the navigation video can
+     * legitimately sit on one static picture. The video-freeze watchdog uses this to avoid
+     * treating a Siri screen as a frozen CarPlay session.
+     */
+    fun microphoneActive(windowMs: Long = 3_000L): Boolean {
+        val last = lastMicrophoneAtMs
         return last != 0L && SystemClock.elapsedRealtime() - last <= windowMs
     }
 
@@ -616,6 +630,7 @@ class AndroidMediaSink(
     override fun onMicrophoneStarted(id: AudioStreamId, config: MicrophoneConfig) {
         // This callback runs on the downlink thread; microphone failures must not stop playback.
         try {
+            lastMicrophoneAtMs = SystemClock.elapsedRealtime()
             // Snapshot the media level before the car lowers it for the call. The mode poll cannot
             // do this on this head unit - it never reports a call at all - so the snapshot never
             // existed and a lowered stream level survived the hang-up. CarPlay mirrors that level
@@ -638,6 +653,7 @@ class AndroidMediaSink(
         try {
             microphoneUplinks.remove(id)?.close()
         } finally {
+            lastMicrophoneAtMs = SystemClock.elapsedRealtime()
             restoreAudioMode(id)
             // The uplink ending means the call or voice-clip capture is over, and the music must be
             // back at full level. restoreAudioMode() cannot cover this: it returns immediately when

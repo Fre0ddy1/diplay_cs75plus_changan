@@ -72,8 +72,14 @@ internal class ClusterMapPresentation(
     // Per-frame cost killers: card show/hide switches and the fronted-card set are cached.
     // applyCardsVisibility runs on every guidance tick (per second); reading SharedPreferences
     // or calling bringToFront() there would requestLayout/re-read the disk every frame.
-    private var cardVisibleCache: Map<String, Boolean>? = null
-    private var turnCardVisibleCache = true
+    // Load them at construction: on a cold start the first guidance tick can arrive before any
+    // settings change, and the old defaults (true) showed cards the driver had switched off
+    // until a reconnect re-read them.
+    private var cardVisibleCache: Map<String, Boolean> = mapOf(
+        "eta" to AirPlayPersistence.loadClusterCardVisible(context, "eta"),
+        "road" to AirPlayPersistence.loadClusterCardVisible(context, "road"),
+    )
+    private var turnCardVisibleCache = AirPlayPersistence.loadClusterTurnCardVisible(context)
     private var frontedCards: List<View> = emptyList()
 
     /**
@@ -427,7 +433,7 @@ internal class ClusterMapPresentation(
             // Visibility switches are cached: this runs on every guidance tick (per second)
             // and must not touch SharedPreferences on the hot path.
             val shown = if (turn) turnCardVisibleCache
-            else cardVisibleCache?.get(card) ?: true
+            else cardVisibleCache[card] ?: true
             if (!shown) v.visibility = View.GONE
         }
         applyVisible("turn", true, turnCardView)
