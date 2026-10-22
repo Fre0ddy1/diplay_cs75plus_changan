@@ -1622,7 +1622,11 @@ private class AudioRenderer(
         startThresholdBytes = MediaAudioBuffer.startBytesFor(plan.startBytes, capacityBytes, PREBUFFER_WRITE_CHUNK_BYTES)
         // Only music plays long enough for the clocks to drift apart; calls keep their echo reference exact.
         clockTrim = if (mappedChannel == AudioChannel.MEDIA) {
-            MediaClockTrim(format.sampleRate, (startThresholdBytes / frameBytes).toLong())
+            MediaClockTrim(
+                sampleRate = format.sampleRate,
+                targetFrames = (startThresholdBytes / frameBytes).toLong(),
+                capacityFrames = (capacityBytes / frameBytes).toLong(),
+            )
         } else {
             null
         }
