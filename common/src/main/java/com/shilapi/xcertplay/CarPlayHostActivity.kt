@@ -1352,10 +1352,6 @@ class CarPlayHostActivity : ComponentActivity() {
         // independent of the "dashboard shows" content setting. DiLink 5.1 keeps the upstream
         // behavior: turn card follows the content setting, no ETA card.
         val changanCards = !DiLink51ClusterLayout.supported()
-        // Apple's own cluster views carry their own instructions: no overlay cards in those modes.
-        val appleClusterContent = AirPlayPersistence.loadClusterContent(this).let {
-            it == CarPlayClusterDisplay.Content.INSTRUMENTS || it == CarPlayClusterDisplay.Content.TURN_CARD
-        }
         val g = clusterTurnGuidance
         // Dedupe the card-state line: ETA seconds tick every second, so log once per state
         // change (or at least every 5 s) instead of once per refresh tick.
@@ -1379,18 +1375,12 @@ class CarPlayHostActivity : ComponentActivity() {
                 AirPlayPersistence.loadClusterCardScalePercent(this, "turn"),
             )
             presentation.setSong(clusterSong)
-            // Apple's own cluster views already contain the turn instruction and the road name, so
-            // those two overlays are cleared in those modes - drawing them again put a second,
-            // smaller turn card on top of Apple's (field 2026-10-22).
-            //
-            // The ETA card is different: like the song card it is drawn entirely by us, so it stays
-            // available in every content mode and remains under the driver's own show/hide switch.
-            // Its visibility is still gated on nav-only + that switch by applyCardsVisibility().
-            if (appleClusterContent) {
-                presentation.setTurnCardGuidance(null)
-                presentation.setEtaGuidance(clusterTurnGuidance)
-                presentation.setRoadNameGuidance(null)
-            } else if (changanCards) {
+            // Every card here is drawn by us, so none of them depends on which cluster picture the
+            // iPhone streams. Apple's "instruments" view turned out to contain no turn card at all
+            // (field 2026-10-22: hiding our card left the panel without one), so the content mode
+            // must not gate any of them - only nav-only mode and the driver's own switches do,
+            // inside applyCardsVisibility().
+            if (changanCards) {
                 presentation.setTurnCardGuidance(clusterTurnGuidance)
                 presentation.setEtaGuidance(clusterTurnGuidance)
                 presentation.setRoadNameGuidance(clusterTurnGuidance)

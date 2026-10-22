@@ -914,7 +914,11 @@ class DiPlayActivity : ComponentActivity() {
                 }
                 card.addView(positionPreview, LinearLayout.LayoutParams(ViewGroup.LayoutParams.MATCH_PARENT, dp(170)).apply { topMargin = dp(10) })
                 card.addView(label(getString(R.string.cluster_card_position_preview), 14, MUTED))
-                if (customCard) {
+                // The turn card is drawn by us in every cluster content mode, so its settings must
+                // stay reachable whatever "仪表盘画面来源" is set to. Only the upstream BYD path still
+                // ties the card to the content choice.
+                val turnCardSettings = !DiLink51ClusterLayout.supported() || customCard
+                if (turnCardSettings) {
                     // One inset block per dashboard card: its show switch, its own size and its own
                     // position together. The size sliders used to sit in one run and every card's
                     // X/Y rows in another, so "车道指引卡片" was three rows scattered between two
