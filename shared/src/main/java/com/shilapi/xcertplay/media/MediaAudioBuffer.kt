@@ -12,25 +12,22 @@ object MediaAudioBuffer {
     /**
      * Default jitter buffer for music, in milliseconds.
      *
-     * 300, not the old 1000. The buffer arrived in 0.2.14 and 0.2.13 had none at all, and the field
-     * comparison is unambiguous: 0.2.13 "works very well", 0.2.20 has music coming out ahead of the
-     * lyrics. Measured on our own UNI-V, the music channel sits ~580 ms behind the video path
-     * (audio stats estimatedQueuedFrames=27838 at 48 kHz) against ~80 ms of touch-to-frame video
-     * latency, so the buffer is the whole offset. 300 ms still covers the radio gaps the field log
-     * measures (~400 ms worst case) while taking ~700 ms of it back; the presets are still there for
-     * a driver whose link is worse than ours, and raising it is the fix for stutter, not lowering it.
+     * 1000, not 500. The field comparison on the UNI-V is unambiguous: 500 ms recorded
+     * `maxGapMs` of 500-760 ms (occasionally ~800), repeated underruns and rebuffers, while
+     * 1000 ms is stable. The cost is that sound sits about a second behind the picture; the
+     * presets stay available for a driver who prefers tighter lyrics (150/300/500) or a worse
+     * link (1500).
      */
-    const val DEFAULT_MILLIS = 500
+    const val DEFAULT_MILLIS = 1000
     /**
      * Selectable music buffers, smallest first. 150 ms is there for a driver who wants the lyrics
      * tight like 0.2.13 (which had no buffer at all) and accepts the extra stutter risk; 1500 ms is
      * for a link worse than the one we measured (~400 ms worst-case arrival gap).
      */
     val presets = listOf(150, 300, 500, 1000, 1500)
-    // 500 is the default because the highway drive measured it: with the 150 ms preset the
-    // arrival gaps reached 394-396 ms, the queue drained to 0 ms (min of 757 samples) and the
-    // channel recorded 23/31/51 rebuffers - audible stutter. 500 leaves ~100 ms of headroom
-    // over the measured gap; 150/300 stay for a link that is genuinely clean.
+    // 500 used to be the default after a highway drive; repeated field logs on this head unit
+    // showed 400-760 ms arrival gaps and rebuffers at 500, so 1000 is the default now. 500/300
+    // remain for a genuinely clean link; raising the buffer is the fix for stutter, not lowering it.
 
     /**
      * Jitter buffer for short spoken prompts (navigation guidance, assistant).
