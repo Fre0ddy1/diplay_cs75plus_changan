@@ -585,6 +585,10 @@ class CarPlayHostActivity : ComponentActivity() {
     // only visible symptom is a collapse in bitrate (field 2026-10-22: main screen 9066 -> 1012
     // kbps, cluster 4673 -> 91 kbps, both still "23.0fps"). Nothing in the decoder or the network
     // reports a problem, so the bitrate is what this watches.
+    //
+    // A normal static navigation view also has a low bitrate, and the field log for 2026-10-23
+    // shows that false positive rebuilding the session three times on a 10 km drive. The watchdog
+    // now only asks for repaints; it never restarts CarPlay.
     private var freezeStreak = 0
     private var freezeStrikes = 0
     private var lastFreezeActionMs = 0L
@@ -673,8 +677,8 @@ class CarPlayHostActivity : ComponentActivity() {
         lastFreezeActionMs = now
         freezeStrikes++
         // One strike is one 15 s episode. Without this reset the streak stayed above the threshold
-        // through the cooldown, so every cooldown produced another strike and the third one
-        // restarted CarPlay even when the picture had recovered in between.
+        // through the cooldown, so every cooldown produced another strike even when the picture had
+        // recovered in between.
         val streak = freezeStreak
         freezeStreak = 0
         appendLog(
@@ -684,9 +688,13 @@ class CarPlayHostActivity : ComponentActivity() {
         if (freezeStrikes <= FREEZE_REFRESH_ATTEMPTS) {
             requestClusterRepaint("frozen stream=$streamType kbps=$kbps")
         } else {
-            appendLog("Video freeze: 重绘无效，重建 CarPlay 会话")
+            // Repaints did not raise the bitrate. Do NOT rebuild the session: a static navigation
+            // picture at low bitrate looks identical to a frozen one, and the field log for
+            // 2026-10-23 shows three self-inflicted reconnects on a 10 km drive where the main
+            // stream was still healthy at 2.8-9 Mbps. Leave the session alone; a real freeze is
+            // recovered by the driver's manual disconnect/reconnect.
+            appendLog("Video freeze: 重绘无效，保留会话（未自动重连，可手动断开重连）")
             freezeStrikes = 0
-            restartCarPlay("video frozen on stream $streamType")
         }
     }
     // Some head units (e.g. BYD DiLink) update resources.configuration for day/night
