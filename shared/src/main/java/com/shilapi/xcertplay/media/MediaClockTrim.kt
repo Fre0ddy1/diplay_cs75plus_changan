@@ -23,7 +23,13 @@ import kotlin.math.roundToInt
 internal class MediaClockTrim(
     private val sampleRate: Int,
     private val targetFrames: Long,
-    private var integral: Double = learnedTrim,
+    /**
+     * Start no faster than the nominal rate. A positive value learned on a previous route made
+     * the next stream drain its 500 ms buffer and rebuffer before the level loop could react;
+     * starting neutral or slow fills the buffer instead, and blocking writes make that harmless.
+     * The trim still learns a positive drift during the stream.
+     */
+    private var integral: Double = learnedTrim.coerceAtMost(0.0),
     /** AudioTrack capacity in frames; 0 (tests, unknown) disables the overflow/underflow guard. */
     private val capacityFrames: Long = 0L,
 ) {

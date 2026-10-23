@@ -2023,13 +2023,11 @@ private class AudioRenderer(
             }
             val writeStarted = System.nanoTime()
             diagnosticStage = "track-write"
-            // Android 9 head unit: the old blocking write was the only variant that never dropped
-            // PCM on this A2DP route. The non-blocking path (a fix for a 320-360 ms stall measured
-            // on a 2026 Android 15 phone) drops ~1.5 % of the music here, which is heard as
-            // crackle. Keep blocking below Android 10; newer units retain the bounded path.
-            val writeMode = if (mappedChannel == AudioChannel.MEDIA &&
-                Build.VERSION.SDK_INT < Build.VERSION_CODES.Q
-            ) {
+            // Media writes block on every Android version. The 10-17 build that sounds clean
+            // (phone and car) used this path; the non-blocking variant drops ~1.5 % of the PCM
+            // whenever the track is full, and on this route that is audible as crackle. The
+            // bounded non-blocking path stays for navigation prompts, which have their own track.
+            val writeMode = if (mappedChannel == AudioChannel.MEDIA) {
                 AudioTrack.WRITE_BLOCKING
             } else {
                 AudioTrack.WRITE_NON_BLOCKING
