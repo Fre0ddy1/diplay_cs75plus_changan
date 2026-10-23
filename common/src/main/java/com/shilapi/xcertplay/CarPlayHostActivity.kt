@@ -638,6 +638,13 @@ class CarPlayHostActivity : ComponentActivity() {
             freezeStreak = 0
             return
         }
+        // A call - car HFP or CarPlay telephony - can leave the navigation picture on one static
+        // frame for its whole duration. Never let the freeze watchdog restart CarPlay under a call;
+        // it resumes when the head unit returns to MODE_NORMAL.
+        if (mediaSink.callActive()) {
+            freezeStreak = 0
+            return
+        }
         // Siri / voice key: while the assistant is listening, and for a short window after it
         // closes, the navigation stream can legitimately stay on one static picture. Treating that
         // as a frozen session used to burn through the strike budget during a few Siri requests.

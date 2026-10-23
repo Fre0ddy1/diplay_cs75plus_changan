@@ -338,7 +338,7 @@ class AndroidMediaSink(
      * ran for them - and those are the calls where the driver reports the music level dropping and
      * staying down. The mode is the only channel that covers both kinds.
      */
-    private var polledAudioMode = AudioManager.MODE_NORMAL
+    @Volatile private var polledAudioMode = AudioManager.MODE_NORMAL
     private val audioModePoll = object : Runnable {
         override fun run() {
             runCatching { pollAudioMode() }
@@ -383,6 +383,15 @@ class AndroidMediaSink(
         val last = lastMicrophoneAtMs
         return last != 0L && SystemClock.elapsedRealtime() - last <= windowMs
     }
+
+    /**
+     * True while the head unit reports a call mode (ringing, in call or in communication).
+     *
+     * Both a car-HFP call and a CarPlay telephony stream leave the navigation picture static for
+     * as long as the call lasts. The video-freeze watchdog must not mistake that for a frozen
+     * session and restart CarPlay in the middle of a call.
+     */
+    fun callActive(): Boolean = polledAudioMode != AudioManager.MODE_NORMAL
 
     init {
         // Sampled from the very first frame of the session, so a call that started before the
