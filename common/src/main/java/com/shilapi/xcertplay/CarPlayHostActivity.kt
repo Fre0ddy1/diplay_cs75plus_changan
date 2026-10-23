@@ -496,6 +496,7 @@ class CarPlayHostActivity : ComponentActivity() {
     @Volatile private var watcherDisplay: android.view.Display? = null
     @Volatile private var watcherWidth = 0
     @Volatile private var watcherHeight = 0
+    private var lastClusterSizeWaitLogMs = 0L
     // True once this activity has sent the projection open sequence at all. The disconnect
     // hand-back refuses to run without it: sending the ext-screen release (r0) to a head unit that
     // never projected would switch it out of a mode it is not in.
@@ -5774,6 +5775,28 @@ class CarPlayHostActivity : ComponentActivity() {
     }
 
     /**
+     * True when the sampled projection display reports a real, landscape dashboard panel.
+     *
+     * The ext-screen exists before activation, but its size is not trustworthy until incall has
+     * mapped the real panel: a preview box (or a 0x0 mode during reconfiguration) must not be used
+     * to decide that the channel is ready. Sampled with the same getRealSize() the window uses,
+     * not Display.mode, so the two cannot disagree.
+     */
+    private fun clusterDisplaySizeReady(): Boolean {
+        val display = watcherDisplay ?: return false
+        val size = runCatching { ClusterMapPresentation.sizeOf(display) }.getOrNull() ?: return false
+        watcherWidth = size.x
+        watcherHeight = size.y
+        // A mode that disagrees with the real size means the display is still being reconfigured
+        // (or is still the pre-activation placeholder); either way the sequence must wait.
+        val mode = runCatching { display.mode }.getOrNull()
+        if (mode != null && (mode.physicalWidth != size.x || mode.physicalHeight != size.y)) return false
+        return size.x >= CLUSTER_MIN_READY_WIDTH_PX &&
+            size.y >= CLUSTER_MIN_READY_HEIGHT_PX &&
+            size.x > size.y
+    }
+
+    /**
      * Samples the projection channel for the whole life of the activity.
      *
      * This is the ONLY place allowed to send the activation sequence. It keeps sampling, and while
@@ -5815,14 +5838,22 @@ class CarPlayHostActivity : ComponentActivity() {
                 if (watcherDisplay == null) {
                     runCatching { ClusterMapPresentation.findDisplay(this) }.getOrNull()?.let { display ->
                         watcherDisplay = display
-                        watcherWidth = display.mode?.physicalWidth ?: 0
-                        watcherHeight = display.mode?.physicalHeight ?: 0
+                        val size = ClusterMapPresentation.sizeOf(display)
+                        watcherWidth = size.x
+                        watcherHeight = size.y
                         appendLog(
                             "Cluster watcher: 记录仪表 display=${display.displayId} " +
                                 "${watcherWidth}x${watcherHeight}",
                         )
                     }
                 }
+                // A projection display exists before activation, but incall maps the ext-screen to
+                // a small placeholder box until the full sequence has been accepted. Sending the
+                // sequence from that state was the "cold start projects only a small block on the
+                // right" report. Wait until the display reports a real landscape panel; the retry
+                // clock is not advanced while we are waiting, so the first send happens as soon as
+                // the size becomes sane.
+                val sizeReady = clusterDisplaySizeReady()
 
                 // 3) The channel is up: the budget starts over, so a channel the driver closes by
                 //    hand later is picked up again from the first (shortest) delay.
@@ -5837,16 +5868,29 @@ class CarPlayHostActivity : ComponentActivity() {
                         retryDelaysMs[attempts] - (now - lastSentAtMs)
                     }
                     if (delay <= 0L) {
-                        attempts++
-                        lastSentAtMs = now
-                        clusterPrewarmAtMs = now
-                        appendLog(
-                            "Cluster watcher: 投屏通道未就绪，发完整激活序列" +
-                                "（第 $attempts/${retryDelaysMs.size} 次）",
-                        )
-                        mainHandler.post {
-                            if (!shuttingDown.get() && !isFinishing && !isDestroyed) {
-                                InCallClusterBridge.openProjection(this)
+                        if (!sizeReady) {
+                            // Do not consume an attempt and do not send: wait for the real panel
+                            // size. Log at most every few seconds so a head unit that never
+                            // reports a sane size cannot flood the report.
+                            if (now - lastClusterSizeWaitLogMs >= CLUSTER_SIZE_WAIT_LOG_MS) {
+                                lastClusterSizeWaitLogMs = now
+                                appendLog(
+                                    "Cluster watcher: 仪表尺寸未就绪 " +
+                                        "${watcherWidth}x${watcherHeight}，暂缓完整激活序列",
+                                )
+                            }
+                        } else {
+                            attempts++
+                            lastSentAtMs = now
+                            clusterPrewarmAtMs = now
+                            appendLog(
+                                "Cluster watcher: 投屏通道未就绪，发完整激活序列" +
+                                    "（第 $attempts/${retryDelaysMs.size} 次，仪表 ${watcherWidth}x${watcherHeight}）",
+                            )
+                            mainHandler.post {
+                                if (!shuttingDown.get() && !isFinishing && !isDestroyed) {
+                                    InCallClusterBridge.openProjection(this)
+                                }
                             }
                         }
                     }
@@ -6293,6 +6337,15 @@ class CarPlayHostActivity : ComponentActivity() {
         const val PREWARM_SETTLE_MS = 1_500L
         /** How often the start-up watcher samples the projection channel. */
         const val WATCHER_PERIOD_MS = 500L
+        /**
+         * A real dashboard panel is at least this large and landscape. Before activation incall
+         * can present a small preview box on the ext-screen; that must never be mistaken for the
+         * panel this window will fill.
+         */
+        const val CLUSTER_MIN_READY_WIDTH_PX = 800
+        const val CLUSTER_MIN_READY_HEIGHT_PX = 400
+        /** How often the watcher may repeat "size not ready" in the report. */
+        const val CLUSTER_SIZE_WAIT_LOG_MS = 5_000L
         /**
          * Freeze detection. Aligned with the five-second video stats window: three consecutive
          * windows below [FREEZE_KBPS] means the picture has not changed for ~15 s while frames keep
