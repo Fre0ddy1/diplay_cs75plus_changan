@@ -11,6 +11,8 @@
     <string name="cluster_crop_done">完成</string>
     <string name="auto_fly_screen">自动飞屏</string>
     <string name="auto_fly_screen_desc">勾选后连接成功进入 CarPlay 界面时自动投屏（内容跟随“仪表盘内容”设置）。前提是上方“仪表盘上的 CarPlay 地图”已开启；不勾选则不会自动投屏，手动三指滑动不受影响。</string>
+    <string name="cluster_auto_nav_view">导航时自动切换仪表视图</string>
+    <string name="cluster_auto_nav_view_desc">进入导航时自动投屏为“仅导航”画面，退出导航后自动回到“整机镜像”。只对本次应用使用生效，不会修改上面的“CarPlay 仪表盘显示界面”设置；手动三指选择会暂停自动切换，直到下一次导航开始或结束。</string>
 
 
     <string name="auto_project_retry">自动投屏失败时自动重试</string>

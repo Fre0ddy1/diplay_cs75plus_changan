@@ -13,6 +13,8 @@ object CarPlayGlance {
     /** One state of the glance; [maneuverType] is Apple's RouteGuidanceManeuverType, null without a route. */
     data class Snapshot(
         val connected: Boolean = false,
+        /** True while the iPhone reports an active route, independent of having a next maneuver. */
+        val navigating: Boolean = false,
         val maneuverType: Int? = null,
         val drivingSide: Int = 0,
         val distanceMeters: Int = 0,
@@ -70,6 +72,7 @@ object CarPlayGlance {
         val current = song.current()
         val next = Snapshot(
             connected = connected,
+            navigating = route.isNavigating(),
             maneuverType = maneuver?.type,
             drivingSide = maneuver?.drivingSide ?: 0,
             distanceMeters = maneuver?.distanceMeters ?: 0,

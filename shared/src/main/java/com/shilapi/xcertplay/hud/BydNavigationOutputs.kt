@@ -186,6 +186,9 @@ object BydNavigationOutputs {
         overlayRoute.cardContext()?.let { ClusterTurnGuidance.from(BydClusterFrame.from(it)) }
     }
 
+    /** True while the iPhone reports an active route (iAP2 0x5201 state is not NoRouteSet/Arrived). */
+    fun navigationActive(): Boolean = synchronized(overlayLock) { overlayRoute.isNavigating() }
+
     /** The dashboard song setting changed; applies at once. */
     fun clusterSongChanged(enabled: Boolean) = BydClusterSong.settingChanged(enabled)
 

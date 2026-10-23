@@ -114,6 +114,19 @@ internal class BydHudRouteState(
         )
     }
 
+    /**
+     * True while a route is active. iAP2 0x5201 t=0x01 is the authoritative state:
+     * 0 = NoRouteSet and 2 = Arrived clear it; anything else means a route is up.
+     *
+     * The 30 s freshness check keeps a session that stopped sending updates from looking like
+     * an active route forever; the explicit 0/2 state is still the normal exit signal.
+     */
+    fun isNavigating(): Boolean {
+        if (!routeActive) return false
+        val updated = lastRouteUpdateNs ?: return false
+        return nanoTime() - updated < staleRouteNs
+    }
+
     fun clear(): Boolean {
         val wasActive = routeActive
         routeActive = false

@@ -699,6 +699,23 @@ object AirPlayPersistence {
     }
 
     /**
+     * "导航时自动切换仪表视图": while navigating show the nav-only dashboard, otherwise the
+     * whole-screen mirror. The automatic switch is in-memory only; it never writes
+     * [KEY_CLUSTER_MIRROR_MAIN], so the driver's saved display choice is untouched.
+     */
+    private const val KEY_CLUSTER_AUTO_NAV_MODE = "cluster_auto_nav_mode"
+
+    fun loadClusterAutoNavMode(context: Context): Boolean =
+        context.getSharedPreferences(PREFS, Context.MODE_PRIVATE)
+            .getBoolean(KEY_CLUSTER_AUTO_NAV_MODE, false)
+
+    fun saveClusterAutoNavMode(context: Context, enabled: Boolean) {
+        context.getSharedPreferences(PREFS, Context.MODE_PRIVATE).edit()
+            .putBoolean(KEY_CLUSTER_AUTO_NAV_MODE, enabled).apply()
+        overlaySettingsListener?.invoke()
+    }
+
+    /**
      * Dashboard crop: which part of the cluster stream is shown on the instrument panel,
      * as percent of the panel. Width/height below 100 % zoom the picture in (CENTER_CROP
      * style); left/top shift the visible window. Used by ClusterMapPresentation's TextureView

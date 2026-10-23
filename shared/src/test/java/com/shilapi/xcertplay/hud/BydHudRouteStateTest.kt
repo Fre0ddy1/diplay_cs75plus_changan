@@ -2,7 +2,9 @@ package com.shilapi.xcertplay.hud
 
 import java.io.ByteArrayOutputStream
 import org.junit.Assert.assertEquals
+import org.junit.Assert.assertFalse
 import org.junit.Assert.assertNull
+import org.junit.Assert.assertTrue
 import org.junit.Test
 
 class BydHudRouteStateTest {
@@ -21,6 +23,7 @@ class BydHudRouteStateTest {
 
         assertEquals(BydHudRouteChange.GUIDANCE, change)
         assertEquals(BydHudGuidance(distanceMeters = 150, maneuver = 1, gaode = 1), state.current())
+        assertTrue(state.isNavigating())
     }
 
     @Test
@@ -46,6 +49,7 @@ class BydHudRouteStateTest {
 
         assertEquals(BydHudRouteChange.CLEAR, change)
         assertNull(state.current())
+        assertFalse(state.isNavigating())
     }
 
     @Test

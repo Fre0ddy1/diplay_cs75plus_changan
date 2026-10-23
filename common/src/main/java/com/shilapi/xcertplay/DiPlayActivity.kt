@@ -737,6 +737,14 @@ class DiPlayActivity : ComponentActivity() {
                         setPadding(0, 0, 0, dp(12))
                     })
                 }
+                toggle(
+                    card,
+                    getString(R.string.cluster_auto_nav_view),
+                    getString(R.string.cluster_auto_nav_view_desc),
+                    AirPlayPersistence.loadClusterAutoNavMode(this),
+                ) { enabled ->
+                    AirPlayPersistence.saveClusterAutoNavMode(this, enabled)
+                }
                 choice(card, getString(R.string.instrument_cluster_content),
                     listOf(
                         getString(R.string.instrument_cluster_entire_interface),

@@ -476,6 +476,12 @@ class CarPlayHostActivity : ComponentActivity() {
     // interface mirror. Left swipes advance, right swipes go back, past the ends nothing happens.
     private var clusterSwipePosition = -1
     private var initialClusterMirror: Boolean? = null
+    /** Last navigation state seen by the auto-switch setting; null = re-evaluate on next tick. */
+    private var lastAutoNavState: Boolean? = null
+    /** A dashboard mode is waiting for the projection channel/display to become available. */
+    private var autoNavModePending = false
+    /** The driver chose a dashboard mode by hand; auto-switch waits for the next nav transition. */
+    private var manualClusterOverride = false
     // True once the UNI-V activation sequence has been sent for this session. The head-unit
     // exposes a projection display even BEFORE activation (verified on the user's UNI-V: the
     // cluster Presentation is created on it, but the physical dashboard shows nothing). So the
@@ -570,6 +576,7 @@ class CarPlayHostActivity : ComponentActivity() {
             // to skip the postDelayed below, which killed the loop permanently and silently.
             try {
                 com.shilapi.xcertplay.hud.BydNavigationOutputs.refreshTurnOverlay()
+                maybeAutoSwitchClusterForNavigation()
             } catch (error: Throwable) {
                 appendLog("Overlay refresh failed: ${error.javaClass.simpleName}: ${error.message}")
             } finally {
@@ -1363,6 +1370,9 @@ class CarPlayHostActivity : ComponentActivity() {
         try {
             presentation.show()
             clusterPresentation = presentation
+            // A window built after the auto-switch changed the desired mode must be re-applied on
+            // the next tick; this path otherwise uses the saved display choice.
+            if (AirPlayPersistence.loadClusterAutoNavMode(this)) autoNavModePending = true
             presentation.setMode(AirPlayPersistence.loadClusterMirrorMain(this))
             updateClusterMapShown()
             presentation.setStreamActive(clusterStreamActive())
@@ -1430,6 +1440,9 @@ class CarPlayHostActivity : ComponentActivity() {
         try {
             presentation.show()
             clusterPresentation = presentation
+            // A window built after the auto-switch changed the desired mode must be re-applied on
+            // the next tick; this path otherwise uses the saved display choice.
+            if (AirPlayPersistence.loadClusterAutoNavMode(this)) autoNavModePending = true
             presentation.setMode(AirPlayPersistence.loadClusterMirrorMain(this))
             presentation.setStreamActive(clusterStreamActive())
             presentation.setMapVisible(false)
@@ -5613,6 +5626,73 @@ class CarPlayHostActivity : ComponentActivity() {
     }
 
     /**
+     * "导航时自动切换仪表视图": one automatic three-finger equivalent per navigation transition.
+     *
+     * Runs from the one-second overlay tick. It only acts on a state change (or when the channel
+     * that was closed becomes ready), so a manual swipe during navigation is not undone on the
+     * next tick. The mode it applies is in-memory; applyClusterMode(persist=false) keeps the
+     * driver's saved dashboard display choice untouched.
+     */
+    private fun maybeAutoSwitchClusterForNavigation() {
+        if (!AirPlayPersistence.loadClusterAutoNavMode(this)) {
+            lastAutoNavState = null
+            autoNavModePending = false
+            manualClusterOverride = false
+            return
+        }
+        if (shuttingDown.get() || isFinishing || isDestroyed || menuOpen || handshakeResetInProgress) return
+        if (activeAirPlaySession == null) {
+            lastAutoNavState = null
+            return
+        }
+        val navigating = com.shilapi.xcertplay.hud.BydNavigationOutputs.navigationActive()
+        val changed = lastAutoNavState != navigating
+        lastAutoNavState = navigating
+        if (changed) manualClusterOverride = false
+        if (!changed && (manualClusterOverride || !autoNavModePending)) return
+        val channelOpen = watcherChannelOpen ||
+            runCatching { InCallClusterBridge.reportsProjecting() }.getOrDefault(false)
+        if (!channelOpen) {
+            // Record the desired mode on a hidden window; the projection callback shows it once
+            // incall is actually projecting. Never force it visible here (small preview box).
+            autoNavModePending = true
+            clusterSwipePosition = if (navigating) 1 else 0
+            if (clusterPresentation == null) runCatching { ensureClusterPresentation() }
+            clusterPresentation?.setMode(!navigating)
+            if (changed) {
+                appendLog(
+                    "Nav auto: 投屏通道未开，预置${if (navigating) "仅导航" else "整机镜像"}，" +
+                        "通道就绪后显示",
+                )
+            }
+            return
+        }
+        autoNavModePending = false
+        autoProjectForNavigation(navigating)
+    }
+
+    private fun autoProjectForNavigation(navigating: Boolean) {
+        if (shuttingDown.get() || isFinishing || isDestroyed) return
+        val mirror = !navigating
+        clusterSwipePosition = if (mirror) 0 else 1
+        if (clusterPresentation == null) runCatching { ensureClusterPresentation() }
+        val presentation = clusterPresentation ?: run {
+            appendLog("Nav auto: 无仪表投影显示，暂不切换")
+            return
+        }
+        presentation.setMapVisible(true)
+        applyClusterMode(
+            mirror,
+            if (navigating) "nav-auto-start" else "nav-auto-end",
+            persist = false,
+        )
+        appendLog(
+            "Nav auto: 导航${if (navigating) "开始" else "结束"}，" +
+                "切换为${if (mirror) "整机镜像" else "仅导航"}（仅本次使用，未保存设置）",
+        )
+    }
+
+    /**
      * Three-finger left/right swipe is a forward/backward position machine like CarPlay boxes:
      * left advances the dashboard mode (initial → navigation stream → whole-interface mirror),
      * right goes back; past the ends nothing happens, and before any left swipe a right swipe
@@ -5644,6 +5724,9 @@ class CarPlayHostActivity : ComponentActivity() {
         }
         clusterSwipePosition = nextPos
         if (direction != "auto") {
+            // The driver took over: auto-switch waits for the next navigation transition instead
+            // of undoing the choice one tick later.
+            manualClusterOverride = true
             // The driver took over: cancel any pending auto-project retry ladder, so it can never
             // fight a manual swipe (it would re-send the open sequence on top of the driver's
             // choice). autoProjectTriggered stays true: auto projection does not re-fire until
@@ -5681,7 +5764,7 @@ class CarPlayHostActivity : ComponentActivity() {
     }
 
     // Applies the requested dashboard mode once a projection display is available.
-    private fun applyClusterMode(mirror: Boolean, direction: String) {
+    private fun applyClusterMode(mirror: Boolean, direction: String, persist: Boolean = true) {
         // The picture is back: drop the disconnect state in one place, so every caller that
         // re-shows the window (auto-project, a swipe, a returning stream) ends up consistent.
         if (clusterWindowHidden) {
@@ -5689,8 +5772,10 @@ class CarPlayHostActivity : ComponentActivity() {
             appendLog("Cluster: 窗口重新显示，恢复仪表投屏（静默）")
         }
         mainHandler.removeCallbacks(releaseDashboardAfterLongLoss)
-        // Persist the mode only when the dashboard projection is actually available.
-        AirPlayPersistence.saveClusterMirrorMain(this, mirror)
+        // Persist the mode only when the dashboard projection is actually available. The navigation
+        // auto-switch passes persist=false: it is an in-memory override for this run and must not
+        // overwrite the driver's saved CarPlay-dashboard display choice.
+        if (persist) AirPlayPersistence.saveClusterMirrorMain(this, mirror)
         if (mirror) {
             // Whole-screen mirror: nothing to arm - the overview toggle belongs to the
             // nav-only mode, and tapping it here would flip the console Amap into overview.

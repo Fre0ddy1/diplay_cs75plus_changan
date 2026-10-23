@@ -5,6 +5,7 @@ import com.shilapi.xcertplay.iap2.message.Iap2Messages
 import com.shilapi.xcertplay.hud.BydHudRouteState
 import org.junit.After
 import org.junit.Assert.assertEquals
+import org.junit.Assert.assertFalse
 import org.junit.Assert.assertNull
 import org.junit.Assert.assertTrue
 import org.junit.Before
@@ -39,6 +40,7 @@ class CarPlayGlanceTest {
 
         val now = CarPlayGlance.snapshot()
         assertTrue(now.connected)
+        assertTrue(now.navigating)
         assertEquals(2, now.maneuverType)
         assertEquals(350, now.distanceMeters)
         assertEquals("Main Street", now.road)
@@ -57,6 +59,7 @@ class CarPlayGlanceTest {
         // Arrived: no turn any more, the song stays.
         CarPlayGlance.onFrame(frame(0x5201) { u8(1, 2) })
         assertNull(CarPlayGlance.snapshot().maneuverType)
+        assertFalse(CarPlayGlance.snapshot().navigating)
         assertEquals("Podcast", CarPlayGlance.snapshot().song)
 
         CarPlayGlance.setConnected(false)

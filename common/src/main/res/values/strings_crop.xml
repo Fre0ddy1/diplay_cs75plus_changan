@@ -11,6 +11,8 @@
     <string name="cluster_crop_done">完成</string>
     <string name="auto_fly_screen">自动飞屏</string>
     <string name="auto_fly_screen_desc">勾选后连接成功进入 CarPlay 界面时自动投屏（内容跟随“仪表盘内容”设置）。前提是上方“仪表盘上的 CarPlay 地图”已开启；不勾选则不会自动投屏，手动三指滑动不受影响。</string>
+    <string name="cluster_auto_nav_view">Auto-switch dashboard on navigation</string>
+    <string name="cluster_auto_nav_view_desc">When navigation starts, project the dashboard in nav-only mode; when it ends, return to the whole-screen mirror. Applies to this run only and never changes the display choice above. A manual three-finger choice pauses the automatic switch until the next navigation start or end.</string>
 
 
     <string name="auto_project_retry">自动投屏失败时自动重试</string>
