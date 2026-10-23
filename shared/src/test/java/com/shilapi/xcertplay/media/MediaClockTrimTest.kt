@@ -78,4 +78,21 @@ class MediaClockTrimTest {
         assertNotNull(rate)
         assertTrue("expected a slow-down, got $rate", rate!! < 48_000)
     }
+
+    @Test
+    fun `a dropped frame forces the trim up even when the level looks normal`() {
+        val trim = MediaClockTrim(
+            sampleRate = 48_000, targetFrames = 48_000, integral = -0.015, capacityFrames = 57_600,
+        )
+        val before = trim.rate
+
+        trim.noteOverflow(nowNs = 1_000_000_000)
+        assertEquals(1, trim.resetCount)
+        // The averaged level is allowed to look normal here; the forced window must still act.
+        trim.sample(queuedFrames = 50_000, nowNs = 1_000_000_000)
+
+        val rate = trim.rateDue(nowNs = 1_000_000_000)
+        assertNotNull(rate)
+        assertTrue("expected a speed-up from $before, got $rate", rate!! > before)
+    }
 }

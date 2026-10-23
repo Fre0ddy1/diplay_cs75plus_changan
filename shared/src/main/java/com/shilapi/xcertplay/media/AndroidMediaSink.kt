@@ -1964,14 +1964,18 @@ private class AudioRenderer(
     }
 
     /**
-     * One place for "these bytes will never reach the player": counts them for the report and takes
-     * them out of the queued estimate, so the estimate reflects what the track actually holds.
+     * One place for "these bytes will never reach the player": counts them for the report.
+     *
+     * They are deliberately *not* subtracted from [AudioBufferProgress]: the ledger counts bytes
+     * that were actually written, and a dropped frame was never added to it. Subtracting it again
+     * made the trim believe a completely full track was only 4 % over target, so it held its old
+     * -1.5 % rate while the write path kept dropping ~1.5 % of the music (the field crackle,
+     * 2026-10-23).
      */
     private fun recordLostPcm(bytes: Long) {
         if (bytes <= 0) return
         unsentPcmBytesThisWindow += bytes
         unsentPcmBytesTotal += bytes
-        bufferProgress.discarded(bytes)
     }
 
     /**
@@ -2019,7 +2023,18 @@ private class AudioRenderer(
             }
             val writeStarted = System.nanoTime()
             diagnosticStage = "track-write"
-            val count = track.write(data, offset + written, writeLength, AudioTrack.WRITE_NON_BLOCKING)
+            // Android 9 head unit: the old blocking write was the only variant that never dropped
+            // PCM on this A2DP route. The non-blocking path (a fix for a 320-360 ms stall measured
+            // on a 2026 Android 15 phone) drops ~1.5 % of the music here, which is heard as
+            // crackle. Keep blocking below Android 10; newer units retain the bounded path.
+            val writeMode = if (mappedChannel == AudioChannel.MEDIA &&
+                Build.VERSION.SDK_INT < Build.VERSION_CODES.Q
+            ) {
+                AudioTrack.WRITE_BLOCKING
+            } else {
+                AudioTrack.WRITE_NON_BLOCKING
+            }
+            val count = track.write(data, offset + written, writeLength, writeMode)
             val writeMs = (System.nanoTime() - writeStarted) / 1_000_000L
             maxWriteMs = maxOf(maxWriteMs, writeMs)
             if (writeMs >= BLOCKED_WRITE_MS) {
@@ -2037,6 +2052,9 @@ private class AudioRenderer(
                 zeroWritesThisWindow++
                 if (System.nanoTime() >= deadline) {
                     recordLostPcm((length - written).toLong())
+                    // A dropped frame is direct proof that the track is full: tell the clock trim
+                    // immediately instead of waiting for its averaged level to cross a threshold.
+                    clockTrim?.noteOverflow(System.nanoTime())
                     break
                 }
                 // Park instead of yield: yielding here spun up to 715k times per 5 s window on a

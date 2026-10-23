@@ -34,6 +34,7 @@ internal class MediaClockTrim(
     private var stressedSinceNs = 0L
     private var lastResetNs = 0L
     private var forceUntilNs = 0L
+    private var lastOverflowAtNs = 0L
 
     /** How many times a stale learned offset was dropped, for the diagnostic report. */
     var resetCount = 0
@@ -86,9 +87,26 @@ internal class MediaClockTrim(
         resetCount++
     }
 
+    /**
+     * The write path had to drop a decoded frame because the track was full.
+     *
+     * That is direct proof the current rate is too slow; waiting for the averaged level to cross a
+     * threshold was too late - the track stayed full and dropped ~1.5 % of the music for minutes
+     * (field 2026-10-23). Drop the learned offset and force a correction for the next [FORCE_NS].
+     */
+    fun noteOverflow(nowNs: Long) {
+        if (lastOverflowAtNs != 0L && nowNs - lastOverflowAtNs < OVERFLOW_NOTICE_COOLDOWN_NS) return
+        lastOverflowAtNs = nowNs
+        integral = 0.0
+        learnedTrim = 0.0
+        stressedSinceNs = 0L
+        forceUntilNs = nowNs + FORCE_NS
+        lastUpdateNs = null
+        resetCount++
+    }
+
     /** The playback rate to set now, or null to keep the current one. */
-    fun rateDue(nowNs: Long): Int? {
-        val error = level ?: return null
+    fun rateDue(nowNs: Long): Int? {        val error = level ?: return null
         // Without new audio the level says nothing about the clocks: keep the trim as it is.
         if (nowNs - lastSampleNs > STALE_NS) return null
         // A level this close to the target is normal burst ripple. Holding the rate here is what
@@ -187,6 +205,8 @@ internal class MediaClockTrim(
         const val RESET_COOLDOWN_NS = 20_000_000_000L
         /** Keep correcting for this long after a reset even if the averaged level looks normal. */
         const val FORCE_NS = 30_000_000_000L
+        /** One dropped frame per this window may raise the rate; do not restart the ramp each frame. */
+        const val OVERFLOW_NOTICE_COOLDOWN_NS = 5_000_000_000L
 
         /** The drift the last music stream settled on. Each process plays to one head unit. */
         @Volatile var learnedTrim = 0.0
