@@ -181,7 +181,7 @@ object AirPlayPersistence {
 
     fun loadAdvancedAudioChannelMapping(context: Context): Boolean =
         context.getSharedPreferences(PREFS, Context.MODE_PRIVATE)
-            .getBoolean(KEY_ADVANCED_AUDIO_CHANNEL_MAPPING, false)
+            .getBoolean(KEY_ADVANCED_AUDIO_CHANNEL_MAPPING, true)
 
     fun saveAdvancedAudioChannelMapping(context: Context, enabled: Boolean) {
         context.getSharedPreferences(PREFS, Context.MODE_PRIVATE).edit()
@@ -212,18 +212,17 @@ object AirPlayPersistence {
     /**
      * Steering-wheel media keys belong to the head unit's own Bluetooth instead of CarPlay.
      *
-     * Default off: DiPlay renders the iPhone's media stream, its media session holds the media
-     * focus, and the wheel keys reach the iPhone through CarPlay.
+     * Default on: no media focus is taken and the wheel's media keys are not claimed by the
+     * CarPlay window, so the head unit's own controls handle them. Music still plays through
+     * CarPlay - measured 2026-10-18, the iPhone never moves media to A2DP while the accessory
+     * advertises audio.
      *
-     * On: no media focus is taken and the wheel's media keys are not claimed by the CarPlay window,
-     * so the head unit's own controls handle them. Music still plays through CarPlay - measured
-     * 2026-10-18, the iPhone never moves media to A2DP while the accessory advertises audio.
-     * The two halves must travel together: with no media session the keys already fall through to
-     * the car's Bluetooth app, and claiming them for CarPlay as well skipped two tracks per press.
+     * Off: DiPlay's media session holds the media focus and the wheel keys reach the iPhone
+     * through CarPlay.
      */
     fun loadMediaViaCarBluetooth(context: Context): Boolean =
         context.getSharedPreferences(PREFS, Context.MODE_PRIVATE)
-            .getBoolean(KEY_MEDIA_AUDIO_VIA_BLUETOOTH, false)
+            .getBoolean(KEY_MEDIA_AUDIO_VIA_BLUETOOTH, true)
 
     fun saveMediaViaCarBluetooth(context: Context, enabled: Boolean) {
         // commit(), not apply(): the driver usually flips this right before switching the head unit
@@ -237,7 +236,7 @@ object AirPlayPersistence {
     /** Music level while a navigation prompt plays; 100 % leaves the music untouched. */
     const val NAV_DUCK_MIN = 10
     const val NAV_DUCK_MAX = 100
-    const val NAV_DUCK_DEFAULT = 60
+    const val NAV_DUCK_DEFAULT = 75
     /** The default before 2026-10-18; only used to migrate untouched installs. */
     private const val NAV_DUCK_DEFAULT_LEGACY = 20
 
@@ -717,7 +716,7 @@ object AirPlayPersistence {
         context.getSharedPreferences(PREFS, Context.MODE_PRIVATE).getInt(KEY_CLUSTER_CROP_LEFT, 0).coerceIn(CROP_MIN, CROP_MAX)
 
     fun loadClusterCropTopPercent(context: Context): Int =
-        context.getSharedPreferences(PREFS, Context.MODE_PRIVATE).getInt(KEY_CLUSTER_CROP_TOP, 0).coerceIn(CROP_MIN, CROP_MAX)
+        context.getSharedPreferences(PREFS, Context.MODE_PRIVATE).getInt(KEY_CLUSTER_CROP_TOP, 3).coerceIn(CROP_MIN, CROP_MAX)
 
     fun loadClusterCropWidthPercent(context: Context): Int =
         context.getSharedPreferences(PREFS, Context.MODE_PRIVATE).getInt(KEY_CLUSTER_CROP_WIDTH, 100).coerceIn(CROP_MIN, CROP_MAX)
@@ -947,10 +946,20 @@ object AirPlayPersistence {
             .putInt(clusterCardKey(card, "y"), px.coerceIn(0, 720)).apply()
     }
 
-    /** Per-card show/hide switch; default is visible. Hidden cards are not rendered. */
-    fun loadClusterCardVisible(context: Context, card: String): Boolean =
-        context.getSharedPreferences(PREFS, Context.MODE_PRIVATE)
-            .getBoolean(clusterCardKey(card, "visible"), true)
+    /**
+     * Per-card show/hide switch.
+     *
+     * ETA and road-name cards default off; the song card defaults on. The turn card has its own
+     * switch ([loadClusterTurnCardVisible]) and also defaults off. A stored value always wins.
+     */
+    fun loadClusterCardVisible(context: Context, card: String): Boolean {
+        val default = when (card) {
+            "eta", "road" -> false
+            else -> true
+        }
+        return context.getSharedPreferences(PREFS, Context.MODE_PRIVATE)
+            .getBoolean(clusterCardKey(card, "visible"), default)
+    }
 
     fun saveClusterCardVisible(context: Context, card: String, visible: Boolean) {
         context.getSharedPreferences(PREFS, Context.MODE_PRIVATE).edit()
@@ -1043,11 +1052,12 @@ object AirPlayPersistence {
      * Song card background strength, 0-100.
      *
      * 100 keeps the standard glass look; lower values fade only the translucent fill, so white end
-     * caps (bevel and outline) stay visible and the card does not turn into a grey smear.
+     * caps (bevel and outline) stay visible and the card does not turn into a grey smear. Default
+     * 50: the card usually sits over the map and the driver wants it light.
      */
     fun loadClusterSongCardAlpha(context: Context): Int =
         context.getSharedPreferences(PREFS, Context.MODE_PRIVATE)
-            .getInt(KEY_CLUSTER_SONG_CARD_ALPHA, 100)
+            .getInt(KEY_CLUSTER_SONG_CARD_ALPHA, 50)
             .coerceIn(0, 100)
 
     fun saveClusterSongCardAlpha(context: Context, percent: Int) {
@@ -1113,7 +1123,7 @@ object AirPlayPersistence {
 
     fun loadClusterTurnCardVisible(context: Context): Boolean =
         context.getSharedPreferences(PREFS, Context.MODE_PRIVATE)
-            .getBoolean(KEY_CLUSTER_TURN_CARD_VISIBLE, true)
+            .getBoolean(KEY_CLUSTER_TURN_CARD_VISIBLE, false)
 
     fun saveClusterTurnCardVisible(context: Context, visible: Boolean) {
         context.getSharedPreferences(PREFS, Context.MODE_PRIVATE).edit()

@@ -11,6 +11,7 @@ import com.shilapi.xcertplay.airplay.AirPlayInfoPlist
  * view area per edge (see [com.shilapi.xcertplay.airplay.AirPlayViewArea]), so switching between
  * the driver's side and the bottom moves the dock live, without reconnecting. Moving to or from
  * AUTOMATIC changes what the session declares in /info, so it applies on the next connection.
+ * The default is BOTTOM: the UNI-V panel is wide and the bottom dock leaves more map height.
  */
 enum class CarPlayDock(val edge: Int?) {
     AUTOMATIC(null),
@@ -25,7 +26,7 @@ enum class CarPlayDock(val edge: Int?) {
             entries.firstOrNull {
                 it.name == context.getSharedPreferences(PREFS, Context.MODE_PRIVATE)
                     .getString(KEY_DOCK, null)
-            } ?: AUTOMATIC
+            } ?: BOTTOM
 
         fun save(context: Context, dock: CarPlayDock) =
             context.getSharedPreferences(PREFS, Context.MODE_PRIVATE)

@@ -10,7 +10,7 @@ import org.robolectric.RuntimeEnvironment
 import org.robolectric.annotation.Config
 
 /**
- * The shipped defaults are dashboard projection on, auto-fly on, auto-project on and a 60 % duck.
+ * The shipped defaults are dashboard projection on, auto-fly on, auto-project on and a 75 % duck.
  * An install that already stored the previous values must be migrated exactly once.
  */
 @RunWith(RobolectricTestRunner::class)
@@ -25,14 +25,14 @@ class DefaultsRevisionTest {
 
     @Test fun freshInstallUsesTheNewDefaults() {
         AirPlayPersistence.applyDefaultsRevision(context)
-        assertEquals(60, AirPlayPersistence.loadNavDuckPercent(context))
+        assertEquals(75, AirPlayPersistence.loadNavDuckPercent(context))
         assertTrue(AirPlayPersistence.loadAutoFlyScreen(context))
     }
 
-    @Test fun untouchedOldDuckMovesToSixty() {
+    @Test fun untouchedOldDuckMovesToSeventyFive() {
         prefs.edit().putInt("nav_duck_percent", 20).apply()
         AirPlayPersistence.applyDefaultsRevision(context)
-        assertEquals(60, AirPlayPersistence.loadNavDuckPercent(context))
+        assertEquals(75, AirPlayPersistence.loadNavDuckPercent(context))
     }
 
     @Test fun customDuckIsKept() {
