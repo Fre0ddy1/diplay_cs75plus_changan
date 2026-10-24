@@ -1606,8 +1606,8 @@ class CarPlayHostActivity : ComponentActivity() {
             presentation.setSong(clusterSong)
             presentation.setSongArtwork(CarPlayMediaKeys.currentArtwork())
             // Every card here is drawn by us, and which of them exists is decided by the
-            // presentation itself: it creates them only in nav-only mode and only for the switches
-            // the driver turned on, and destroys them the moment the dashboard leaves that mode.
+            // presentation itself: the turn card only in nav-only mode, the ETA and song cards in
+            // both modes, each of the drawn cards only for the switches the driver turned on.
             // The "dashboard shows" content setting deliberately plays no part - it only picks
             // which URL the phone streams, never whether our cards exist (field requirement
             // 2026-10-24: a card must not appear over CarPlay's own picture just because the
@@ -1615,12 +1615,14 @@ class CarPlayHostActivity : ComponentActivity() {
             if (changanCards) {
                 presentation.setTurnCardGuidance(clusterTurnGuidance)
                 presentation.setEtaGuidance(clusterTurnGuidance)
-                presentation.setRoadNameGuidance(clusterTurnGuidance)
             } else {
                 presentation.setTurnCardGuidance(if (overlay) clusterTurnGuidance else null)
                 presentation.setEtaGuidance(null)
-                presentation.setRoadNameGuidance(null)
             }
+            // Apple's own full-navigation card window (FLY_CARD) keeps its position in the same
+            // per-card store, so a change to it must reach the live window too - not only the next
+            // time the phone starts sending that stream.
+            presentation.refreshCardWindowPosition()
         }
     }
 

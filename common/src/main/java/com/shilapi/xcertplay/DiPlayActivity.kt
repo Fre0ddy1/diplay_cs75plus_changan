@@ -894,9 +894,11 @@ class DiPlayActivity : ComponentActivity() {
                         AirPlayPersistence.loadClusterCardX(this, "eta"),
                         AirPlayPersistence.loadClusterCardY(this, "eta"),
                     ),
-                    "road" to Pair(
-                        AirPlayPersistence.loadClusterCardX(this, "road"),
-                        AirPlayPersistence.loadClusterCardY(this, "road"),
+                    // The Apple full-navigation card WINDOW (FLY_CARD). Same store as the drawn
+                    // cards, different key: the phone paints that card, we only place the window.
+                    "apple" to Pair(
+                        AirPlayPersistence.loadClusterCardX(this, "apple"),
+                        AirPlayPersistence.loadClusterCardY(this, "apple"),
                     ),
                     "exit" to Pair(
                         AirPlayPersistence.loadClusterCardX(this, "exit"),
@@ -1018,8 +1020,42 @@ class DiPlayActivity : ComponentActivity() {
                         })
                     }
                 }
+                /**
+                 * X/Y inputs for a card WINDOW we only place, never draw (the Apple
+                 * full-navigation card).
+                 *
+                 * No show switch and no size slider on purpose: the window exists only while the
+                 * phone streams that card (nothing to hide), and its size is the stream's own
+                 * picture, so it cannot be scaled. Typing only updates pendingXY; the position is
+                 * written by the Apply & save button below - which also works with no window on
+                 * screen, the value then takes effect the next time the window is built.
+                 */
+                fun addWindowOffsetInputs(title: String, cardId: String, description: String) {
+                    cardGroup(card, title) { group ->
+                        group.addView(label(description, 13, MUTED).apply {
+                            setPadding(0, 0, 0, dp(6))
+                        })
+                        group.addView(LinearLayout(this).apply {
+                            orientation = LinearLayout.HORIZONTAL
+                            gravity = Gravity.CENTER_VERTICAL
+                            setPadding(0, dp(8), 0, 0)
+                            addView(label(getString(R.string.cluster_card_horizontal), 15, TEXT, true), LinearLayout.LayoutParams(0, -2, 1f))
+                            addView(numberInput(pendingXY[cardId]?.first ?: 0, 1920) { v ->
+                                pendingXY[cardId] = Pair(v, pendingXY[cardId]?.second ?: 0)
+                            }, LinearLayout.LayoutParams(dp(150), dp(48)).apply { leftMargin = dp(8) })
+                        })
+                        group.addView(LinearLayout(this).apply {
+                            orientation = LinearLayout.HORIZONTAL
+                            gravity = Gravity.CENTER_VERTICAL
+                            setPadding(0, dp(6), 0, dp(6))
+                            addView(label(getString(R.string.cluster_card_vertical), 15, TEXT, true), LinearLayout.LayoutParams(0, -2, 1f))
+                            addView(numberInput(pendingXY[cardId]?.second ?: 0, 720) { v ->
+                                pendingXY[cardId] = Pair(pendingXY[cardId]?.first ?: 0, v)
+                            }, LinearLayout.LayoutParams(dp(150), dp(48)).apply { leftMargin = dp(8) })
+                        })
+                    }
+                }
                 addCardOffsetInputs(getString(R.string.cluster_card_eta_title), "eta", R.string.card_scale_eta) { _, _, _ -> }
-                addCardOffsetInputs(getString(R.string.cluster_card_road_title), "road", R.string.card_scale_road) { _, _, _ -> }
                 addCardOffsetInputs(getString(R.string.cluster_card_song_title), "song", R.string.card_scale_song) { _, _, _ -> }
                 // The song card is sized by its text, so a long title stretches it across the panel.
                 // This caps the text instead, in characters, with "..." marking the cut.
@@ -1097,6 +1133,14 @@ class DiPlayActivity : ComponentActivity() {
                         AirPlayPersistence.saveClusterSongCardAlpha(this, percent)
                     }
                 }
+                // The card window of Apple's own full-navigation stream (FLY_CARD). Listed after the
+                // cards we draw because it is the only entry here that moves something the phone
+                // paints, not something of ours - and it shares the same Apply & save button.
+                addWindowOffsetInputs(
+                    getString(R.string.cluster_card_apple_window_title),
+                    "apple",
+                    getString(R.string.cluster_card_apple_window_desc),
+                )
                 card.addView(button(getString(R.string.cluster_card_position_apply), false) {
                     pendingXY.forEach { (id, pair) ->
                         if (id == "turn") {

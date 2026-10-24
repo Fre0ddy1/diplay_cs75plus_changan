@@ -13,9 +13,10 @@ import java.util.Locale
  * ETA card drawn by DiPlay at the bottom-left of the dashboard, mirroring the stock
  * navigation arrival strip ("21:40到达 · 11分钟 · 8.4公里").
  *
- * Shown only in nav-only mode (the host controls visibility via the presentation's
- * mode). The data is the same iAP2 route-guidance payload that feeds the turn card:
- * arrivalEpochSeconds / remainingSeconds / remainingMeters from 0x5201.
+ * Shown in BOTH dashboard modes - nav-only and whole-screen mirror (the host feeds
+ * setEtaGuidance() in either one, and only the presentation's per-mode visibility rule
+ * decides whether this view exists). The data is the same iAP2 route-guidance payload that
+ * feeds the turn card: arrivalEpochSeconds / remainingSeconds / remainingMeters from 0x5201.
  *
  * Visual language follows the turn card: dark glass capsule, hairline stroke, white
  * arrival line on top, dimmer remaining-time/remaining-distance line underneath.

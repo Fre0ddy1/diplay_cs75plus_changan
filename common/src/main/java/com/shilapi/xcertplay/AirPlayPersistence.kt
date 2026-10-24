@@ -826,10 +826,13 @@ object AirPlayPersistence {
     /**
      * Per-card size as a percentage of its designed size.
      *
-     * These replace the old SMALL/MEDIUM/LARGE preset: three steps were never enough to fit four
-     * different cards on one dashboard, and a driver who wanted "a bit smaller than medium" had no
-     * way to ask for it. 100 % is exactly the old MEDIUM, so nobody's layout moves until they touch
-     * the control. Cards are keyed the same way as their positions ("turn", "eta", "lane", "road").
+     * These replace the old SMALL/MEDIUM/LARGE preset: three steps were never enough to fit the
+     * cards side by side on one dashboard (three drawn cards - turn, ETA, song - today), and a
+     * driver who wanted "a bit smaller than medium" had no way to ask for it. 100 % is exactly the
+     * old MEDIUM, so nobody's layout moves until they touch the control. Cards are keyed the same
+     * way as their positions ("turn", "eta", "lane", "song"); Apple's full-navigation card WINDOW
+     * ("apple") is deliberately absent - its size is the stream's own picture, so it is not
+     * scalable.
      */
     fun loadClusterCardScalePercent(context: Context, card: String): Int =
         context.getSharedPreferences(PREFS, Context.MODE_PRIVATE)
@@ -906,15 +909,17 @@ object AirPlayPersistence {
 
     private fun clusterCardDefaultX(card: String): Int = when (card) {
         // Field-tested defaults (UNI-V, full 1920x720 dashboard canvas): lane on the left
-        // edge, eta to the right, road upper-right, exit at the top-right (matching the
-        // position preview; the old left-edge default put the badge under the turn card,
-        // which looked like a stray number on the left side of the cluster).
+        // edge, eta to the right, exit at the top-right (matching the position preview; the
+        // old left-edge default put the badge under the turn card, which looked like a stray
+        // number on the left side of the cluster).
         // Song card: left edge of a text-sized capsule; 780 centres a typical title on 1920.
+        // "apple" is the card WINDOW of the full-navigation (FLY_CARD) stream, not a drawn
+        // card: it must default to the panel origin instead of falling through to else's 43.
         "song" -> 780
         "lane" -> 0
         "eta" -> 1600
-        "road" -> 1400
         "exit" -> 1700
+        "apple" -> 0
         else -> 43
     }
 
@@ -922,8 +927,8 @@ object AirPlayPersistence {
         "song" -> 20
         "lane" -> 300
         "eta" -> 500
-        "road" -> 100
         "exit" -> 43
+        "apple" -> 0
         else -> 43
     }
 
@@ -967,12 +972,12 @@ object AirPlayPersistence {
     /**
      * Per-card show/hide switch.
      *
-     * ETA and road-name cards default off; the song card defaults on. The turn card has its own
+     * The ETA card defaults off; the song card defaults on. The turn card has its own
      * switch ([loadClusterTurnCardVisible]) and also defaults off. A stored value always wins.
      */
     fun loadClusterCardVisible(context: Context, card: String): Boolean {
         val default = when (card) {
-            "eta", "road" -> false
+            "eta" -> false
             else -> true
         }
         return context.getSharedPreferences(PREFS, Context.MODE_PRIVATE)
@@ -1025,9 +1030,8 @@ object AirPlayPersistence {
                 "eta=${loadClusterCardX(context, "eta")},${loadClusterCardY(context, "eta")} " +
                 "scale=${loadClusterCardScalePercent(context, "eta")} " +
                 "visible=${loadClusterCardVisible(context, "eta")} | " +
-                "road=${loadClusterCardX(context, "road")},${loadClusterCardY(context, "road")} " +
-                "scale=${loadClusterCardScalePercent(context, "road")} " +
-                "visible=${loadClusterCardVisible(context, "road")}",
+                "appleWindow=${loadClusterCardX(context, "apple")}," +
+                "${loadClusterCardY(context, "apple")}",
         )
         appendLine(
             "Saved lyrics card: pos=${loadClusterCardX(context, "song")}," +

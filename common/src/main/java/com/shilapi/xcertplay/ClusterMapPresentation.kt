@@ -62,9 +62,16 @@ internal class ClusterMapPresentation(
     private val flyCard: Boolean = false,
 ) : Presentation(context, display) {
     private var waitingLabel: TextView? = null
+    /**
+     * The turn/instruction card. Nav-only mode only (A1): the whole-screen mirror must stay the
+     * raw mirror picture, so this view does not exist while the dashboard shows it.
+     */
     private var turnCardView: ClusterTurnCardView? = null
+    /**
+     * The arrival (ETA) card. Shown in BOTH modes - nav-only and whole-screen mirror (A2): the
+     * driver wants the arrival estimate next to CarPlay's own picture as well.
+     */
     private var etaCardView: ClusterEtaCardView? = null
-    private var roadNameCardView: ClusterRoadNameView? = null
     /** Song now playing, top centre. Title/artist only - the protocol carries no lyrics. */
     private var songView: ClusterSongView? = null
     private var genericTextureView: TextureView? = null
@@ -77,6 +84,11 @@ internal class ClusterMapPresentation(
     /** Current decoded picture size of the instruction-card stream, in its own pixels. */
     private var cardVideoWidth = CarPlayClusterDisplay.CARD_WIDTH_PIXELS
     private var cardVideoHeight = CarPlayClusterDisplay.CARD_HEIGHT_PIXELS
+    /** Panel coordinates the card window was last laid out at, i.e. AFTER the clamp (FLY_CARD). */
+    private var cardWindowLeft = CARD_LEFT_PX
+    private var cardWindowTop = CARD_TOP_PX
+    /** The 0x0-panel warning is emitted once per window, not on every per-second refresh. */
+    private var cardWindowSizeWarned = false
     private val projectionSize: Point = sizeOf(display)
     var mirrorOutputSurface: Surface? = null
         private set
@@ -85,16 +97,16 @@ internal class ClusterMapPresentation(
     var cardOutputSurface: Surface? = null
         private set
 
-    // Nav-only card group state. When navOnlyCards is true (Chang'an generic path) the turn,
-    // ETA and lane cards are visible ONLY in nav-only mode: whole-screen mirror shows the raw
-    // cropped mirror, no cards. DiLink 5.1 keeps the upstream behavior (turn card follows the
-    // "dashboard shows" content setting, no ETA/lane cards).
+    // Nav-only card group state. When navOnlyCards is true (Chang'an generic path) the group
+    // belongs to the navigation stream: the turn card exists ONLY in nav-only mode, while the
+    // ETA card and the song card are shown in whole-screen mirror mode too (driver requirement
+    // 2026-10-24). DiLink 5.1 keeps the upstream behavior (turn card follows the "dashboard
+    // shows" content setting, no ETA card).
     private var mirrorMode = false
     /** Last mode requested by the host, kept even while the TextureViews are still being created. */
     private var desiredMirror = AirPlayPersistence.loadClusterMirrorMain(context)
     private var lastTurnGuidance: ClusterTurnGuidance? = null
     private var lastEtaGuidance: ClusterTurnGuidance? = null
-    private var lastRoadNameGuidance: ClusterTurnGuidance? = null
 
     // Per-frame cost killers: card show/hide switches and the fronted-card set are cached.
     // applyCardsVisibility runs on every guidance tick (per second); reading SharedPreferences
@@ -102,9 +114,11 @@ internal class ClusterMapPresentation(
     // Load them at construction: on a cold start the first guidance tick can arrive before any
     // settings change, and the old defaults (true) showed cards the driver had switched off
     // until a reconnect re-read them.
+    //
+    // Only the ETA card is left here: the turn card has its own switch below, the song card is
+    // unconditional, and the road-name card was removed from the product (A3).
     private var cardVisibleCache: Map<String, Boolean> = mapOf(
         "eta" to AirPlayPersistence.loadClusterCardVisible(context, "eta"),
-        "road" to AirPlayPersistence.loadClusterCardVisible(context, "road"),
     )
     private var turnCardVisibleCache = AirPlayPersistence.loadClusterTurnCardVisible(context)
     private var frontedCards: List<View> = emptyList()
@@ -340,10 +354,10 @@ internal class ClusterMapPresentation(
             //
             // It exists only while the phone is actually sending that stream AND there is
             // guidance to show: createCardWindow() builds a TextureView sized to the stream's own
-            // picture and drops it at the panel's upper-left corner, destroyCardWindow() removes
-            // it again. Nothing of ours is ever drawn around it - no background, no mask, no
-            // stroke - so the dashboard shows exactly the frames the phone sends, and nothing at
-            // all when it sends none. See setCardStreamActive().
+            // picture and drops it at the saved position (default: the panel's upper-left
+            // corner), destroyCardWindow() removes it again. Nothing of ours is ever drawn around
+            // it - no background, no mask, no stroke - so the dashboard shows exactly the frames
+            // the phone sends, and nothing at all when it sends none. See setCardStreamActive().
         }
         waitingLabel = TextView(context).apply {
             text = context.getString(R.string.cluster_waiting_for_map)
@@ -354,12 +368,9 @@ internal class ClusterMapPresentation(
         root.addView(waitingLabel, FrameLayout.LayoutParams(videoParams))
         // The guidance cards are NOT created here.
         //
-        // They belong to the navigation stream only, and the driver's rule is that a dashboard
-        // which is not showing that stream must have none of them at all - not hidden, not
-        // created - so nothing can flash over CarPlay's own picture before it arrives, and no
-        // leftover card can appear when the mode changes. setMode() creates them from the saved
-        // switches once the window is known to be nav-only, which happens before the stream is
-        // shown.
+        // They are created by applyCardsVisibility() from the saved switches, BEFORE the stream is
+        // shown: the turn card only in nav-only mode, the ETA card in both modes (A1/A2). Creating
+        // them here would let a card flash over CarPlay's own picture before it arrives.
         cardsRoot = root
         // TEMPORARY EXCLUSION TEST (driver's request, 2026-10-24).
         //
@@ -369,6 +380,11 @@ internal class ClusterMapPresentation(
         // Set to false to restore the cards.
         if (!CARDS_DISABLED && !flyCard) {
             // Added last so it draws above the guidance cards.
+            //
+            // The song card - like the ETA card - is shown in EVERY mode (A4): it is created once
+            // here and lives until the window dies. Nothing in the mode or guidance paths ever
+            // hides or destroys it, and ClusterSongView decides its own visibility purely from
+            // whether a song is playing.
             songView = ClusterSongView(context).apply { visibility = View.GONE }
             root.addView(songView, FrameLayout.LayoutParams(-1, -1))
         }
@@ -376,25 +392,24 @@ internal class ClusterMapPresentation(
     }
 
     /**
-     * Selects which resident stream is displayed on the dashboard: whole-screen mirror (110) or
-     * navigation stream only (111). Both decoder surfaces stay bound to the sink - only the view
-     * visibility changes, so the incall service never sees a 111 (re-)activation and does not
-     * announce "全屏导航已开启". On the DiLink 5.1 layout (single TextureView) the mode is a no-op.
-     */
-    /**
      * Creates the guidance cards the driver's switches ask for.
      *
-     * Only ever called in nav-only mode. Everything here is idempotent: an existing card is left
-     * alone, a missing one is created with the guidance data already known, and the music card is
-     * never touched because it belongs to every mode.
+     * Two different rules live here (driver's requirements, 2026-10-24):
+     * - the TURN card belongs to the navigation stream only: it is never created while the
+     *   dashboard shows the whole-screen mirror (A1);
+     * - the ETA card is shown in both modes, mirror included (A2).
+     * Everything here is idempotent: an existing card is left alone, a missing one is created
+     * with the guidance data already known, and the music card is never touched because it
+     * belongs to every mode.
      */
     private fun materializeGuidanceCards() {
         if (CARDS_DISABLED) return
         // Pure-Apple mode draws no card of ours: iOS already paints the turn card in the stream.
         if (flyCard) return
         val root = cardsRoot ?: return
-        if (mirrorMode) return
-        if (turnCardView == null && turnCardVisibleCache) {
+        // Turn card: nav-only stream only. iOS's own instruction box is the whole picture of the
+        // mirror stream, and a second card on top of it was exactly the "glass box" confusion.
+        if (!mirrorMode && turnCardView == null && turnCardVisibleCache) {
             turnCardView = ClusterTurnCardView(context).apply { visibility = View.GONE }
             root.addView(turnCardView, FrameLayout.LayoutParams(-1, -1))
             // A rebuilt card starts at its own defaults, so restore the driver's saved geometry
@@ -406,45 +421,48 @@ internal class ClusterMapPresentation(
             )
             turnCardView?.setGuidance(lastTurnGuidance)
         }
+        // ETA card: both modes (A2). The host feeds setEtaGuidance() in either mode.
         if (etaCardView == null && (cardVisibleCache["eta"] ?: true)) {
             etaCardView = ClusterEtaCardView(context).apply { visibility = View.GONE }
             root.addView(etaCardView, FrameLayout.LayoutParams(-1, -1))
             etaCardView?.setGuidance(lastEtaGuidance)
         }
-        if (roadNameCardView == null && (cardVisibleCache["road"] ?: true)) {
-            roadNameCardView = ClusterRoadNameView(context).apply { visibility = View.GONE }
-            root.addView(roadNameCardView, FrameLayout.LayoutParams(-1, -1))
-            roadNameCardView?.setGuidance(lastRoadNameGuidance)
-        }
         // The cards are inserted after the video surfaces, so they must be raised again.
-        listOfNotNull(turnCardView, etaCardView, roadNameCardView).forEach { it.bringToFront() }
+        listOfNotNull(turnCardView, etaCardView).forEach { it.bringToFront() }
         // The music card was added after the guidance cards in onCreate; keep it on top.
         songView?.bringToFront()
         Log.i(
             TAG,
             "guidance cards created turn=${turnCardView != null} eta=${etaCardView != null} " +
-                "road=${roadNameCardView != null} (mode=${if (mirrorMode) "mirror" else "nav-only"})",
+                "(mode=${if (mirrorMode) "mirror" else "nav-only"})",
         )
     }
 
     /**
-     * Removes every guidance card from the window.
+     * Removes the turn card from the window.
      *
      * Destroyed rather than hidden: a hidden view can still be brought back by a stray
-     * setGuidance(), and the driver's complaint was exactly that a card stayed on screen after the
-     * dashboard left nav-only mode. The music card stays - it belongs to every mode.
+     * setGuidance(), and the driver's complaint was exactly that a card stayed on screen after
+     * the dashboard left nav-only mode. ONLY the turn card goes away with the navigation stream:
+     * the ETA card and the music card are shown in both modes, so they are deliberately left
+     * untouched here (A2/A4).
      */
-    private fun destroyGuidanceCards() {
+    private fun destroyTurnCard() {
         val root = cardsRoot ?: return
-        val had = listOfNotNull(turnCardView, etaCardView, roadNameCardView)
-        had.forEach { root.removeView(it) }
+        val view = turnCardView ?: return
+        root.removeView(view)
         turnCardView = null
-        etaCardView = null
-        roadNameCardView = null
+        // Force the next visibility pass to re-front the remaining cards.
         frontedCards = emptyList()
-        if (had.isNotEmpty()) Log.i(TAG, "guidance cards destroyed count=${had.size}")
+        Log.i(TAG, "turn card destroyed")
     }
 
+    /**
+     * Selects which resident stream is displayed on the dashboard: whole-screen mirror (110) or
+     * navigation stream only (111). Both decoder surfaces stay bound to the sink - only the view
+     * visibility changes, so the incall service never sees a 111 (re-)activation and does not
+     * announce "全屏导航已开启". On the DiLink 5.1 layout (single TextureView) the mode is a no-op.
+     */
     fun setMode(mirror: Boolean) {
         // Pure-Apple branch (2026-10-24): the dashboard is ALWAYS the full-screen 111 stream
         // (instruments URL), whatever mode request arrives (three-finger swipe, auto navigation
@@ -469,7 +487,8 @@ internal class ClusterMapPresentation(
         // asynchronously and either may report first, so card lifecycle must not be behind that
         // check. This is what guarantees the decision is made before the stream is shown.
         if (navOnlyCards) {
-            if (mirror) destroyGuidanceCards() else materializeGuidanceCards()
+            // One pass decides everything: the turn card follows the mode, the ETA card is
+            // created in both modes (applyCardsVisibility -> materializeGuidanceCards).
             applyCardsVisibility()
         }
         val nav = navTextureView ?: return
@@ -508,8 +527,9 @@ internal class ClusterMapPresentation(
 
     /**
      * Builds the window from the stream's own picture: no background, no rounded mask, no stroke,
-     * parked at the panel's upper-left corner. Frames arrive straight from the decoder surface, so
-     * one stream pixel is one panel pixel.
+     * at the driver's saved position (default: the panel's upper-left corner, see
+     * cardWindowParams()). Frames arrive straight from the decoder surface, so one stream pixel is
+     * one panel pixel.
      */
     private fun createCardWindow() {
         val root = rootView ?: return
@@ -547,7 +567,7 @@ internal class ClusterMapPresentation(
         }
         cardView.clipToOutline = true
         root.addView(cardView, cardWindowParams())
-        Log.i(TAG, "cluster card window created ${cardVideoWidth}x$cardVideoHeight")
+        Log.i(TAG, "cluster card window created ${cardVideoWidth}x$cardVideoHeight at $cardWindowLeft,$cardWindowTop")
     }
 
     /** Drops the window and its surface; the host releases the decoder with it. */
@@ -572,16 +592,114 @@ internal class ClusterMapPresentation(
         cardVideoHeight = height
         val view = cardTextureView ?: return
         view.surfaceTexture?.setDefaultBufferSize(width, height)
+        // A different picture size moves the clamp ceiling as well, so the position is resolved
+        // again from the saved (x, y) instead of reusing the previous layout.
         view.layoutParams = cardWindowParams()
-        Log.i(TAG, "cluster card picture ${width}x$height window=${width}x$height at ${CARD_LEFT_PX},${CARD_TOP_PX}")
+        Log.i(
+            TAG,
+            "cluster card picture ${width}x$height window=${cardVideoWidth}x$cardVideoHeight " +
+                "at $cardWindowLeft,$cardWindowTop",
+        )
     }
 
-    /** Upper-left card window: exactly the stream's own picture size, parked at the origin. */
-    private fun cardWindowParams(): FrameLayout.LayoutParams =
-        FrameLayout.LayoutParams(cardVideoWidth, cardVideoHeight, Gravity.TOP or Gravity.LEFT).apply {
-            leftMargin = CARD_LEFT_PX
-            topMargin = CARD_TOP_PX
+    /**
+     * Re-applies the saved card-window position to the live window (settings change, B4).
+     *
+     * The window only exists while the phone streams the card AND there is guidance, so a
+     * position change usually arrives with no view at all: the saved coordinates then simply take
+     * effect the next time createCardWindow() runs (B7). The clamp runs either way, so an
+     * impossible coordinate is corrected in the saved value as soon as it is read.
+     */
+    fun refreshCardWindowPosition() {
+        if (!flyCard) return
+        // Built BEFORE the null check on purpose: cardWindowParams() also clamps and silently
+        // corrects an out-of-bounds saved value, and that has to keep working while no window
+        // exists (a coordinate saved before the first stream must not stay impossible).
+        val params = cardWindowParams()
+        val view = cardTextureView ?: return
+        val applied = view.layoutParams as? FrameLayout.LayoutParams
+        // The host reaches this from applyClusterTurnOverlay(), which the guidance/ETA tick drives
+        // once per second. Assigning layoutParams requests a layout pass of the whole window, and
+        // this codebase treats per-second relayout as a bug (see the fronted-card cache in
+        // applyCardsVisibility and ClusterEtaCardView's first-show-only bringToFront), so an
+        // unchanged position costs nothing here.
+        //
+        // The comparison is against what the VIEW carries (leftMargin/topMargin/width/height),
+        // not against a second copy of those values in fields: one source of truth cannot drift
+        // out of sync with the view after a window is created or destroyed. A window that
+        // createCardWindow() just added already carries the right params and is skipped too; the
+        // first real move is what requests the layout.
+        if (applied != null &&
+            applied.width == params.width &&
+            applied.height == params.height &&
+            applied.leftMargin == params.leftMargin &&
+            applied.topMargin == params.topMargin
+        ) {
+            return
         }
+        view.layoutParams = params
+        Log.i(
+            TAG,
+            "cluster card window moved to $cardWindowLeft,$cardWindowTop ${params.width}x${params.height}",
+        )
+    }
+
+    /**
+     * The card window's layout: exactly the stream's own picture size, at the driver's saved
+     * position.
+     *
+     * The position is clamped so the window can never leave the dashboard. The driver types plain
+     * pixel coordinates relative to the panel's upper-left corner (0..1920 / 0..720) and can
+     * easily push the card past an edge, which would leave half of it outside the cluster with no
+     * way back. A corrected value is persisted SILENTLY: notifying the settings listener from
+     * inside a layout pass would cascade into another apply/refresh round (see
+     * AirPlayPersistence.saveClusterCardXSilent).
+     */
+    private fun cardWindowParams(): FrameLayout.LayoutParams {
+        // A panel that has not reported its size yet (getRealSize can hand back 0 while the
+        // display is being brought up) is NOT a 0x0 dashboard: clamping against it would collapse
+        // every coordinate to 0 and the silent write-back below would permanently overwrite the
+        // driver's saved position. Fall back to the panel origin and write NOTHING.
+        if (projectionSize.x <= 0 || projectionSize.y <= 0) {
+            // Once per window, not once per tick: this path is reached from the per-second
+            // overlay refresh as well, and a repeated warning would bury the log.
+            if (!cardWindowSizeWarned) {
+                cardWindowSizeWarned = true
+                Log.w(
+                    TAG,
+                    "cluster card window: panel size ${projectionSize.x}x${projectionSize.y}, " +
+                        "keeping saved position",
+                )
+            }
+            cardWindowLeft = CARD_LEFT_PX
+            cardWindowTop = CARD_TOP_PX
+            return FrameLayout.LayoutParams(cardVideoWidth, cardVideoHeight, Gravity.TOP or Gravity.LEFT).apply {
+                leftMargin = CARD_LEFT_PX
+                topMargin = CARD_TOP_PX
+            }
+        }
+        val maxLeft = (projectionSize.x - cardVideoWidth).coerceAtLeast(0)
+        val maxTop = (projectionSize.y - cardVideoHeight).coerceAtLeast(0)
+        val savedLeft = AirPlayPersistence.loadClusterCardX(context, CARD_WINDOW_CARD_ID)
+        val savedTop = AirPlayPersistence.loadClusterCardY(context, CARD_WINDOW_CARD_ID)
+        val left = savedLeft.coerceIn(0, maxLeft)
+        val top = savedTop.coerceIn(0, maxTop)
+        if (left != savedLeft) AirPlayPersistence.saveClusterCardXSilent(context, CARD_WINDOW_CARD_ID, left)
+        if (top != savedTop) AirPlayPersistence.saveClusterCardYSilent(context, CARD_WINDOW_CARD_ID, top)
+        if (left != cardWindowLeft || top != cardWindowTop) {
+            Log.i(
+                TAG,
+                "cluster card window placed x=$savedLeft->$left y=$savedTop->$top " +
+                    "limit=$maxLeft,$maxTop on ${projectionSize.x}x${projectionSize.y}",
+            )
+        }
+        cardWindowLeft = left
+        cardWindowTop = top
+        return FrameLayout.LayoutParams(cardVideoWidth, cardVideoHeight, Gravity.TOP or Gravity.LEFT).apply {
+            leftMargin = left
+            topMargin = top
+        }
+    }
 
     /** Current display mode (true = whole-screen mirror, false = nav-only), for diagnostics. */
     fun isMirrorMode(): Boolean = mirrorMode
@@ -595,7 +713,7 @@ internal class ClusterMapPresentation(
      */
     fun cardsSummary(): String =
         "turnCard=${turnCardView != null} etaCard=${etaCardView != null} " +
-            "roadCard=${roadNameCardView != null} songCard=${songView != null}"
+            "songCard=${songView != null} cardWindow=${cardTextureView != null}"
 
     /** Window alpha hides the pixels without destroying the TextureView/decoder surface. */
     fun setMapVisible(visible: Boolean) {
@@ -621,7 +739,7 @@ internal class ClusterMapPresentation(
 
     /**
      * Live refresh of every nav card after a settings change: the turn card re-applies
-     * its layout, the four absolute-position cards just invalidate and re-read the new
+     * its layout, the absolute-position cards just invalidate and re-read the new
      * (x, y) from persistence in onDraw. Called from the overlay-settings listener so a
      * saved position change is visible on the dashboard immediately.
      */
@@ -633,8 +751,7 @@ internal class ClusterMapPresentation(
         )
         // Drop each card's cached position so the next draw reloads the saved coordinates.
         etaCardView?.notifyPositionChanged()
-        roadNameCardView?.notifyPositionChanged()
-        // Deliberately outside the nav-only group: the mirror mode shows it as well.
+        // Deliberately outside the nav-only group: the mirror mode shows these as well.
         songView?.notifyPositionChanged()
         // Reload the show/hide switches, then a saved switch change re-applies visibility right away.
         reloadCardVisibilityCache()
@@ -670,52 +787,39 @@ internal class ClusterMapPresentation(
         if (navOnlyCards) applyCardsVisibility()
     }
 
-    fun setRoadNameGuidance(guidance: ClusterTurnGuidance?) {
-        lastRoadNameGuidance = guidance
-        roadNameCardView?.setGuidance(guidance)
-        if (navOnlyCards) applyCardsVisibility()
-    }
-
     /**
-     * Nav-only card group visibility. Whole-screen mirror shows the raw cropped mirror with
-     * NO cards; nav-only mode shows the turn card and the ETA card whenever their guidance
-     * data is present. DiLink 5.1 (navOnlyCards=false) never reaches this branch.
+     * Nav-only card group visibility, per mode.
+     *
+     * Whole-screen mirror: the TURN card must not exist (A1) - the mirror picture is Apple's own,
+     * with its own instruction box - but the ETA card stays (A2). This used to destroy the whole
+     * guidance group, which is why the arrival card vanished the moment the driver mirrored the
+     * phone.
+     *
+     * Nav-only: the driver's switches alone decide which cards exist. DiLink 5.1
+     * (navOnlyCards=false) never reaches this branch.
      *
      * Each view's setGuidance() is the authority on its own visibility (turn needs guidance,
-     * ETA needs arrival/remaining, road needs a road name), so here we only hide everything in
-     * mirror mode, honour the user's per-card show/hide switch, and raise the visible cards above
-     * the video layer in nav-only mode. Never force a card VISIBLE here without the same data
-     * check - that would show an empty glass block.
+     * ETA needs arrival/remaining), so here we only create/destroy by mode and switch, and raise
+     * the visible cards above the video layer. Never force a card VISIBLE here without the same
+     * data check - that would show an empty glass block.
      */
     private fun applyCardsVisibility() {
         if (!navOnlyCards) return
         // Fly-card mode: no guidance cards exist, ever (see materializeGuidanceCards).
         if (flyCard) return
-        // Not the navigation stream: no guidance card may exist, whatever the switches say.
-        if (mirrorMode) {
-            destroyGuidanceCards()
-            return
-        }
-        // Nav-only: the driver's switches alone decide which cards exist. A card whose switch was
-        // turned off while it was on screen is destroyed here, and one whose switch was turned on
-        // is created - so a settings change is reflected without waiting for the next mode change.
-        // The music card is not in this group: it is drawn in every mode.
-        if (!turnCardVisibleCache) {
-            turnCardView?.let { cardsRoot?.removeView(it) }
-            turnCardView = null
-        }
+        // Not the navigation stream: only the turn card goes away, everything else stays.
+        if (mirrorMode || !turnCardVisibleCache) destroyTurnCard()
         if (cardVisibleCache["eta"] == false) {
-            etaCardView?.let { cardsRoot?.removeView(it) }
+            etaCardView?.let {
+                cardsRoot?.removeView(it)
+                frontedCards = emptyList()
+            }
             etaCardView = null
-        }
-        if (cardVisibleCache["road"] == false) {
-            roadNameCardView?.let { cardsRoot?.removeView(it) }
-            roadNameCardView = null
         }
         materializeGuidanceCards()
         // bringToFront() triggers a layout pass, so only re-front when the visible set
         // actually changed — guidance ticks every second and must not requestLayout each time.
-        val visibleNow = listOfNotNull(turnCardView, etaCardView, roadNameCardView)
+        val visibleNow = listOfNotNull(turnCardView, etaCardView)
             .filter { it.visibility == View.VISIBLE }
         if (visibleNow != frontedCards) {
             frontedCards = visibleNow
@@ -727,7 +831,6 @@ internal class ClusterMapPresentation(
     private fun reloadCardVisibilityCache() {
         cardVisibleCache = mapOf(
             "eta" to AirPlayPersistence.loadClusterCardVisible(context, "eta"),
-            "road" to AirPlayPersistence.loadClusterCardVisible(context, "road"),
         )
         turnCardVisibleCache = AirPlayPersistence.loadClusterTurnCardVisible(context)
     }
@@ -736,24 +839,37 @@ internal class ClusterMapPresentation(
         const val TAG = "DiPlay-Cluster"
 
         // —— Instruction-card window (FLY_CARD), in panel pixels ——
-        // Parked at the panel's upper-left corner and sized to the stream's own picture, so the
-        // card arrives and is shown 1:1. No background, mask or stroke of ours: an earlier build
-        // drew a translucent panel of a guessed size and stretched the picture into it, which is
-        // what looked like a large black slab. The card display is advertised with a card-shaped
-        // canvas (CarPlayClusterDisplay.CARD_*), so the picture itself is compact.
+        // Sized to the stream's own picture, so the card arrives and is shown 1:1. No background,
+        // mask or stroke of ours: an earlier build drew a translucent panel of a guessed size and
+        // stretched the picture into it, which is what looked like a large black slab. The card
+        // display is advertised with a card-shaped canvas (CarPlayClusterDisplay.CARD_*), so the
+        // picture itself is compact.
+        //
+        // The POSITION is the driver's to set (settings: "Apple 完整导航卡位置", B1-B5); these two
+        // constants are only the panel-origin default, kept as the initial value of the live
+        // coordinates before the first layout resolves them from persistence.
         const val CARD_LEFT_PX = 0
         const val CARD_TOP_PX = 0
         /** Rounded corners of the card window, in panel pixels. */
         const val CARD_CORNER_RADIUS_PX = 24f
+        /**
+         * The card window's key in the shared per-card position store (AirPlayPersistence).
+         *
+         * "apple" = Apple's OWN full-navigation card, which the phone paints into the stream, as
+         * opposed to the cards we draw ourselves ("turn", "eta", "song"). It only has a position -
+         * no size (the stream drives it) and no show switch (there is nothing to disable when the
+         * phone is sending that stream).
+         */
+        const val CARD_WINDOW_CARD_ID = "apple"
 
         /**
          * Builds a dashboard with no self-drawn card at all.
          *
          * Used once, on 2026-10-24, to settle where a dashboard element comes from: with this true
-         * the log shows cards=turnCard=false etaCard=false roadCard=false songCard=false, and the
-         * glass turn box in the middle was still on screen - so it is Apple's, from its own
-         * instrument-cluster view. Kept as a switch because the same question will come up again;
-         * false is the normal build.
+         * the log shows cards=turnCard=false etaCard=false songCard=false, and the glass turn box
+         * in the middle was still on screen - so it is Apple's, from its own instrument-cluster
+         * view. Kept as a switch because the same question will come up again; false is the
+         * normal build.
          */
         const val CARDS_DISABLED = false
 
