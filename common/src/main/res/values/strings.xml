@@ -380,7 +380,11 @@
     <string name="cluster_content_instruments">Apple full instruments (map + car model + simple turn hint)</string>
     <string name="cluster_content_turn_card">Apple lane guidance card (lanes + junction zoom)</string>
     <string name="cluster_content_custom">Map + cards drawn here (movable)</string>
-    <string name="cluster_content_hint">The multi-lane picture and the junction zoom come from the second option; the first is the whole map with only a simple turn hint. Reconnect after switching.</string>
+    <string name="cluster_content_lane_guide">Lane guidance (laneguide, experimental)</string>
+    <string name="cluster_content_junction_view">Junction zoom (junctionview, experimental)</string>
+    <string name="cluster_content_map_view">Full-screen map (mapview, experimental)</string>
+    <string name="cluster_content_eta_card">ETA card (etacard, experimental)</string>
+    <string name="cluster_content_hint">The first three are the views the phone advertises in altScreenURLs; the experimental ones are not listed there and may stay blank. Switching reconnects, because the URL is fixed when the window is built.</string>
     <string name="cluster_card_song_max_chars">Song card maximum characters</string>
     <string name="cluster_card_song_max_chars_desc">Each line is sized to this many characters: shorter text keeps the full width, longer text wraps to the next line.</string>
     <string name="cluster_card_song_artwork">Show album artwork</string>

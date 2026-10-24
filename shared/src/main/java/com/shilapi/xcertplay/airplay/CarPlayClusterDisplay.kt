@@ -20,14 +20,42 @@ object CarPlayClusterDisplay {
         MAP(MAP_URL),
         TURN_CARD("maps:/car/instrumentcluster/instructioncard"),
         INSTRUMENTS("maps:/car/instrumentcluster"),
+        /**
+         * Experimental cluster views.
+         *
+         * These paths are not in the altScreenURLs list the iPhone advertises on this head unit
+         * (it offers /map, /instructioncard and /instrumentcluster), so iOS may refuse them and
+         * leave the dashboard blank. They are offered because the driver asked to try the whole
+         * documented family: /mapview is a full-screen map, /etacard the ETA card, /laneguide the
+         * multi-lane picture and /junctionview the junction zoom.
+         */
+        MAP_VIEW("maps:/car/instrumentcluster/mapview"),
+        ETA_CARD("maps:/car/instrumentcluster/etacard"),
+        LANE_GUIDE("maps:/car/instrumentcluster/laneguide"),
+        JUNCTION_VIEW("maps:/car/instrumentcluster/junctionview"),
         MAP_WITH_CUSTOM_CARD(MAP_URL),
     }
 
 
     fun usesCustomTurnCard(content: Content): Boolean = content == Content.MAP_WITH_CUSTOM_CARD
 
-    fun usesOfficialTurnCard(content: Content): Boolean =
-        content == Content.TURN_CARD || content == Content.INSTRUMENTS
+    /**
+     * True for every cluster view drawn by the phone rather than by us: those already contain the
+     * turn instruction, so no card of ours belongs on top of them.
+     */
+    fun usesOfficialTurnCard(content: Content): Boolean = when (content) {
+        Content.TURN_CARD,
+        Content.INSTRUMENTS,
+        Content.LANE_GUIDE,
+        Content.JUNCTION_VIEW,
+        Content.MAP_VIEW,
+        Content.ETA_CARD,
+        -> true
+
+        Content.MAP,
+        Content.MAP_WITH_CUSTOM_CARD,
+        -> false
+    }
 
     /**
      * Where the car marker goes, as percent of the panel (left, top, right, bottom). Measured on a

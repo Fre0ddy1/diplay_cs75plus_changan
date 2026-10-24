@@ -288,6 +288,13 @@ class CarPlayHostActivity : ComponentActivity() {
     private var currentSurface: Surface? = null
     private var currentSurfaceTexture: SurfaceTexture? = null
     private var clusterPresentation: ClusterMapPresentation? = null
+    /**
+     * The picture source the current dashboard window was built for.
+     *
+     * CarPlay learns the cluster URL from the window's display config, so it cannot be changed on
+     * a live window - a changed setting needs the window rebuilt. Null before the first build.
+     */
+    private var clusterWindowContent: CarPlayClusterDisplay.Content? = null
     private var clusterSurface: Surface? = null
     // Dual-resident surfaces on the generic (Changan) path: the whole-screen mirror (110) and the
     // navigation stream (111) are BOTH bound to the incall sink from the first projection and stay
@@ -1380,6 +1387,9 @@ class CarPlayHostActivity : ComponentActivity() {
         try {
             presentation.show()
             clusterPresentation = presentation
+            // Remember which picture source this window was built for. The URL is fixed at build
+            // time, so a later change to that setting can only take effect through a rebuild.
+            clusterWindowContent = AirPlayPersistence.loadClusterContent(this)
             // A window built after the auto-switch changed the desired mode must be re-applied on
             // the next tick; this path otherwise uses the saved display choice.
             if (AirPlayPersistence.loadClusterAutoNavMode(this)) autoNavModePending = true
@@ -1450,6 +1460,9 @@ class CarPlayHostActivity : ComponentActivity() {
         try {
             presentation.show()
             clusterPresentation = presentation
+            // Remember which picture source this window was built for. The URL is fixed at build
+            // time, so a later change to that setting can only take effect through a rebuild.
+            clusterWindowContent = AirPlayPersistence.loadClusterContent(this)
             // A window built after the auto-switch changed the desired mode must be re-applied on
             // the next tick; this path otherwise uses the saved display choice.
             if (AirPlayPersistence.loadClusterAutoNavMode(this)) autoNavModePending = true
@@ -5189,6 +5202,21 @@ class CarPlayHostActivity : ComponentActivity() {
     private fun restartCarPlay(reason: String) {
         if (!CarPlayBackgroundSession.isOwner(this) && CarPlayBackgroundSession.hasSession()) return
         if (shuttingDown.get() || menuOpen || handshakeResetInProgress) return
+        // The cluster picture source is fixed when the dashboard window is built (CarPlay only
+        // learns the URL through the window's display config), and the restart below deliberately
+        // keeps that window alive so stream 111 is not re-activated. So a source change would keep
+        // streaming the old URL - the driver's "switching the option did nothing until I
+        // reconnected by hand" (field 2026-10-24). Drop the window here when the saved source no
+        // longer matches the one it was built with, and the rebuilt session asks for the new URL.
+        val savedContent = AirPlayPersistence.loadClusterContent(this)
+        if (clusterWindowContent != null && clusterWindowContent != savedContent) {
+            appendLog(
+                "Cluster: 画面来源已改为 $savedContent，重建仪表窗口以请求新地址" +
+                    "（原 $clusterWindowContent）",
+            )
+            dismissClusterPresentation()
+        }
+        clusterWindowContent = null
         // A full restart tears down the CarPlay stack but MUST keep the cluster projection
         // window: on the generic (Chang'an) path both stream surfaces (110 mirror + 111 nav)
         // stay bound to the incall sink while the window lives, and the rebuilt session's

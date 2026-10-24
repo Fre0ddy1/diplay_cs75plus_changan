@@ -58,6 +58,11 @@ class CarPlayClusterDisplayTest {
                 "maps:/car/instrumentcluster/map",
                 "maps:/car/instrumentcluster/instructioncard",
                 "maps:/car/instrumentcluster",
+                // Experimental family: not advertised in altScreenURLs, offered for testing.
+                "maps:/car/instrumentcluster/mapview",
+                "maps:/car/instrumentcluster/etacard",
+                "maps:/car/instrumentcluster/laneguide",
+                "maps:/car/instrumentcluster/junctionview",
                 "maps:/car/instrumentcluster/map",
             ),
             CarPlayClusterDisplay.Content.entries.map { it.url },

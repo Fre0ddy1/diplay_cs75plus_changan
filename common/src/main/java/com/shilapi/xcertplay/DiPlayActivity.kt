@@ -757,28 +757,27 @@ class DiPlayActivity : ComponentActivity() {
                 // Which cluster content the iPhone streams for the nav-only view. Apple's own views
                 // are the only source of lane guidance and the junction zoom image; the "map + cards"
                 // entry keeps the locally drawn, movable cards.
+                // The order here is the order of the list below; keep both in step.
+                val clusterContentChoices = listOf(
+                    CarPlayClusterDisplay.Content.INSTRUMENTS to R.string.cluster_content_instruments,
+                    CarPlayClusterDisplay.Content.TURN_CARD to R.string.cluster_content_turn_card,
+                    CarPlayClusterDisplay.Content.MAP_WITH_CUSTOM_CARD to R.string.cluster_content_custom,
+                    CarPlayClusterDisplay.Content.LANE_GUIDE to R.string.cluster_content_lane_guide,
+                    CarPlayClusterDisplay.Content.JUNCTION_VIEW to R.string.cluster_content_junction_view,
+                    CarPlayClusterDisplay.Content.MAP_VIEW to R.string.cluster_content_map_view,
+                    CarPlayClusterDisplay.Content.ETA_CARD to R.string.cluster_content_eta_card,
+                )
                 choice(
                     card,
                     getString(R.string.cluster_content_title),
-                    listOf(
-                        getString(R.string.cluster_content_instruments),
-                        getString(R.string.cluster_content_turn_card),
-                        getString(R.string.cluster_content_custom),
-                    ),
-                    when (AirPlayPersistence.loadClusterContent(this)) {
-                        CarPlayClusterDisplay.Content.INSTRUMENTS -> 0
-                        CarPlayClusterDisplay.Content.TURN_CARD -> 1
-                        else -> 2
-                    },
+                    clusterContentChoices.map { getString(it.second) },
+                    clusterContentChoices.indexOfFirst {
+                        it.first == AirPlayPersistence.loadClusterContent(this)
+                    }.coerceAtLeast(0),
                 ) { idx ->
-                    AirPlayPersistence.saveClusterContent(
-                        this,
-                        when (idx) {
-                            0 -> CarPlayClusterDisplay.Content.INSTRUMENTS
-                            1 -> CarPlayClusterDisplay.Content.TURN_CARD
-                            else -> CarPlayClusterDisplay.Content.MAP_WITH_CUSTOM_CARD
-                        },
-                    )
+                    clusterContentChoices.getOrNull(idx)?.let { (content, _) ->
+                        AirPlayPersistence.saveClusterContent(this, content)
+                    }
                     reconnectForClusterMap()
                 }
                 card.addView(label(getString(R.string.cluster_content_hint), 13, MUTED).apply {

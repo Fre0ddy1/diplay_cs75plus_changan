@@ -377,7 +377,11 @@
     <string name="cluster_content_instruments">Apple 完整仪表（地图 + 车标 + 简单转向提示）</string>
     <string name="cluster_content_turn_card">Apple 车道指引卡片（车道图 + 路口放大）</string>
     <string name="cluster_content_custom">地图 + 自绘卡片（位置可调）</string>
-    <string name="cluster_content_hint">多车道指引图和路口放大图来自第二项；第一项是整块地图，只有简单转向提示。两者都是 Apple 的视图，切换后需重连生效。</string>
+    <string name="cluster_content_lane_guide">车道引导（laneguide，实验）</string>
+    <string name="cluster_content_junction_view">路口放大图（junctionview，实验）</string>
+    <string name="cluster_content_map_view">全屏地图（mapview，实验）</string>
+    <string name="cluster_content_eta_card">到达卡片（etacard，实验）</string>
+    <string name="cluster_content_hint">前三项是手机明确支持（altScreenURLs 里列出）的视图；带"实验"的地址不在其中，可能一直黑屏，测出来能用再保留。切换会自动重连，因为地址在建窗口时就定死了。</string>
     <string name="cluster_card_song_max_chars">歌曲卡最大字数</string>
     <string name="cluster_card_song_max_chars_desc">每行按这里的字数排版：不足也保留同样宽度，超出的字换到下一行。</string>
     <string name="cluster_card_song_artwork">显示专辑封面</string>
