@@ -374,10 +374,10 @@
     <string name="instrument_cluster_entire_interface">整个 CarPlay 界面（镜像同步）</string>
     <string name="instrument_cluster_navigation_stream">导航仪表流（仅导航画面）</string>
     <string name="cluster_content_title">仅导航模式下仪表盘画面来源</string>
-    <string name="cluster_content_instruments">Apple 完整导航界面（含车道指引与路口放大）</string>
-    <string name="cluster_content_turn_card">Apple 车道指引卡片</string>
+    <string name="cluster_content_instruments">Apple 完整仪表（地图 + 车标 + 简单转向提示）</string>
+    <string name="cluster_content_turn_card">Apple 车道指引卡片（车道图 + 路口放大）</string>
     <string name="cluster_content_custom">地图 + 自绘卡片（位置可调）</string>
-    <string name="cluster_content_hint">只有 Apple 界面才带路口放大示意图；切换后需重连生效。</string>
+    <string name="cluster_content_hint">多车道指引图和路口放大图来自第二项；第一项是整块地图，只有简单转向提示。两者都是 Apple 的视图，切换后需重连生效。</string>
     <string name="cluster_card_song_max_chars">歌曲卡最大字数</string>
     <string name="cluster_card_song_max_chars_desc">每行按这里的字数排版：不足也保留同样宽度，超出的字换到下一行。</string>
     <string name="cluster_card_song_artwork">显示专辑封面</string>
