@@ -64,7 +64,7 @@ internal class ClusterMapPresentation(
     // ETA and lane cards are visible ONLY in nav-only mode: whole-screen mirror shows the raw
     // cropped mirror, no cards. DiLink 5.1 keeps the upstream behavior (turn card follows the
     // "dashboard shows" content setting, no ETA/lane cards).
-    private var mirrorMode = true
+    private var mirrorMode = false
     /** Last mode requested by the host, kept even while the TextureViews are still being created. */
     private var desiredMirror = AirPlayPersistence.loadClusterMirrorMain(context)
     private var lastTurnGuidance: ClusterTurnGuidance? = null

@@ -1517,8 +1517,17 @@ class CarPlayHostActivity : ComponentActivity() {
      * recovery) must use this instead of reading the preference again.
      */
     private fun currentClusterMirrorMode(): Boolean {
+        // Apple's own cluster views exist only on the navigation stream (111). Asking for the
+        // whole-screen mirror would show CarPlay's main screen instead, which is what the driver
+        // kept seeing as "our own drawn style" while "dashboard shows" was Apple's instruments view
+        // (field 2026-10-24).
+        val content = AirPlayPersistence.loadClusterContent(this)
+        if (content == CarPlayClusterDisplay.Content.INSTRUMENTS ||
+            content == CarPlayClusterDisplay.Content.TURN_CARD
+        ) {
+            return false
+        }
         if (clusterSwipePosition >= 0) return clusterSwipePosition == 0
-        clusterPresentation?.let { return it.isMirrorMode() }
         if (AirPlayPersistence.loadClusterAutoNavMode(this)) {
             lastAutoNavState?.let { return !it }
         }
