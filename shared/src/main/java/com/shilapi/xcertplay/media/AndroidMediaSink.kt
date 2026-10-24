@@ -160,9 +160,20 @@ internal class AudioFocusCoordinator(
         appliedVolume = volume
         // Music only. Turning down the prompt that caused the duck would defeat its purpose, and a
         // call's audio must never be attenuated.
-        active.entries.filter { it.value.channel == AudioChannel.MEDIA }
-            .forEach { (track, _) -> runCatching { track.setStereoVolume(volume, volume) } }
+        val media = active.entries.filter { it.value.channel == AudioChannel.MEDIA }
+        runCatching { report("Audio: duck gain=$volume mediaTracks=${media.size}/${active.size}") }
+        media.forEach { (track, _) -> runCatching { track.setStereoVolume(volume, volume) } }
     }
+
+    /**
+     * Current gain applied to our media tracks.
+     *
+     * The PCM path scales music samples by this as well: some head units pin an app track's
+     * volume at 100 % and ignore setStereoVolume(), which is what made a duck inaudible
+     * (field 2026-10-25). Scaling the samples works whatever the mixer does.
+     */
+    @Synchronized
+    fun currentMediaGain(): Float = appliedVolume
 
     /**
      * Forces the music tracks back to full level, whatever the duck bookkeeping believes.
@@ -2033,6 +2044,28 @@ private class AudioRenderer(
      * rebuffer, so dropping eagerly is the worse trade. A frame that finds no room within
      * [BLOCKING_WRITE_DEADLINE_NS] is dropped and counted in `unsentPcmBytes`.
      */
+    /**
+     * Scales music PCM by the current duck level.
+     *
+     * Tracks are created with ENCODING_PCM_16BIT, so the samples are signed 16-bit little
+     * endian. This is the one attenuation a head unit cannot override: some ROMs pin an app
+     * track's volume at 100 %, which is exactly why a duck applied through setStereoVolume()
+     * alone could be inaudible (field 2026-10-25).
+     */
+    private fun applyMediaGain(data: ByteArray, offset: Int, length: Int) {
+        val gain = audioFocusCoordinator.currentMediaGain()
+        if (gain >= 0.999f) return
+        var i = offset
+        val end = offset + (length / 2) * 2
+        while (i < end) {
+            val sample = (data[i + 1].toInt() shl 8) or (data[i].toInt() and 0xFF)
+            val scaled = (sample * gain).toInt().coerceIn(-32768, 32767)
+            data[i] = scaled.toByte()
+            data[i + 1] = (scaled shr 8).toByte()
+            i += 2
+        }
+    }
+
     private fun writePcm(data: ByteArray, offset: Int = 0, length: Int = data.size) {
         val track = track ?: return
         diagnosticStage = "track-write"
@@ -2047,6 +2080,9 @@ private class AudioRenderer(
             applyFadeIn(data, offset, length)
             fadeApplied = true
         }
+        // Music is scaled here as well as through the track volume: a head unit that pins our
+        // track at 100 % would otherwise make the navigation duck inaudible.
+        if (mappedChannel == AudioChannel.MEDIA) applyMediaGain(data, offset, length)
         // A guidance prompt is short and carries meaning, so losing frames from it is audible as a
         // clipped word. It therefore waits much longer than music before giving up on a frame, and
         // since it has its own track and thread this never delays the music path. Without this the
