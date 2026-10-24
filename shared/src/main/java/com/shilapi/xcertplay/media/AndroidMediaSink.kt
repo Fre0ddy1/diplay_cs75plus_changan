@@ -64,9 +64,6 @@ internal class AudioFocusCoordinator(
     private var timedDucking = false
     /** Set for as long as a navigation prompt is playing; we observe this exactly. */
     private var guidanceDucking = false
-    /** Head-unit media level before a system duck, and the level we wrote (null = not ducked). */
-    private var systemDuckSaved: Int? = null
-    private var systemDuckTarget: Int? = null
     // Our own duck is only ever meant to bridge a short prompt, so it undoes itself. The head unit
     // does not always send AUDIOFOCUS_GAIN when the interrupting audio ends, and without this the
     // music stayed at 20 % for the rest of the drive - field report: "it turned the media volume
@@ -232,59 +229,6 @@ internal class AudioFocusCoordinator(
         val target = if (guidanceDucking || timedDucking) duckVolume() else FULL_VOLUME
         runCatching { report("Audio: duck guidance=$guidanceDucking timed=$timedDucking target=$target") }
         setVolume(target)
-        // Music that plays through the head unit's own media stream (Bluetooth media, which is
-        // what "media keys to the car" implies: CarPlay does not advertise an audio output) has
-        // no track of ours to attenuate. The only way to quieten it under a prompt is the head
-        // unit's media stream itself - field 2026-10-25: "it used to get quieter, now it does
-        // not". When our own MEDIA track exists we leave the system stream alone, so a CarPlay
-        // music source is never ducked twice.
-        val ducked = guidanceDucking || timedDucking
-        val hasOwnMediaTrack = active.entries.any { it.value.channel == AudioChannel.MEDIA }
-        if (ducked && !hasOwnMediaTrack) {
-            duckSystemMusic(target)
-        } else if (!ducked) {
-            restoreSystemMusic()
-        }
-    }
-
-    /**
-     * Lowers the head unit's media stream for the duration of a prompt.
-     *
-     * The pre-duck level is remembered, and the restore only happens while the level is still
-     * exactly the one we wrote: if the driver touched the volume knob during the prompt, his
-     * choice wins and we keep it.
-     */
-    private fun duckSystemMusic(ratio: Float) {
-        val am = manager ?: return
-        synchronized(this) {
-            if (systemDuckSaved != null) return
-            val current = runCatching { am.getStreamVolume(AudioManager.STREAM_MUSIC) }.getOrNull() ?: return
-            if (current <= 0) return
-            val target = (current * ratio).toInt().coerceAtLeast(1)
-            if (target >= current) return
-            val ok = runCatching { am.setStreamVolume(AudioManager.STREAM_MUSIC, target, 0) }.isSuccess
-            if (!ok) return
-            systemDuckSaved = current
-            systemDuckTarget = target
-            runCatching { report("Audio: head-unit music ducked $current->$target") }
-        }
-    }
-
-    private fun restoreSystemMusic() {
-        val am = manager ?: return
-        synchronized(this) {
-            val saved = systemDuckSaved ?: return
-            val target = systemDuckTarget
-            systemDuckSaved = null
-            systemDuckTarget = null
-            val current = runCatching { am.getStreamVolume(AudioManager.STREAM_MUSIC) }.getOrNull()
-            if (current != null && target != null && current != target) {
-                runCatching { report("Audio: head-unit music kept at $current (driver touched it)") }
-                return
-            }
-            val ok = runCatching { am.setStreamVolume(AudioManager.STREAM_MUSIC, saved, 0) }.isSuccess
-            runCatching { report("Audio: head-unit music restored to $saved restored=$ok") }
-        }
     }
 
     private fun AudioChannel.focusPriority(): Int = when (this) {

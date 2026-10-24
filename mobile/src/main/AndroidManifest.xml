@@ -2,10 +2,6 @@
 <manifest xmlns:android="http://schemas.android.com/apk/res/android"
     xmlns:tools="http://schemas.android.com/tools">
 
-    <!-- Needed to lower/restore the head unit's media stream while a navigation prompt plays
-         (Bluetooth media is not one of our own audio tracks). -->
-    <uses-permission android:name="android.permission.MODIFY_AUDIO_SETTINGS" />
-
     <application
         android:name="com.shilapi.xcertplay.DiPlayApp"
         android:allowBackup="false"
