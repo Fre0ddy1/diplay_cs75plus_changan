@@ -376,7 +376,9 @@
     <string name="cluster_content_title">仅导航模式下仪表盘画面来源</string>
     <string name="cluster_content_instruments">Apple 完整地图（车标 + 转向提示）</string>
     <string name="cluster_content_custom">地图 + 自绘卡片（位置可调）</string>
-    <string name="cluster_content_hint">两种来源都是手机推过来的画面；切换会自动重连，因为地址在建窗口时就定死了。</string>
+    <string name="cluster_content_flycard">飞屏小卡（保留原厂仪表 + 左侧小地图）</string>
+    <string name="cluster_content_hint">各来源都是手机推过来的画面；切换会自动重连，因为地址在建窗口时就定死了。</string>
+    <string name="cluster_fly_card_waiting">等待导航画面…</string>
     <string name="cluster_card_song_max_chars">歌曲卡最大字数</string>
     <string name="cluster_card_song_max_chars_desc">每行按这里的字数排版：不足也保留同样宽度，超出的字换到下一行。</string>
     <string name="cluster_card_song_artwork">显示专辑封面</string>

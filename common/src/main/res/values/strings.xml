@@ -379,7 +379,9 @@
     <string name="cluster_content_title">Cluster picture source in nav-only mode</string>
     <string name="cluster_content_instruments">Apple full map (car model + turn hint)</string>
     <string name="cluster_content_custom">Map + cards drawn here (movable)</string>
-    <string name="cluster_content_hint">Both are pictures the phone sends; switching reconnects, because the URL is fixed when the window is built.</string>
+    <string name="cluster_content_flycard">Fly-in card (stock gauges + small map on the left)</string>
+    <string name="cluster_content_hint">All are pictures the phone sends; switching reconnects, because the URL is fixed when the window is built.</string>
+    <string name="cluster_fly_card_waiting">Waiting for navigation picture…</string>
     <string name="cluster_card_song_max_chars">Song card maximum characters</string>
     <string name="cluster_card_song_max_chars_desc">Each line is sized to this many characters: shorter text keeps the full width, longer text wraps to the next line.</string>
     <string name="cluster_card_song_artwork">Show album artwork</string>

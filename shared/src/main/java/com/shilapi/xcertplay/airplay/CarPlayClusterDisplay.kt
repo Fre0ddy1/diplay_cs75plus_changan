@@ -29,10 +29,20 @@ object CarPlayClusterDisplay {
          * from an older build still resolves instead of silently falling back.
          */
         MAP(MAP_URL),
+        /**
+         * The fly-in card ("飞屏" style, 2026-10-24): the dashboard keeps the stock cluster UI and
+         * we show the map stream only inside a small card docked at the driver's side of the panel.
+         * The window root is fully transparent, so the gauge cluster shows around the card. The
+         * card draws the SAME map stream as MAP_WITH_CUSTOM_CARD, cropped to its centre region.
+         */
+        FLY_CARD(MAP_URL),
     }
 
 
     fun usesCustomTurnCard(content: Content): Boolean = content == Content.MAP_WITH_CUSTOM_CARD
+
+    /** The fly-in card mode: transparent dashboard with one small map card. */
+    fun isFlyCard(content: Content): Boolean = content == Content.FLY_CARD
 
     /**
      * True for every cluster view drawn by the phone rather than by us: those already contain the

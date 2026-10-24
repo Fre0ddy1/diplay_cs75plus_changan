@@ -1376,6 +1376,7 @@ class CarPlayHostActivity : ComponentActivity() {
             { surface -> runOnUiThread { onClusterMirrorSurface(surface) } },
             { surface -> runOnUiThread { onClusterNavSurface(surface) } },
             navOnlyCards = true,
+            flyCard = CarPlayClusterDisplay.isFlyCard(AirPlayPersistence.loadClusterContent(this)),
         )
         // The system dismisses a presentation when its display goes away; allow a new one on resume.
         presentation.setOnDismissListener {
@@ -1450,6 +1451,7 @@ class CarPlayHostActivity : ComponentActivity() {
             { surface -> runOnUiThread { onClusterMirrorSurface(surface) } },
             { surface -> runOnUiThread { onClusterNavSurface(surface) } },
             navOnlyCards = true,
+            flyCard = CarPlayClusterDisplay.isFlyCard(AirPlayPersistence.loadClusterContent(this)),
         )
         presentation.setOnDismissListener {
             if (clusterPresentation === presentation) {
@@ -1536,6 +1538,11 @@ class CarPlayHostActivity : ComponentActivity() {
         // (field 2026-10-24).
         val content = AirPlayPersistence.loadClusterContent(this)
         if (content == CarPlayClusterDisplay.Content.INSTRUMENTS) {
+            return false
+        }
+        // Fly-card mode feeds on the 111 map stream, exactly like Apple's own views: the
+        // whole-screen mirror (110) never belongs inside the card.
+        if (content == CarPlayClusterDisplay.Content.FLY_CARD) {
             return false
         }
         if (clusterSwipePosition >= 0) return clusterSwipePosition == 0

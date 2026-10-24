@@ -45,6 +45,12 @@ internal class ClusterMapPresentation(
     private val onMirrorSurface: (Surface?) -> Unit,
     private val onNavSurface: (Surface?) -> Unit,
     private val navOnlyCards: Boolean = false,
+    /**
+     * The "fly-in card" branch (2026-10-24, built from scratch, see [ClusterFlyCard]): the
+     * dashboard stays transparent and only a small map card is drawn. Mirrors the 风清速连
+     * effect; selected via the "cluster picture source" setting (Content.FLY_CARD).
+     */
+    private val flyCard: Boolean = false,
 ) : Presentation(context, display) {
     private var waitingLabel: TextView? = null
     private var turnCardView: ClusterTurnCardView? = null
@@ -54,6 +60,8 @@ internal class ClusterMapPresentation(
     private var songView: ClusterSongView? = null
     private var genericTextureView: TextureView? = null
     private var navTextureView: TextureView? = null
+    /** The fly-in card branch's own view (owns the 111 TextureView instead of [navTextureView]). */
+    private var flyCardView: ClusterFlyCard? = null
     private val projectionSize: Point = sizeOf(display)
     var mirrorOutputSurface: Surface? = null
         private set
@@ -101,6 +109,12 @@ internal class ClusterMapPresentation(
      *    as "the picture is dragged upward"). The leftover margin shows the backdrop.
      */
     fun refreshCrop() {
+        // Fly-card branch: the card applies its own crop transform; the full-screen mirror
+        // crop math does not apply here.
+        if (flyCard) {
+            flyCardView?.applyTransform()
+            return
+        }
         val textureView = genericTextureView ?: return
         val baseW = projectionSize.x
         val baseH = projectionSize.y
@@ -194,13 +208,28 @@ internal class ClusterMapPresentation(
         if (!DiLink51ClusterLayout.supported()) {
             window?.attributes = window?.attributes?.apply { alpha = 0f }
         }
+        // Fly-card branch: the whole window is a transparent overlay so the stock cluster shows
+        // around the card. Same window hygiene as the adaptive path (no backdrop, no dim).
+        if (flyCard) {
+            window?.setBackgroundDrawable(ColorDrawable(Color.TRANSPARENT))
+            window?.clearFlags(WindowManager.LayoutParams.FLAG_DIM_BEHIND)
+            @Suppress("DEPRECATION")
+            window?.setFormat(android.graphics.PixelFormat.TRANSLUCENT)
+        }
         val size = projectionSize
         val adaptive = DiLink51ClusterLayout.supported()
         val plan = if (adaptive) DiLink51ClusterLayout.plan(size.x, size.y, theme) else null
         val dark = DiLink51ClusterLayout.dark(context, theme)
         val backdrop = if (dark) Color.rgb(15, 22, 30) else Color.rgb(207, 218, 229)
         val root = FrameLayout(context).apply {
-            setBackgroundColor(if (plan == null) Color.BLACK else if (plan.fullMap) backdrop else Color.TRANSPARENT)
+            setBackgroundColor(
+                when {
+                    flyCard -> Color.TRANSPARENT
+                    plan == null -> Color.BLACK
+                    plan.fullMap -> backdrop
+                    else -> Color.TRANSPARENT
+                },
+            )
         }
         if (plan != null) {
             window?.setBackgroundDrawable(ColorDrawable(Color.TRANSPARENT))
@@ -271,6 +300,21 @@ internal class ClusterMapPresentation(
                 }
             }
             root.addView(mirrorTextureView, videoParams)
+            if (flyCard) {
+                // Fly-card branch (2026-10-24, new code path): instead of a second full-screen
+                // view, the 111 stream renders inside the small fly-in card. The mirror view
+                // above stays bound (hidden) so stream 110 also stays resident - the same
+                // "both streams permanently bound" rule as the mirror/nav path, so no mode or
+                // settings change can trigger incall's re-activation announcement.
+                val card = ClusterFlyCard(context) { surface -> onNavSurface(surface) }
+                card.setPanelSize(size.x, size.y)
+                flyCardView = card
+                card.visibility = View.GONE
+                // The card owns its TextureView listener; this hook only re-asserts the mode
+                // requested while the surface was still being created (cold start).
+                card.onSurfaceReady = { setMode(desiredMirror) }
+                root.addView(card, FrameLayout.LayoutParams(-1, -1))
+            } else {
             // Second TextureView for stream 111. Kept invisible until nav-only mode is selected;
             // its Surface is bound to sink.setSurface(SCREEN_TYPE_ALT, ...) as soon as it exists so
             // the 111 stream stays resident in incall (no re-activation announcement on switches).
@@ -302,6 +346,7 @@ internal class ClusterMapPresentation(
                 }
             }
             root.addView(navView, videoParams)
+            }
         }
         waitingLabel = TextView(context).apply {
             text = context.getString(R.string.cluster_waiting_for_map)
@@ -325,7 +370,7 @@ internal class ClusterMapPresentation(
         // itself sends. If the glass turn box in the middle of the dashboard survives this build,
         // it is Apple's own instrument-cluster view; if it disappears, it was one of ours.
         // Set to false to restore the cards.
-        if (!CARDS_DISABLED) {
+        if (!CARDS_DISABLED && !flyCard) {
             // Added last so it draws above the guidance cards.
             songView = ClusterSongView(context).apply { visibility = View.GONE }
             root.addView(songView, FrameLayout.LayoutParams(-1, -1))
@@ -348,6 +393,8 @@ internal class ClusterMapPresentation(
      */
     private fun materializeGuidanceCards() {
         if (CARDS_DISABLED) return
+        // Fly-card mode draws no card of ours: the dashboard is the stock cluster plus the card.
+        if (flyCard) return
         val root = cardsRoot ?: return
         if (mirrorMode) return
         if (turnCardView == null && turnCardVisibleCache) {
@@ -402,6 +449,17 @@ internal class ClusterMapPresentation(
     }
 
     fun setMode(mirror: Boolean) {
+        // Fly-card branch (2026-10-24): the dashboard is ALWAYS the small card, whatever mode
+        // request arrives (three-finger swipe, auto navigation switch). mirrorMode is pinned to
+        // false so the host keeps watching the 111 stream (isMirrorMode() drives stream choice).
+        if (flyCard) {
+            desiredMirror = mirror
+            mirrorMode = false
+            genericTextureView?.visibility = View.GONE
+            flyCardView?.visibility = View.VISIBLE
+            Log.i(TAG, "cluster display mode: fly-card (mirror request $mirror ignored)")
+            return
+        }
         // Remember the request before checking the views: on a cold start the host can ask for
         // nav-only while the TextureViews are still null, and the surface callback below must
         // re-apply this mode rather than the saved setting (which the auto-switch intentionally
@@ -424,6 +482,7 @@ internal class ClusterMapPresentation(
 
     /** Hides the placeholder once the phone streams the cluster screen. */
     fun setStreamActive(active: Boolean) {
+        flyCardView?.setStreamActive(active)
         waitingLabel?.visibility = if (active) View.GONE else View.VISIBLE
     }
 
@@ -531,6 +590,8 @@ internal class ClusterMapPresentation(
      */
     private fun applyCardsVisibility() {
         if (!navOnlyCards) return
+        // Fly-card mode: no guidance cards exist, ever (see materializeGuidanceCards).
+        if (flyCard) return
         // Not the navigation stream: no guidance card may exist, whatever the switches say.
         if (mirrorMode) {
             destroyGuidanceCards()

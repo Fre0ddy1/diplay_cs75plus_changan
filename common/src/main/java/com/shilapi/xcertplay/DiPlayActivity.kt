@@ -764,6 +764,7 @@ class DiPlayActivity : ComponentActivity() {
                 val clusterContentChoices = listOf(
                     CarPlayClusterDisplay.Content.INSTRUMENTS to R.string.cluster_content_instruments,
                     CarPlayClusterDisplay.Content.MAP_WITH_CUSTOM_CARD to R.string.cluster_content_custom,
+                    CarPlayClusterDisplay.Content.FLY_CARD to R.string.cluster_content_flycard,
                 )
                 choice(
                     card,
