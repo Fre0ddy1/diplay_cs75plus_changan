@@ -319,9 +319,17 @@ internal class ClusterMapPresentation(
         // switches once the window is known to be nav-only, which happens before the stream is
         // shown.
         cardsRoot = root
-        // Added last so it draws above the guidance cards.
-        songView = ClusterSongView(context).apply { visibility = View.GONE }
-        root.addView(songView, FrameLayout.LayoutParams(-1, -1))
+        // TEMPORARY EXCLUSION TEST (driver's request, 2026-10-24).
+        //
+        // Every self-drawn card is switched off so a screenshot can only show what the phone
+        // itself sends. If the glass turn box in the middle of the dashboard survives this build,
+        // it is Apple's own instrument-cluster view; if it disappears, it was one of ours.
+        // Set to false to restore the cards.
+        if (!CARDS_DISABLED) {
+            // Added last so it draws above the guidance cards.
+            songView = ClusterSongView(context).apply { visibility = View.GONE }
+            root.addView(songView, FrameLayout.LayoutParams(-1, -1))
+        }
         setContentView(root)
     }
 
@@ -339,6 +347,7 @@ internal class ClusterMapPresentation(
      * never touched because it belongs to every mode.
      */
     private fun materializeGuidanceCards() {
+        if (CARDS_DISABLED) return
         val root = cardsRoot ?: return
         if (mirrorMode) return
         if (turnCardView == null && turnCardVisibleCache) {
@@ -565,6 +574,17 @@ internal class ClusterMapPresentation(
 
     companion object {
         const val TAG = "DiPlay-Cluster"
+
+        /**
+         * TEMPORARY: builds a dashboard with no self-drawn card at all.
+         *
+         * Set by the driver to settle one question with a screenshot: is the glass turn box that
+         * appears in the middle of the dashboard ours or Apple's? With this true nothing is created
+         * or drawn here - not the turn card, the ETA card, the road-name card or the song card - so
+         * whatever the dashboard still shows came from the phone. Flip it back to false to restore
+         * every card; nothing else depends on it.
+         */
+        const val CARDS_DISABLED = true
 
         /** A verified 5.1 profile chooses its layer explicitly; other firmware keeps PR #5 behavior. */
         fun findDisplay(context: Context, theme: DiLink51ClusterLayout.Theme = DiLink51ClusterLayout.theme(context)): Display? {
