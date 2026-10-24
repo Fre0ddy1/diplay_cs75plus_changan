@@ -65,6 +65,16 @@ object CarPlayClusterDisplay {
     private const val WIDTH_PHYSICAL_MM = 292 // a 12.3-inch 8:3 cluster panel; Apple Maps ignores it here
     private const val FPS = 30
 
+    /**
+     * Bottom safe area for Apple's own cluster views, in percent of the stream height.
+     *
+     * Apple lays the 3D car model at the very bottom of its view, where the UNI-V panel cuts it in
+     * half (field screenshots 2026-10-24). The self-drawn map keeps the model fully visible with a
+     * 25 % bottom reserve, so Apple's views get the same value. Left and right stay 0 - reserving
+     * there letterboxes Apple's layout for no benefit, since it already centres everything itself.
+     */
+    private const val APPLE_CLUSTER_BOTTOM_SAFE_PERCENT = 25
+
     fun config(
         widthPixels: Int,
         heightPixels: Int,
@@ -83,11 +93,16 @@ object CarPlayClusterDisplay {
         // centre, leaving the panel's right column to its own info strip. The centred area
         // makes Amap show the overview with the marker dead centre, which is what the driver
         // wants on this head unit; the marker steps still move it from there.
-        // Apple's own views lay the content out themselves and must get the whole panel: the
-        // centred area below exists only to move the car marker on OUR map stream, and applying it
-        // to the instruction card or the full instruments view would letterbox them.
+        // Apple's own views lay the content out themselves, so they get no horizontal inset - but
+        // they do put the car model right at the bottom edge and the panel clips it there. A
+        // bottom-only reserve lifts it into view without letterboxing the layout.
         val safe = if (usesOfficialTurnCard(content)) {
-            AirPlayInsets(top = 0, bottom = 0, left = 0, right = 0)
+            AirPlayInsets(
+                top = 0,
+                bottom = height * APPLE_CLUSTER_BOTTOM_SAFE_PERCENT / 100,
+                left = 0,
+                right = 0,
+            )
         } else {
             safeArea(width, height, horizontalStep, verticalStep)
         }
