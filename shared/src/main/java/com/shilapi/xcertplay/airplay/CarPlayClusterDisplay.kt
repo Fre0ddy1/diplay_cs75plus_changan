@@ -99,9 +99,9 @@ object CarPlayClusterDisplay {
 
     /**
      * The instruction-card display: a small, separate type-111 screen (own UUID) whose stream
-     * DiPlay composites at the panel's upper-left, over the map stream. The card needs no input
-     * and no features, exactly like the map cluster display. The safe area stays at the full
-     * panel - iOS lays the card out for the whole screen it is given.
+     * DiPlay shows as it arrives at the panel's upper-left, over the map stream. The card needs
+     * no input and no features, exactly like the map cluster display. The safe area stays at the
+     * full canvas - iOS lays the card out for the whole screen it is given.
      */
     fun cardConfig(
         widthPixels: Int = CARD_WIDTH_PIXELS,
@@ -124,9 +124,17 @@ object CarPlayClusterDisplay {
         )
     }
 
-    /** Panel size of the instruction-card stream, decoded 1:1 into the small window's TextureView. */
+    /**
+     * Panel size of the instruction-card stream, decoded 1:1 into the window at the dashboard's
+     * upper-left.
+     *
+     * The canvas is card-SHAPED on purpose (2.4:1, not the near-square 480x400 it was at first):
+     * iOS lays the card out for the whole screen it is given, so a square canvas left a large
+     * empty area under the card, which showed up as a black slab on the dashboard. With a canvas
+     * that matches the card's own proportions the picture the phone sends IS the card.
+     */
     const val CARD_WIDTH_PIXELS = 480
-    const val CARD_HEIGHT_PIXELS = 400
+    const val CARD_HEIGHT_PIXELS = 200
 
     private const val CARD_WIDTH_PHYSICAL_MM = 96 // a small card panel; Apple Maps ignores it here
 
