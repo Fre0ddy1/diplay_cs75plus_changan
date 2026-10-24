@@ -790,10 +790,15 @@ object AirPlayPersistence {
     fun loadClusterContent(context: Context): CarPlayClusterDisplay.Content {
         val stored = context.getSharedPreferences(PREFS, Context.MODE_PRIVATE)
             .getString(KEY_CLUSTER_CONTENT, null)
-        // Default: Apple's own instrument-cluster navigation view. It is the only source of the
-        // lane guidance and the junction zoom image, which the accessory cannot draw itself.
+        // Default: Apple's lane guidance card (maps:/car/instrumentcluster/instructioncard).
+        //
+        // That is the view carrying the multi-lane picture and the junction zoom - the reason the
+        // driver wants the cluster at all - while Content.INSTRUMENTS
+        // (maps:/car/instrumentcluster) renders the whole map with only a plain turn hint and is
+        // not a substitute for it. The two were previously confused by their labels, which called
+        // INSTRUMENTS the one with lane guidance (field 2026-10-24).
         return CarPlayClusterDisplay.Content.entries.firstOrNull { it.name == stored }
-            ?: CarPlayClusterDisplay.Content.INSTRUMENTS
+            ?: CarPlayClusterDisplay.Content.TURN_CARD
     }
 
     fun saveClusterContent(context: Context, content: CarPlayClusterDisplay.Content) {
