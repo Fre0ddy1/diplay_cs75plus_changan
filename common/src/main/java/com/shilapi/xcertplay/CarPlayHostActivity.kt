@@ -1545,6 +1545,7 @@ class CarPlayHostActivity : ComponentActivity() {
         // Dedupe the card-state line: ETA seconds tick every second, so log once per state
         // change (or at least every 5 s) instead of once per refresh tick.
         val cardsLog = "Cluster cards: mode=${if (clusterPresentation?.isMirrorMode() == true) "mirror" else "nav-only"} " +
+            "selfCards=${!appleClusterContent} " +
             "turn=${g != null} road=${g?.road?.isNotEmpty() == true || g?.currentRoad?.isNotEmpty() == true} " +
             "eta=${g?.arrivalEpochSeconds != null || g?.remainingSeconds != null} " +
             "contentTop=${AirPlayPersistence.loadClusterCardContentTopPx(this)} " +

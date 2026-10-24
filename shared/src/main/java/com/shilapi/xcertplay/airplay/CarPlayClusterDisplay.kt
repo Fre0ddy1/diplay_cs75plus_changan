@@ -67,10 +67,11 @@ object CarPlayClusterDisplay {
     /**
      * Bottom safe area for Apple's own cluster views, in percent of the stream height.
      *
-     * The 3D car model sits at the bottom of Apple's view and was clipped by the UNI-V panel edge
-     * without it; 20 % leaves the top instruction card untouched and keeps the full stream width.
+     * Match the self-drawn map's bottom reserve (25 %): its car model is fully visible on the
+     * UNI-V, while Apple's view with a zero safe area had the 3D model cut by the panel edge
+     * (field screenshots 2026-10-24). Left/right stay 0 so Apple's view is not letterboxed.
      */
-    private const val APPLE_CLUSTER_BOTTOM_SAFE_PERCENT = 20
+    private const val APPLE_CLUSTER_BOTTOM_SAFE_PERCENT = 25
 
     fun config(
         widthPixels: Int,

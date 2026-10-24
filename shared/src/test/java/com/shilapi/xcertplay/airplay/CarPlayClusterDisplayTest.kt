@@ -74,8 +74,8 @@ class CarPlayClusterDisplayTest {
             assertEquals(0, safe.left)
             assertEquals(0, safe.right)
             assertEquals(0, safe.top)
-            // 20 % of the 720 px stream: Apple draws its 3D car model at the bottom edge.
-            assertEquals(144, safe.bottom)
+            // 25 % of the 720 px stream, same bottom reserve as the self-drawn map.
+            assertEquals(180, safe.bottom)
         }
     }
 
