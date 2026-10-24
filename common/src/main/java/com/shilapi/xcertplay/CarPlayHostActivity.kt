@@ -1550,7 +1550,12 @@ class CarPlayHostActivity : ComponentActivity() {
         if (lastNavigatingState != navigating) {
             val first = lastNavigatingState == null
             lastNavigatingState = navigating
-            if (!first) {
+            // A session that begins mid-route needs the nudge as well. iOS keeps the cluster on its
+            // plain map view until something asks it to refresh, so a cold start during active
+            // guidance stayed on the map for the whole drive and only "重新导航" brought the
+            // junction picture back (field 2026-10-24). The first sample of a session is the only
+            // moment that state can be observed, so it must not be skipped when already navigating.
+            if (!first || navigating) {
                 requestClusterRepaint(if (navigating) "navigation started" else "navigation ended")
             }
         }

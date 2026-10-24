@@ -53,14 +53,6 @@ internal class ClusterMapPresentation(
     /** Song now playing, top centre. Title/artist only - the protocol carries no lyrics. */
     private var songView: ClusterSongView? = null
     private var genericTextureView: TextureView? = null
-    /**
-     * The mirror decoder's real frame size, learned from the SurfaceTexture.
-     *
-     * CarPlay's main screen and the cluster panel are different resolutions (2412x1080 against
-     * 1920x720 on the test unit), and the fit has to start from the frame's own size or most of the
-     * picture lands outside the view. Null until the first frame arrives.
-     */
-    private var mirrorStreamSize: Point? = null
     private var navTextureView: TextureView? = null
     private val projectionSize: Point = sizeOf(display)
     var mirrorOutputSurface: Surface? = null
@@ -110,12 +102,6 @@ internal class ClusterMapPresentation(
         val textureView = genericTextureView ?: return
         val baseW = projectionSize.x
         val baseH = projectionSize.y
-        // The mirror stream is CarPlay's main screen and is normally much larger than the panel
-        // (2412x1080 against 1920x720 on the test unit). Fitting has to start from that size, or the
-        // picture is mapped at panel scale and most of it falls outside the view - which is exactly
-        // what a cold start showed: one corner of the dashboard.
-        val srcW = mirrorStreamSize?.x?.takeIf { it > 0 } ?: baseW
-        val srcH = mirrorStreamSize?.y?.takeIf { it > 0 } ?: baseH
         // The auto navigation switch changes the live mode without writing the saved setting;
         // use this window's actual mode, not the persisted one, or crop adjustments are ignored
         // while the dashboard is showing the mirror.
@@ -128,9 +114,9 @@ internal class ClusterMapPresentation(
             return
         }
         // Step 1 - source crop: remove the left rail from the source picture (fixed pixels,
-        // set once by the driver; the old percent-based crop default cropped too much). Those
-        // pixels are in the STREAM's coordinates, so they scale with it.
+        // set once by the driver; the old percent-based crop default cropped too much).
         val cropLeftPx = AirPlayPersistence.loadClusterMirrorLeftCropPx(context)
+        val availW = baseW - cropLeftPx
         // Step 2 - dashboard picture adjust target rect (percent of the dashboard panel). The values
         // may be negative or above 100: the driver uses them to push the picture off an edge or
         // enlarge it past the panel, so no clamping to 0..100 happens here - only a floor of one
@@ -143,19 +129,6 @@ internal class ClusterMapPresentation(
         val h = (hPct * baseH / 100).coerceAtLeast(1)
         val x = xPct * baseW / 100
         val y = yPct * baseH / 100
-        // Step 3 - fit the stream (minus its cropped rail) into the target rect, aspect preserving.
-        // Both terms are in stream pixels now, then converted to the view's pixel space, so the
-        // result no longer depends on the two resolutions happening to match.
-        val availSrcW = (srcW - cropLeftPx).coerceAtLeast(1)
-        val fitInRect = minOf(w.toFloat() / availSrcW, h.toFloat() / srcH)
-        val drawnW = availSrcW * fitInRect
-        val drawnH = srcH * fitInRect
-        val picLeft = x + (w - drawnW) / 2f
-        val picTop = y + (h - drawnH) / 2f
-        val offsetX = picLeft - cropLeftPx * fitInRect
-        val offsetY = picTop
-        // TextureView maps the buffer into the view's own coordinates, so the matrix is expressed in
-        // view pixels even though the scale was derived from stream pixels.
         // Pipeline (10-08 field requirements): FIRST crop the left rail out of the SOURCE
         // picture, THEN fit the remaining picture into the target rect. Fit - not cover - so
         // every adjustment to the frame is immediately visible: making the frame smaller
@@ -175,8 +148,15 @@ internal class ClusterMapPresentation(
         // the height slider moved, which read as "the whole picture is dragged upward"
         // (field report 10-08 18:2x). With fit, shrinking the frame shrinks the picture
         // symmetrically around its centre; the leftover margin shows the backdrop.
+        val scale = minOf(w.toFloat() / availW, h.toFloat() / baseH)
+        val drawnW = availW * scale
+        val drawnH = baseH * scale
+        val picLeft = x + (w - drawnW) / 2f
+        val picTop = y + (h - drawnH) / 2f
+        val offsetX = picLeft - cropLeftPx * scale
+        val offsetY = picTop
         textureView.setTransform(Matrix().apply {
-            setScale(fitInRect, fitInRect)
+            setScale(scale, scale)
             postTranslate(offsetX, offsetY)
         })
         // Only the left edge needs clipping (the rail). When picLeft <= 0 the buffer's left
@@ -194,13 +174,24 @@ internal class ClusterMapPresentation(
         textureView.postInvalidateOnAnimation()
         Log.i(
             TAG,
-            "mirror rect x=$x y=$y w=$w h=$h fit=$fitInRect drawn=${drawnW}x${drawnH} " +
-                "src=${srcW}x$srcH leftCrop=${cropLeftPx}px clipLeft=$clipLeft on ${baseW}x${baseH}",
+            "mirror rect x=$x y=$y w=$w h=$h fit=$scale drawn=${drawnW}x${drawnH} " +
+                "placed=($offsetX,$offsetY) leftCrop=${cropLeftPx}px clipLeft=$clipLeft on ${baseW}x${baseH}",
         )
     }
 
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
+        // Start transparent on the generic path.
+        //
+        // incall lays an ext-screen window out as its small preview box at the right of the panel
+        // until the projection channel is open, and our window is created several seconds before
+        // the open sequence. The activity calls setMapVisible(false) right after show(), but the
+        // window is already on screen for the frames in between - that is the driver's "冷启动时
+        // 仪表右边中间自动投一个小方块". Being transparent from the moment the window exists means
+        // the box is never seen; setMapVisible(true) only runs once the channel reports open.
+        if (!DiLink51ClusterLayout.supported()) {
+            window?.attributes = window?.attributes?.apply { alpha = 0f }
+        }
         val size = projectionSize
         val adaptive = DiLink51ClusterLayout.supported()
         val plan = if (adaptive) DiLink51ClusterLayout.plan(size.x, size.y, theme) else null
@@ -260,20 +251,12 @@ internal class ClusterMapPresentation(
             mirrorTextureView.surfaceTextureListener = object : TextureView.SurfaceTextureListener {
                 override fun onSurfaceTextureAvailable(texture: SurfaceTexture, width: Int, height: Int) {
                     Log.i(TAG, "cluster mirror surface created")
-                    // Do NOT force the surface to the panel size. The whole-screen mirror carries
-                    // CarPlay's MAIN screen, which is a different (usually much larger) resolution
-                    // than the cluster panel; pinning the buffer to the panel made the decoder's
-                    // picture land outside the view and only a corner of it was visible on a cold
-                    // start. The buffer keeps the decoder's own size and the matrix below fits it.
+                    texture.setDefaultBufferSize(size.x, size.y)
                     refreshCrop()
                     mirrorOutputSurface = Surface(texture).also(onMirrorSurface)
                 }
 
-                override fun onSurfaceTextureSizeChanged(texture: SurfaceTexture, width: Int, height: Int) {
-                    // This is the decoder's real frame size, and what the fit must be based on.
-                    if (width > 0 && height > 0) mirrorStreamSize = Point(width, height)
-                    refreshCrop()
-                }
+                override fun onSurfaceTextureSizeChanged(texture: SurfaceTexture, width: Int, height: Int) = refreshCrop()
 
                 override fun onSurfaceTextureUpdated(texture: SurfaceTexture) = Unit
 
