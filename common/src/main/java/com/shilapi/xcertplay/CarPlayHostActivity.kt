@@ -1575,6 +1575,9 @@ class CarPlayHostActivity : ComponentActivity() {
         // Dedupe the card-state line: ETA seconds tick every second, so log once per state
         // change (or at least every 5 s) instead of once per refresh tick.
         val cardsLog = "Cluster cards: mode=${if (clusterPresentation?.isMirrorMode() == true) "mirror" else "nav-only"} " +
+            // Whether the views EXIST, not just whether data arrived: a card that was never created
+            // cannot be what the driver sees on the dashboard.
+            "cards=${clusterPresentation?.cardsSummary() ?: "no-window"} " +
             "turn=${g != null} road=${g?.road?.isNotEmpty() == true || g?.currentRoad?.isNotEmpty() == true} " +
             "eta=${g?.arrivalEpochSeconds != null || g?.remainingSeconds != null} " +
             "contentTop=${AirPlayPersistence.loadClusterCardContentTopPx(this)} " +

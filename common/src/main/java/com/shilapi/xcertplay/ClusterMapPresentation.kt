@@ -367,6 +367,11 @@ internal class ClusterMapPresentation(
         listOfNotNull(turnCardView, etaCardView, roadNameCardView).forEach { it.bringToFront() }
         // The music card was added after the guidance cards in onCreate; keep it on top.
         songView?.bringToFront()
+        Log.i(
+            TAG,
+            "guidance cards created turn=${turnCardView != null} eta=${etaCardView != null} " +
+                "road=${roadNameCardView != null} (mode=${if (mirrorMode) "mirror" else "nav-only"})",
+        )
     }
 
     /**
@@ -378,11 +383,13 @@ internal class ClusterMapPresentation(
      */
     private fun destroyGuidanceCards() {
         val root = cardsRoot ?: return
-        listOfNotNull(turnCardView, etaCardView, roadNameCardView).forEach { root.removeView(it) }
+        val had = listOfNotNull(turnCardView, etaCardView, roadNameCardView)
+        had.forEach { root.removeView(it) }
         turnCardView = null
         etaCardView = null
         roadNameCardView = null
         frontedCards = emptyList()
+        if (had.isNotEmpty()) Log.i(TAG, "guidance cards destroyed count=${had.size}")
     }
 
     fun setMode(mirror: Boolean) {
@@ -413,6 +420,17 @@ internal class ClusterMapPresentation(
 
     /** Current display mode (true = whole-screen mirror, false = nav-only), for diagnostics. */
     fun isMirrorMode(): Boolean = mirrorMode
+
+    /**
+     * Which guidance cards exist right now, for the dashboard diagnostic log.
+     *
+     * "exists" matters more than "has data": a card that was never created, or one destroyed when
+     * the mode changed, cannot be the glass box the driver sees - and telling those two apart is
+     * what decides whether a complaint is about our drawing or about Apple's own view.
+     */
+    fun cardsSummary(): String =
+        "turnCard=${turnCardView != null} etaCard=${etaCardView != null} " +
+            "roadCard=${roadNameCardView != null} songCard=${songView != null}"
 
     /** Window alpha hides the pixels without destroying the TextureView/decoder surface. */
     fun setMapVisible(visible: Boolean) {
