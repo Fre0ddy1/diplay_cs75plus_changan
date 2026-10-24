@@ -564,11 +564,14 @@ class AirPlaySession(
             debugLog("airplay SETUP stream type=$type request=$stream")
             when (type) {
                 STREAM_TYPE_MAIN_SCREEN, STREAM_TYPE_ALT_SCREEN -> {
-                    val port = media.onScreen(this, type, stream)
-                    debugLog("airplay screen stream type=$type dataPort=${port ?: "rejected"}")
+                    // Two type-111 screens can be up at once (map + instruction card); pick which
+                    // internal stream this SETUP belongs to.
+                    val routed = if (type == STREAM_TYPE_ALT_SCREEN) routeAltScreen(stream) else type
+                    val port = media.onScreen(this, routed, stream)
+                    debugLog("airplay screen stream type=$type routed=$routed dataPort=${port ?: "rejected"}")
                     if (port != null) {
-                        activeStreams.add(type)
-                        if (type == STREAM_TYPE_ALT_SCREEN) clusterStream = ++clusterStreamSetups
+                        activeStreams.add(routed)
+                        if (routed == STREAM_TYPE_ALT_SCREEN) clusterStream = ++clusterStreamSetups
                         result.add(linkedMapOf<String, Any?>("type" to type, "dataPort" to port))
                     }
                 }
@@ -599,6 +602,25 @@ class AirPlaySession(
             }
         }
         return result
+    }
+
+    /**
+     * Decides which internal cluster stream a type-111 SETUP belongs to: the map display
+     * ([AirPlayInfoPlist.ALT_UUID]) or the instruction-card display ([AirPlayInfoPlist.CARD_UUID]).
+     *
+     * The SETUP body carries the display's uuid only in some iOS builds; when it does, that is
+     * authoritative. Otherwise the phone sets the screens up in /info display order (map first,
+     * then the card), so the first 111 of a session is the map and the next one is the card.
+     * A TEARDOWN resets the count, so a re-SETUP after a drop starts the order again.
+     */
+    private fun routeAltScreen(stream: Map<String, Any?>): Int = when (string(stream["uuid"])?.uppercase()) {
+        AirPlayInfoPlist.ALT_UUID -> STREAM_TYPE_ALT_SCREEN
+        AirPlayInfoPlist.CARD_UUID -> STREAM_TYPE_ALT_CARD
+        else -> if (STREAM_TYPE_ALT_SCREEN in activeStreams && STREAM_TYPE_ALT_CARD !in activeStreams) {
+            STREAM_TYPE_ALT_CARD
+        } else {
+            STREAM_TYPE_ALT_SCREEN
+        }
     }
 
     /** Short rendering of a modesChanged body. Never uses "payload=", which the report strips. */
@@ -646,6 +668,10 @@ class AirPlaySession(
             null
         }
         val types = teardownStreamTypes(decodedBody)
+            // The phone only knows wire type 111; a teardown of it closes BOTH cluster streams
+            // (the card stream is internally 112, the wire never mentions that number).
+            ?.flatMap { if (it == STREAM_TYPE_ALT_SCREEN) listOf(it, STREAM_TYPE_ALT_CARD) else listOf(it) }
+            ?.distinct()
 
         debugLog(
             "airplay TEARDOWN types=${types ?: "all"} activeBefore=$activeStreams " +
@@ -823,6 +849,13 @@ class AirPlaySession(
 
         const val STREAM_TYPE_MAIN_SCREEN = 110
         const val STREAM_TYPE_ALT_SCREEN = 111
+        /**
+         * Internal routing id for the SECOND type-111 screen (the instruction card). The wire
+         * type stays 111 - the phone knows nothing about 112 - but media events and TEARDOWN
+         * bookkeeping inside the receiver use it so the two cluster streams keep separate
+         * decoders and surfaces. See [routeAltScreen].
+         */
+        const val STREAM_TYPE_ALT_CARD = 112
         const val STREAM_TYPE_MAIN_AUDIO = 100
         const val STREAM_TYPE_ALT_AUDIO = 101
         const val STREAM_TYPE_MAIN_HIGH_AUDIO = 102

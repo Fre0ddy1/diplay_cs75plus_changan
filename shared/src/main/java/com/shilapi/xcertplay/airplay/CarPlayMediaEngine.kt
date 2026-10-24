@@ -83,11 +83,14 @@ class CarPlayMediaEngine(
         }
         sink.setVideoRecoveryHandler(type) {
             if (streams[streamKey] === screen) {
-                // The cluster asks for a keyframe of its own screen; the plain command is the main screen's.
-                val command = if (type == STREAM_TYPE_ALT_SCREEN) {
-                    mapOf("type" to "forceKeyFrame", "params" to mapOf("uuid" to AirPlayInfoPlist.ALT_UUID))
-                } else {
-                    mapOf("type" to "forceKeyFrame")
+                // Each cluster screen asks for a keyframe of its own display; the plain command
+                // is the main screen's.
+                val command = when (type) {
+                    STREAM_TYPE_ALT_SCREEN ->
+                        mapOf("type" to "forceKeyFrame", "params" to mapOf("uuid" to AirPlayInfoPlist.ALT_UUID))
+                    STREAM_TYPE_ALT_CARD ->
+                        mapOf("type" to "forceKeyFrame", "params" to mapOf("uuid" to AirPlayInfoPlist.CARD_UUID))
+                    else -> mapOf("type" to "forceKeyFrame")
                 }
                 val sent = session.sendCommand(command)
                 session.logDebug("Video recovery: requested keyframe sent=$sent")
@@ -434,12 +437,14 @@ class CarPlayMediaEngine(
     }
 
     private fun isScreenStreamType(type: Int): Boolean =
-        type == STREAM_TYPE_MAIN_SCREEN || type == STREAM_TYPE_ALT_SCREEN
+        type == STREAM_TYPE_MAIN_SCREEN || type == STREAM_TYPE_ALT_SCREEN || type == STREAM_TYPE_ALT_CARD
 
     private companion object {
         const val TAG = "xcertplay-usb"
         const val STREAM_TYPE_MAIN_SCREEN = 110
         const val STREAM_TYPE_ALT_SCREEN = 111
+        /** The instruction-card screen; internal id assigned by AirPlaySession (wire type 111). */
+        const val STREAM_TYPE_ALT_CARD = 112
         const val STREAM_TYPE_MAIN_AUDIO = 100
         const val STREAM_TYPE_DATA = 130
         const val DATASTREAM_OUTPUT_KEY = "DataStream-Output-Encryption-Key"

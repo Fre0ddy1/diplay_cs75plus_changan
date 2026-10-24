@@ -12,6 +12,13 @@ object CarPlayClusterDisplay {
     const val MAP_URL = "maps:/car/instrumentcluster/map"
 
     /**
+     * The instruction-card stream content (BYD's captured `altScreenURLs` list it). The iPhone
+     * renders only its glass turn card on this screen and streams it at 0-5 kbit/s, which is why
+     * a second, small cluster display is cheap.
+     */
+    const val CARD_URL = "maps:/car/instrumentcluster/instructioncard"
+
+    /**
      * What the dashboard shows: one of the cluster contents the iPhone lists in `altScreenURLs`.
      * On the tested car the iPhone glass turn card needed 0–5 kbit/s against 0.3–4 Mbit/s for the map.
      * MAP_WITH_CUSTOM_CARD asks for the map stream so DiPlay can draw a movable card on top.
@@ -30,15 +37,18 @@ object CarPlayClusterDisplay {
          */
         MAP(MAP_URL),
         /**
-         * The pure Apple cluster (2026-10-24): the FULL dashboard shows the instrument-cluster
-         * stream (map + Apple's own glass turn card with lane guidance, junction view etc.),
-         * and nothing of ours is drawn on top. Unlike INSTRUMENTS this mode is also pinned to
-         * navigation-only (mirror requests are ignored) and draws no song card.
+         * The 风清速连 layout as TWO streams (WWDC19 session 252: "multiple streams can be set up
+         * to display different types of content from CarPlay within the instrument cluster"):
+         * the map display requests the plain map URL (no iOS glass card inside it), and a second,
+         * small cluster display requests [CARD_URL], which DiPlay renders in a small window at
+         * the panel's upper-left. The map and the car marker keep the centred safe area, so the
+         * card window and the map content sit independently - unlike the single-stream attempts,
+         * where moving the card also moved the whole map.
          *
-         * Uses the same URL as INSTRUMENTS so that iOS paints the turn card, lane guidance and
-         * junction view into the video stream.
+         * Uses the map URL so the map stream itself stays card-free; the turn card comes only
+         * from the instruction-card stream.
          */
-        FLY_CARD("maps:/car/instrumentcluster"),
+        FLY_CARD(MAP_URL),
     }
 
 
@@ -48,11 +58,11 @@ object CarPlayClusterDisplay {
     fun isFlyCard(content: Content): Boolean = content == Content.FLY_CARD
 
     /**
-     * True for every cluster view drawn by the phone rather than by us: those already contain the
-     * turn instruction, so no card of ours belongs on top of them.
+     * True for every cluster view whose 111 stream already contains the turn instruction, so no
+     * card of ours belongs on top of it. FLY_CARD is deliberately absent: its map stream carries
+     * no iOS glass card any more - the instruction card arrives as a SEPARATE stream instead.
      */
-    fun usesOfficialTurnCard(content: Content): Boolean =
-        content == Content.INSTRUMENTS || content == Content.FLY_CARD
+    fun usesOfficialTurnCard(content: Content): Boolean = content == Content.INSTRUMENTS
 
     /**
      * Where the car marker goes, as percent of the panel (left, top, right, bottom). Measured on a
@@ -88,12 +98,37 @@ object CarPlayClusterDisplay {
     const val STREAM_SCALE_PERCENT = 100
 
     /**
-     * Default safe-area offset for the pure-Apple mode (FLY_CARD), in marker steps of 10 % of
-     * the panel. Two left + one up puts the iOS turn card into the panel's upper-left region,
-     * matching the 风清速连 box layout; applied on top of the saved Car-marker steps.
+     * The instruction-card display: a small, separate type-111 screen (own UUID) whose stream
+     * DiPlay composites at the panel's upper-left, over the map stream. The card needs no input
+     * and no features, exactly like the map cluster display. The safe area stays at the full
+     * panel - iOS lays the card out for the whole screen it is given.
      */
-    const val FLY_CARD_HORIZONTAL_OFFSET = -2
-    const val FLY_CARD_VERTICAL_OFFSET = -1
+    fun cardConfig(
+        widthPixels: Int = CARD_WIDTH_PIXELS,
+        heightPixels: Int = CARD_HEIGHT_PIXELS,
+        fps: Int = FPS,
+    ): AirPlayDisplayConfig {
+        val width = roundTo8(widthPixels.toDouble())
+        val height = roundTo8(heightPixels.toDouble())
+        return AirPlayDisplayConfig(
+            widthPixels = width,
+            heightPixels = height,
+            // A reported physical size keeps the aspect maths in displayEntry consistent; Apple
+            // ignores it on the cluster (see the map display).
+            widthPhysicalMm = CARD_WIDTH_PHYSICAL_MM,
+            heightPhysicalMm = Math.round(CARD_WIDTH_PHYSICAL_MM * height.toDouble() / width).toInt(),
+            fps = fps,
+            primaryInputDevice = 0,
+            features = 0,
+            initialUrl = CARD_URL,
+        )
+    }
+
+    /** Panel size of the instruction-card stream, decoded 1:1 into the small window's TextureView. */
+    const val CARD_WIDTH_PIXELS = 480
+    const val CARD_HEIGHT_PIXELS = 400
+
+    private const val CARD_WIDTH_PHYSICAL_MM = 96 // a small card panel; Apple Maps ignores it here
 
     private const val WIDTH_PHYSICAL_MM = 292 // a 12.3-inch 8:3 cluster panel; Apple Maps ignores it here
     private const val FPS = 30
@@ -106,13 +141,6 @@ object CarPlayClusterDisplay {
         verticalStep: Int = 0,
         content: Content = Content.MAP,
     ): AirPlayDisplayConfig {
-        // The pure-Apple mode defaults to the 风清速连 layout: map, car marker and glass turn
-        // card all live INSIDE the safe area (iOS puts the card at its top centre), so a
-        // left-shifted area puts the turn card into the panel's upper-left, like the box does.
-        // The saved Car-marker steps still apply on top, so the driver can fine-tune it.
-        val fly = content == Content.FLY_CARD
-        val hStep = horizontalStep + if (fly) FLY_CARD_HORIZONTAL_OFFSET else 0
-        val vStep = verticalStep + if (fly) FLY_CARD_VERTICAL_OFFSET else 0
         // Height rounds to a multiple of 8 and width follows it, so the panel's aspect is kept
         // (100 % of 1920x720 gives exactly 1920x720). The cluster scales the stream to the panel.
         val scale = scalePercent.coerceIn(25, 100)
@@ -130,7 +158,7 @@ object CarPlayClusterDisplay {
         // settled it the other way: the self-drawn map shows the car model fully with this area,
         // while Apple's instrument cluster showed it lower and cut by the panel edge. The two modes
         // differ only in the requested URL, so they must not differ in geometry either.
-        val safe = safeArea(width, height, hStep, vStep)
+        val safe = safeArea(width, height, horizontalStep, verticalStep)
         return AirPlayDisplayConfig(
             widthPixels = width,
             heightPixels = height,

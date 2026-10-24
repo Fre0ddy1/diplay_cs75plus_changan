@@ -303,6 +303,9 @@ class CarPlayHostActivity : ComponentActivity() {
     // (incall announces on 111 stream (re-)activation; the OEM box keeps the stream resident too).
     private var mirrorClusterSurface: Surface? = null
     private var navClusterSurface: Surface? = null
+    // FLY_CARD only: the small card window's Surface, bound to the SECOND cluster stream
+    // (instruction card, SCREEN_TYPE_ALT_CARD). Created with the presentation; null everywhere else.
+    private var cardClusterSurface: Surface? = null
     private var clusterMonitor: DiLink51ClusterMonitor? = null
     private var detectedCluster = ClusterActivityState.Snapshot(null, false)
     // Auto-project on connect: set when the pending delayed auto-projection was fired for
@@ -1375,6 +1378,7 @@ class CarPlayHostActivity : ComponentActivity() {
             theme,
             { surface -> runOnUiThread { onClusterMirrorSurface(surface) } },
             { surface -> runOnUiThread { onClusterNavSurface(surface) } },
+            { surface -> runOnUiThread { onClusterCardSurface(surface) } },
             navOnlyCards = true,
             flyCard = CarPlayClusterDisplay.isFlyCard(AirPlayPersistence.loadClusterContent(this)),
         )
@@ -1450,6 +1454,7 @@ class CarPlayHostActivity : ComponentActivity() {
             theme,
             { surface -> runOnUiThread { onClusterMirrorSurface(surface) } },
             { surface -> runOnUiThread { onClusterNavSurface(surface) } },
+            { surface -> runOnUiThread { onClusterCardSurface(surface) } },
             navOnlyCards = true,
             flyCard = CarPlayClusterDisplay.isFlyCard(AirPlayPersistence.loadClusterContent(this)),
         )
@@ -1704,6 +1709,8 @@ class CarPlayHostActivity : ComponentActivity() {
         navClusterSurface?.let { sink?.clearSurface(SCREEN_TYPE_ALT, it) }
         mirrorClusterSurface = null
         navClusterSurface = null
+        cardClusterSurface?.let { sink?.clearSurface(SCREEN_TYPE_ALT_CARD, it) }
+        cardClusterSurface = null
         presentations.forEach { runCatching { it.dismiss() } }
         com.shilapi.xcertplay.hud.BydNavigationOutputs.setClusterMapShown(false)
     }
@@ -1770,6 +1777,23 @@ class CarPlayHostActivity : ComponentActivity() {
             sink?.setSurface(SCREEN_TYPE_ALT, surface)
         } else if (old != null) {
             sink?.clearSurface(SCREEN_TYPE_ALT, old)
+        }
+    }
+
+    /**
+     * FLY_CARD (dual-stream): the small card window's Surface binds the SECOND cluster stream
+     * (the instruction card, internally SCREEN_TYPE_ALT_CARD) and stays bound for the whole
+     * presentation's life, exactly like the nav surface - the card window is composited on top
+     * of the map view, so no mode switching ever touches it.
+     */
+    private fun onClusterCardSurface(surface: Surface?) {
+        if (cardClusterSurface === surface) return
+        val old = cardClusterSurface
+        cardClusterSurface = surface
+        if (surface != null) {
+            sink?.setSurface(SCREEN_TYPE_ALT_CARD, surface)
+        } else if (old != null) {
+            sink?.clearSurface(SCREEN_TYPE_ALT_CARD, old)
         }
     }
 
@@ -4113,6 +4137,14 @@ class CarPlayHostActivity : ComponentActivity() {
             sourceVersion = "950.7.1",
             main = declared,
             cluster = clusterDisplayConfig(),
+            // The instruction-card display is advertised ONLY in FLY_CARD mode: there the card
+            // window needs its own small stream. Every other mode keeps the single-cluster
+            // /info declaration, so their behaviour is byte-for-byte unchanged.
+            clusterCard = if (CarPlayClusterDisplay.isFlyCard(AirPlayPersistence.loadClusterContent(this))) {
+                CarPlayClusterDisplay.cardConfig()
+            } else {
+                null
+            },
             rightHandDrive = rightHandDrive,
             hevc = hevcEnabled,
             microphone = microphoneAvailable,
@@ -4911,6 +4943,8 @@ class CarPlayHostActivity : ComponentActivity() {
             // (this is what suppresses the "全屏导航已开启" announcement on mode switches).
             mirrorClusterSurface?.let { renderer.setMirrorSurface(SCREEN_TYPE_MAIN, CLUSTER_MAIN_MIRROR, it) }
             navClusterSurface?.let { renderer.setSurface(SCREEN_TYPE_ALT, it) }
+            // FLY_CARD: the card window's stream is resident too.
+            cardClusterSurface?.let { renderer.setSurface(SCREEN_TYPE_ALT_CARD, it) }
         }
         MapMirrors.reapply()
         val media = createMediaEngine(renderer)
@@ -5407,6 +5441,7 @@ class CarPlayHostActivity : ComponentActivity() {
                 // Generic path: keep both resident surfaces bound (mirror 110 + nav 111).
                 mirrorClusterSurface?.let { sink?.setMirrorSurface(SCREEN_TYPE_MAIN, CLUSTER_MAIN_MIRROR, it) }
                 navClusterSurface?.let { sink?.setSurface(SCREEN_TYPE_ALT, it) }
+                cardClusterSurface?.let { sink?.setSurface(SCREEN_TYPE_ALT_CARD, it) }
             }
         } else {
             sink?.setSurface(SCREEN_TYPE_ALT, surface)
@@ -6472,6 +6507,8 @@ class CarPlayHostActivity : ComponentActivity() {
         const val NAVIGATION_STREAM_TYPE = 14
         const val SCREEN_TYPE_MAIN = 110
         const val SCREEN_TYPE_ALT = 111
+        /** The instruction-card screen; internal id assigned by AirPlaySession (wire type 111). */
+        const val SCREEN_TYPE_ALT_CARD = 112
         // Mirror key: the whole CarPlay main screen on the instrument cluster window.
         const val CLUSTER_MAIN_MIRROR = "cluster-main"
         private const val CENTER_MAP_IDLE_MILLIS = 3_000L // a reconnect is quicker; a session end is not

@@ -9,6 +9,8 @@ package com.shilapi.xcertplay.airplay
 object AirPlayInfoPlist {
     const val MAIN_UUID = "b7e6c5a0-1111-4000-8000-000000000001"
     const val ALT_UUID = "b7e6c5a0-2222-4000-8000-000000000002"
+    /** The second alt screen (instruction card); distinct UUID so SETUP/showUI can tell the two apart. */
+    const val CARD_UUID = "b7e6c5a0-3333-4000-8000-000000000003"
 
     private const val STREAM_TYPE_MAIN_SCREEN = 110
     private const val STREAM_TYPE_ALT_SCREEN = 111
@@ -57,6 +59,10 @@ object AirPlayInfoPlist {
             displayEntry(config.main, STREAM_TYPE_MAIN_SCREEN, MAIN_UUID),
         )
         config.cluster?.let { displays.add(displayEntry(it, STREAM_TYPE_ALT_SCREEN, ALT_UUID)) }
+        // The instruction-card stream (WWDC19: "the second stream could be a map view and the
+        // third stream an instruction card"). Also type 111 - the phone opens one alt-screen
+        // stream per display, each against its display's UUID.
+        config.clusterCard?.let { displays.add(displayEntry(it, STREAM_TYPE_ALT_SCREEN, CARD_UUID)) }
 
         val info = linkedMapOf<String, Any?>(
             "sourceVersion" to config.sourceVersion,

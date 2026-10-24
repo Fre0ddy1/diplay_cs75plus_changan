@@ -53,16 +53,64 @@ class CarPlayClusterDisplayTest {
         val custom = CarPlayClusterDisplay.config(1920, 720, content = CarPlayClusterDisplay.Content.MAP_WITH_CUSTOM_CARD)
         assertEquals("maps:/car/instrumentcluster/map", custom.initialUrl)
         // MAP stays as an internal value for stored settings from older builds.
-        // FLY_CARD uses the same URL as INSTRUMENTS so iOS paints the turn card into the stream.
+        // FLY_CARD (dual-stream) uses the MAP URL too: the map stream must stay card-free, the
+        // turn card comes from the separate instruction-card display.
         assertEquals(
             listOf(
                 "maps:/car/instrumentcluster",
                 "maps:/car/instrumentcluster/map",
                 "maps:/car/instrumentcluster/map",
-                "maps:/car/instrumentcluster",
+                "maps:/car/instrumentcluster/map",
             ),
             CarPlayClusterDisplay.Content.entries.map { it.url },
         )
+    }
+
+    @Test
+    fun flyCardAdvertisesASecondInstructionCardDisplay() {
+        val info = AirPlayInfoPlist.build(
+            AirPlayConfig(
+                deviceName = "test",
+                deviceId = "02:00:00:00:00:02",
+                btMac = "02:00:00:00:00:02",
+                sourceVersion = "366.0",
+                main = AirPlayDisplayConfig(widthPixels = 1280, heightPixels = 720),
+                cluster = CarPlayClusterDisplay.config(1920, 720, content = CarPlayClusterDisplay.Content.FLY_CARD),
+                clusterCard = CarPlayClusterDisplay.cardConfig(),
+            ),
+        )
+
+        val displays = info["displays"] as List<*>
+        assertEquals(3, displays.size)
+        // The card is its own type-111 display with its own UUID, no input and no features.
+        val card = displays[2] as Map<*, *>
+        assertEquals(111, card["type"])
+        assertEquals(AirPlayInfoPlist.CARD_UUID, card["uuid"])
+        assertEquals(CarPlayClusterDisplay.CARD_WIDTH_PIXELS, card["widthPixels"])
+        assertEquals(CarPlayClusterDisplay.CARD_HEIGHT_PIXELS, card["heightPixels"])
+        assertEquals("maps:/car/instrumentcluster/instructioncard", card["initialURL"])
+        assertEquals(0, card["features"])
+        assertEquals(0, card["primaryInputDevice"])
+        // The map display keeps its centred safe area and the plain map URL.
+        val map = displays[1] as Map<*, *>
+        assertEquals(AirPlayInfoPlist.ALT_UUID, map["uuid"])
+        assertEquals("maps:/car/instrumentcluster/map", map["initialURL"])
+    }
+
+    @Test
+    fun withoutACardDisplayTheInfoStaysTwoDisplays() {
+        val info = AirPlayInfoPlist.build(
+            AirPlayConfig(
+                deviceName = "test",
+                deviceId = "02:00:00:00:00:02",
+                btMac = "02:00:00:00:00:02",
+                sourceVersion = "366.0",
+                main = AirPlayDisplayConfig(widthPixels = 1280, heightPixels = 720),
+                cluster = CarPlayClusterDisplay.config(1920, 720),
+            ),
+        )
+
+        assertEquals(2, (info["displays"] as List<*>).size)
     }
 
     @Test
@@ -112,17 +160,5 @@ class CarPlayClusterDisplayTest {
         val centreX = (safe.left + 100 - safe.right) / 2.0
 
         assertTrue("centre x $centreX", centreX in 48.0..52.0)
-    }
-
-    @Test
-    fun flyCardShiftsTheSafeAreaToUpperLeft() {
-        val plain = CarPlayClusterDisplay.config(1920, 720, content = CarPlayClusterDisplay.Content.MAP_WITH_CUSTOM_CARD).safeArea!!
-        val fly = CarPlayClusterDisplay.config(1920, 720, content = CarPlayClusterDisplay.Content.FLY_CARD).safeArea!!
-
-        // Default offset: two steps left (384 px) and one step up (72 px) of the centred area.
-        assertEquals(plain.left - 384, fly.left)
-        assertEquals(plain.right + 384, fly.right)
-        assertEquals(plain.top - 72, fly.top)
-        assertEquals(plain.bottom + 72, fly.bottom)
     }
 }

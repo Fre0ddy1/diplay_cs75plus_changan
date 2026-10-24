@@ -63,6 +63,12 @@ data class AirPlayConfig(
     val sourceVersion: String,
     val main: AirPlayDisplayConfig,
     val cluster: AirPlayDisplayConfig? = null,
+    /**
+     * A SECOND alt screen (WWDC19 instrument-cluster streams): the instruction-card display.
+     * Advertised with its own UUID and type 111 like [cluster]; the phone then opens one 111
+     * stream per display. Null keeps the single-cluster behaviour untouched.
+     */
+    val clusterCard: AirPlayDisplayConfig? = null,
     val rightHandDrive: Boolean = false,
     val port: Int = 7000,
     val entertainmentSampleRate: Int = 48000,

@@ -12,6 +12,7 @@ import android.graphics.Matrix
 import android.graphics.Rect
 import android.graphics.SurfaceTexture
 import android.graphics.drawable.ColorDrawable
+import android.graphics.drawable.GradientDrawable
 import android.view.WindowManager
 import android.graphics.Point
 import android.hardware.display.DisplayManager
@@ -44,6 +45,11 @@ internal class ClusterMapPresentation(
     private val theme: DiLink51ClusterLayout.Theme = DiLink51ClusterLayout.theme(context),
     private val onMirrorSurface: (Surface?) -> Unit,
     private val onNavSurface: (Surface?) -> Unit,
+    /**
+     * The instruction-card stream surface (FLY_CARD only). Bound to SCREEN_TYPE_ALT_CARD by the
+     * host; null on every other mode, where the card view is never created.
+     */
+    private val onCardSurface: (Surface?) -> Unit = {},
     private val navOnlyCards: Boolean = false,
     /**
      * The "pure Apple cluster" branch (2026-10-24): the 111 stream is requested with the
@@ -62,10 +68,13 @@ internal class ClusterMapPresentation(
     private var songView: ClusterSongView? = null
     private var genericTextureView: TextureView? = null
     private var navTextureView: TextureView? = null
+    private var cardTextureView: TextureView? = null
     private val projectionSize: Point = sizeOf(display)
     var mirrorOutputSurface: Surface? = null
         private set
     var navOutputSurface: Surface? = null
+        private set
+    var cardOutputSurface: Surface? = null
         private set
 
     // Nav-only card group state. When navOnlyCards is true (Chang'an generic path) the turn,
@@ -318,6 +327,63 @@ internal class ClusterMapPresentation(
                 }
             }
             root.addView(navView, videoParams)
+            if (flyCard) {
+                // The 风清速连 turn-card window (dual-stream FLY_CARD, 2026-10-25): a small
+                // rounded panel at the panel's upper-left, composited ON TOP of the full-screen
+                // map view. Its TextureView decodes the SECOND type-111 stream (the instruction
+                // card, maps:/car/instrumentcluster/instructioncard) at its native 480x400, while
+                // the map view keeps the car marker centred. The two positions are therefore
+                // independent - unlike the single-stream safe-area shift, which moved everything.
+                // Black until frames arrive: the card stream carries 0-5 kbit/s and has no
+                // meaningful waiting text (and none of ours belongs over Apple's picture).
+                val cardPanel = FrameLayout(context).apply {
+                    background = GradientDrawable().apply {
+                        setColor(CARD_BACKGROUND_COLOR)
+                        cornerRadius = CARD_CORNER_RADIUS_PX
+                        setStroke(CARD_STROKE_WIDTH_PX, CARD_STROKE_COLOR)
+                    }
+                    clipToOutline = true
+                }
+                val cardView = TextureView(context)
+                cardView.surfaceTextureListener = object : TextureView.SurfaceTextureListener {
+                    override fun onSurfaceTextureAvailable(texture: SurfaceTexture, width: Int, height: Int) {
+                        Log.i(TAG, "cluster card surface created")
+                        texture.setDefaultBufferSize(
+                            CarPlayClusterDisplay.CARD_WIDTH_PIXELS,
+                            CarPlayClusterDisplay.CARD_HEIGHT_PIXELS,
+                        )
+                        cardOutputSurface = Surface(texture).also(onCardSurface)
+                    }
+
+                    override fun onSurfaceTextureSizeChanged(texture: SurfaceTexture, width: Int, height: Int) = Unit
+
+                    override fun onSurfaceTextureUpdated(texture: SurfaceTexture) = Unit
+
+                    override fun onSurfaceTextureDestroyed(texture: SurfaceTexture): Boolean {
+                        Log.i(TAG, "cluster card surface destroyed")
+                        cardOutputSurface?.release()
+                        cardOutputSurface = null
+                        onCardSurface(null)
+                        return true
+                    }
+                }
+                cardPanel.addView(
+                    cardView,
+                    FrameLayout.LayoutParams(-1, -1),
+                )
+                cardTextureView = cardView
+                root.addView(
+                    cardPanel,
+                    FrameLayout.LayoutParams(
+                        size.x * CARD_WIDTH_PERCENT / 100,
+                        size.y * CARD_HEIGHT_PERCENT / 100,
+                        Gravity.TOP or Gravity.LEFT,
+                    ).apply {
+                        leftMargin = size.x * CARD_LEFT_PERCENT / 100
+                        topMargin = size.y * CARD_TOP_PERCENT / 100
+                    },
+                )
+            }
         }
         waitingLabel = TextView(context).apply {
             text = context.getString(R.string.cluster_waiting_for_map)
@@ -607,6 +673,22 @@ internal class ClusterMapPresentation(
 
     companion object {
         const val TAG = "DiPlay-Cluster"
+
+        // —— Instruction-card window geometry (FLY_CARD), percent of the cluster panel ——
+        // Docked at the panel's upper-left, like the 风清速连 box: left 4 %, top 10 %, a fifth of
+        // the panel wide and a bit over a third tall. The map view and car marker stay centred
+        // underneath, so the card does not displace anything.
+        const val CARD_LEFT_PERCENT = 4
+        const val CARD_TOP_PERCENT = 10
+        const val CARD_WIDTH_PERCENT = 22
+        const val CARD_HEIGHT_PERCENT = 38
+
+        // Dark glass look, reused from the deleted ClusterFlyCard: translucent dark blue,
+        // rounded, thin light stroke.
+        const val CARD_BACKGROUND_COLOR = 0xD9101820.toInt()
+        const val CARD_STROKE_COLOR = 0x66344C5E.toInt()
+        const val CARD_CORNER_RADIUS_PX = 26f
+        const val CARD_STROKE_WIDTH_PX = 2
 
         /**
          * Builds a dashboard with no self-drawn card at all.
