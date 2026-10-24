@@ -383,6 +383,8 @@
     <string name="cluster_card_song_show_artwork">显示专辑封面</string>
     <string name="cluster_card_song_alpha">卡片背景浓度</string>
     <string name="cluster_card_song_alpha_desc">100 为完全不透明黑底，0 完全透明。</string>
+    <string name="cluster_card_background_alpha">卡片背景浓度</string>
+    <string name="cluster_card_background_alpha_desc">100 为完全不透明黑底，0 完全透明。</string>
     <string name="cluster_card_album_title">专辑封面</string>
     <string name="card_scale_album">专辑封面大小</string>
     <string name="cluster_card_song_show_artwork_desc">关闭后只显示歌曲名称和歌手。</string>
@@ -479,7 +481,6 @@
     <string name="reset_turn_card_to_centre">将转向提示卡重置到中央</string>
     <string name="card_scale_turn">转向卡大小</string>
     <string name="card_scale_eta">到达卡大小</string>
-    <string name="card_scale_lane">车道卡大小</string>
     <string name="card_scale_song">歌曲卡大小</string>
     <string name="cluster_turn_card_controls_hidden">转向卡的位置与大小仅在「仪表盘显示」选择「地图 + 自绘转向卡」时显示，切换到该选项后即可调整。</string>
     <string name="cluster_card_song_title">歌曲信息卡</string>
@@ -618,7 +619,6 @@
     <string name="cluster_card_position_preview_note">原点为整个仪表盘投屏画面左上角 (0,0)（1920x720），X 向右、Y 向下，坐标即卡片左上角位置（px）。直接在 X/Y 输入框键入数字预览移动，点击“应用并保存”才会写入并立即刷新仪表盘上的卡片；卡片自适应后若越出屏幕会自动收回边界并保存修正坐标。</string>
     <string name="cluster_card_position_apply">应用并保存</string>
     <string name="cluster_card_position_applied">卡片位置已保存并生效</string>
-    <string name="cluster_card_lane_title">车道指引卡片</string>
     <string name="cluster_card_eta_title">到达信息卡片</string>
     <string name="cluster_card_apple_window_title">Apple 完整导航卡位置</string>
     <string name="cluster_card_apple_window_desc">设置 Apple 完整导航（导航流自带卡片）卡窗的左上角坐标。默认 0,0（屏幕左上角）；若坐标会让卡片越出仪表盘，会自动拉回可视区内并保存修正值。</string>

@@ -2,6 +2,7 @@ package com.shilapi.xcertplay
 
 import android.content.Context
 import android.graphics.Canvas
+import android.graphics.Color
 import android.graphics.RectF
 import android.view.View
 import com.shilapi.xcertplay.host.R
@@ -36,6 +37,8 @@ internal class ClusterEtaCardView(context: Context) : View(context) {
     private var posY = Float.NaN
     /** Card size scale, cached like the position; NaN means "reload from the setting". */
     private var overlayScale = Float.NaN
+    /** Fill opacity 0-100, same control the song card has (50 = the shared default). */
+    private var backgroundAlpha = 50
     private var lastArrivalLine = ""
     private var lastArrivalSize = 0f
     private var lastSubLine = ""
@@ -51,6 +54,17 @@ internal class ClusterEtaCardView(context: Context) : View(context) {
         overlayScale = Float.NaN
         invalidate()
     }
+
+    /** Background strength from the settings page (0 = glass edge only, 100 = opaque black). */
+    fun setBackgroundAlpha(percent: Int) {
+        val next = percent.coerceIn(0, 100)
+        if (next == backgroundAlpha) return
+        backgroundAlpha = next
+        invalidate()
+    }
+
+    private fun backgroundFill(): Int =
+        Color.argb((255 * backgroundAlpha.coerceIn(0, 100) / 100f).toInt().coerceIn(0, 255), 0, 0, 0)
 
     fun setGuidance(next: ClusterTurnGuidance?) {
         guidance = next
@@ -145,7 +159,7 @@ internal class ClusterEtaCardView(context: Context) : View(context) {
         }
         rect.set(left, top, left + cardW, top + cardH)
         val radius = cardH * 0.28f
-        GlassCardStyle.drawCapsule(canvas, rect, radius)
+        GlassCardStyle.drawCapsule(canvas, rect, radius, backgroundFill())
         textBackstop.set(left, top, left + cardW, top + cardH)
         GlassCardStyle.drawTextBackstop(canvas, textBackstop, radius)
 

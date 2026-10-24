@@ -830,7 +830,7 @@ object AirPlayPersistence {
      * cards side by side on one dashboard (three drawn cards - turn, ETA, song - today), and a
      * driver who wanted "a bit smaller than medium" had no way to ask for it. 100 % is exactly the
      * old MEDIUM, so nobody's layout moves until they touch the control. Cards are keyed the same
-     * way as their positions ("turn", "eta", "lane", "song"); Apple's full-navigation card WINDOW
+     * way as their positions ("turn", "eta", "song"); Apple's full-navigation card WINDOW
      * ("apple") is deliberately absent - its size is the stream's own picture, so it is not
      * scalable.
      */
@@ -916,7 +916,6 @@ object AirPlayPersistence {
         // "apple" is the card WINDOW of the full-navigation (FLY_CARD) stream, not a drawn
         // card: it must default to the panel origin instead of falling through to else's 43.
         "song" -> 780
-        "lane" -> 0
         "eta" -> 1600
         "exit" -> 1700
         "apple" -> 0
@@ -925,7 +924,6 @@ object AirPlayPersistence {
 
     private fun clusterCardDefaultY(card: String): Int = when (card) {
         "song" -> 20
-        "lane" -> 300
         "eta" -> 500
         "exit" -> 43
         "apple" -> 0
@@ -1081,6 +1079,24 @@ object AirPlayPersistence {
         context.getSharedPreferences(PREFS, Context.MODE_PRIVATE)
             .getInt(KEY_CLUSTER_SONG_CARD_ALPHA, 50)
             .coerceIn(0, 100)
+
+    /**
+     * Background strength (0-100) of a DRAWN card's glass fill (turn / ETA).
+     *
+     * Same idea as the song card's setting, with its own key per card: at 100 % the fill is
+     * opaque black, at 0 % only the bevel and text remain. Default 50 matches the song card so
+     * all drawn cards start with the same look (field request 2026-10-25).
+     */
+    fun loadClusterCardAlpha(context: Context, card: String): Int =
+        context.getSharedPreferences(PREFS, Context.MODE_PRIVATE)
+            .getInt("cluster_card_alpha_$card", 50)
+            .coerceIn(0, 100)
+
+    fun saveClusterCardAlpha(context: Context, card: String, percent: Int) {
+        context.getSharedPreferences(PREFS, Context.MODE_PRIVATE).edit()
+            .putInt("cluster_card_alpha_$card", percent.coerceIn(0, 100)).apply()
+        overlaySettingsListener?.invoke()
+    }
 
     fun saveClusterSongCardAlpha(context: Context, percent: Int) {
         context.getSharedPreferences(PREFS, Context.MODE_PRIVATE).edit()

@@ -378,7 +378,7 @@ internal class ClusterMapPresentation(
         // itself sends. If the glass turn box in the middle of the dashboard survives this build,
         // it is Apple's own instrument-cluster view; if it disappears, it was one of ours.
         // Set to false to restore the cards.
-        if (!CARDS_DISABLED && !flyCard) {
+        if (!CARDS_DISABLED) {
             // Added last so it draws above the guidance cards.
             //
             // The song card - like the ETA card - is shown in EVERY mode (A4): it is created once
@@ -404,12 +404,11 @@ internal class ClusterMapPresentation(
      */
     private fun materializeGuidanceCards() {
         if (CARDS_DISABLED) return
-        // Pure-Apple mode draws no card of ours: iOS already paints the turn card in the stream.
-        if (flyCard) return
         val root = cardsRoot ?: return
         // Turn card: nav-only stream only. iOS's own instruction box is the whole picture of the
         // mirror stream, and a second card on top of it was exactly the "glass box" confusion.
-        if (!mirrorMode && turnCardView == null && turnCardVisibleCache) {
+        // FLY_CARD never draws this card: Apple's instruction-card WINDOW carries the turns there.
+        if (!flyCard && !mirrorMode && turnCardView == null && turnCardVisibleCache) {
             turnCardView = ClusterTurnCardView(context).apply { visibility = View.GONE }
             root.addView(turnCardView, FrameLayout.LayoutParams(-1, -1))
             // A rebuilt card starts at its own defaults, so restore the driver's saved geometry
@@ -419,12 +418,14 @@ internal class ClusterMapPresentation(
                 AirPlayPersistence.loadClusterTurnCardY(context),
                 AirPlayPersistence.loadClusterCardScalePercent(context, "turn"),
             )
+            turnCardView?.setBackgroundAlpha(AirPlayPersistence.loadClusterCardAlpha(context, "turn"))
             turnCardView?.setGuidance(lastTurnGuidance)
         }
         // ETA card: both modes (A2). The host feeds setEtaGuidance() in either mode.
         if (etaCardView == null && (cardVisibleCache["eta"] ?: true)) {
             etaCardView = ClusterEtaCardView(context).apply { visibility = View.GONE }
             root.addView(etaCardView, FrameLayout.LayoutParams(-1, -1))
+            etaCardView?.setBackgroundAlpha(AirPlayPersistence.loadClusterCardAlpha(context, "eta"))
             etaCardView?.setGuidance(lastEtaGuidance)
         }
         // The cards are inserted after the video surfaces, so they must be raised again.
@@ -464,19 +465,10 @@ internal class ClusterMapPresentation(
      * announce "全屏导航已开启". On the DiLink 5.1 layout (single TextureView) the mode is a no-op.
      */
     fun setMode(mirror: Boolean) {
-        // Pure-Apple branch (2026-10-24): the dashboard is ALWAYS the full-screen 111 stream
-        // (instruments URL), whatever mode request arrives (three-finger swipe, auto navigation
-        // switch). mirrorMode is pinned to false so the host keeps watching the 111 stream
-        // (isMirrorMode() drives stream choice). Views may still be null on a cold start; the
-        // surface callback re-asserts desiredMirror, which lands in this branch again.
-        if (flyCard) {
-            desiredMirror = mirror
-            mirrorMode = false
-            genericTextureView?.visibility = View.GONE
-            navTextureView?.visibility = View.VISIBLE
-            Log.i(TAG, "cluster display mode: pure apple cluster (mirror request $mirror ignored)")
-            return
-        }
+        // Every content mode switches the same two resident surfaces. FLY_CARD is no exception
+        // any more (field 2026-10-25: the driver could not reach the whole-screen mirror at all,
+        // by three-finger swipe or by reconnecting, because this used to pin mirrorMode to false).
+        // Its instruction-card window is simply hidden while the mirror is up.
         // Remember the request before checking the views: on a cold start the host can ask for
         // nav-only while the TextureViews are still null, and the surface callback below must
         // re-apply this mode rather than the saved setting (which the auto-switch intentionally
@@ -491,6 +483,7 @@ internal class ClusterMapPresentation(
             // created in both modes (applyCardsVisibility -> materializeGuidanceCards).
             applyCardsVisibility()
         }
+        applyCardWindowVisibility()
         val nav = navTextureView ?: return
         val mirrorView = genericTextureView ?: return
         mirrorView.visibility = if (mirror) View.VISIBLE else View.GONE
@@ -567,7 +560,20 @@ internal class ClusterMapPresentation(
         }
         cardView.clipToOutline = true
         root.addView(cardView, cardWindowParams())
+        applyCardWindowVisibility()
         Log.i(TAG, "cluster card window created ${cardVideoWidth}x$cardVideoHeight at $cardWindowLeft,$cardWindowTop")
+    }
+
+    /**
+     * The instruction-card window belongs to the navigation picture only.
+     *
+     * While the whole-screen mirror is up it is HIDDEN, not destroyed: keeping the view and its
+     * surface avoids re-negotiating the card stream and rebuilding its decoder when the driver
+     * swipes back (field 2026-10-25: the mirror must be reachable from this mode at all).
+     */
+    private fun applyCardWindowVisibility() {
+        if (!flyCard) return
+        cardTextureView?.visibility = if (mirrorMode) View.GONE else View.VISIBLE
     }
 
     /** Drops the window and its surface; the host releases the decoder with it. */
@@ -749,8 +755,10 @@ internal class ClusterMapPresentation(
             AirPlayPersistence.loadClusterTurnCardY(context),
             AirPlayPersistence.loadClusterCardScalePercent(context, "turn"),
         )
+        turnCardView?.setBackgroundAlpha(AirPlayPersistence.loadClusterCardAlpha(context, "turn"))
         // Drop each card's cached position so the next draw reloads the saved coordinates.
         etaCardView?.notifyPositionChanged()
+        etaCardView?.setBackgroundAlpha(AirPlayPersistence.loadClusterCardAlpha(context, "eta"))
         // Deliberately outside the nav-only group: the mirror mode shows these as well.
         songView?.notifyPositionChanged()
         // Reload the show/hide switches, then a saved switch change re-applies visibility right away.
@@ -805,8 +813,9 @@ internal class ClusterMapPresentation(
      */
     private fun applyCardsVisibility() {
         if (!navOnlyCards) return
-        // Fly-card mode: no guidance cards exist, ever (see materializeGuidanceCards).
-        if (flyCard) return
+        // FLY_CARD is no longer exempt: it shows the ETA and song cards too (2026-10-25). Its
+        // turn card is simply never created (see materializeGuidanceCards), so the turn branch
+        // below is a no-op there.
         // Not the navigation stream: only the turn card goes away, everything else stays.
         if (mirrorMode || !turnCardVisibleCache) destroyTurnCard()
         if (cardVisibleCache["eta"] == false) {
@@ -850,8 +859,8 @@ internal class ClusterMapPresentation(
         // coordinates before the first layout resolves them from persistence.
         const val CARD_LEFT_PX = 0
         const val CARD_TOP_PX = 0
-        /** Rounded corners of the card window, in panel pixels. */
-        const val CARD_CORNER_RADIUS_PX = 24f
+        /** Rounded corners of the card window, in panel pixels (≈24 % of the card height). */
+        const val CARD_CORNER_RADIUS_PX = 48f
         /**
          * The card window's key in the shared per-card position store (AirPlayPersistence).
          *

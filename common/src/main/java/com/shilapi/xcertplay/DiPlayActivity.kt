@@ -886,10 +886,6 @@ class DiPlayActivity : ComponentActivity() {
                 // 预览与保存分离：滑块只更新预览/暂存（pending），点击 Apply 才写入持久化并
                 // 通过 overlaySettingsListener 立即刷新仪表盘上的真实卡片。
                 val pendingXY = mutableMapOf(
-                    "lane" to Pair(
-                        AirPlayPersistence.loadClusterCardX(this, "lane"),
-                        AirPlayPersistence.loadClusterCardY(this, "lane"),
-                    ),
                     "eta" to Pair(
                         AirPlayPersistence.loadClusterCardX(this, "eta"),
                         AirPlayPersistence.loadClusterCardY(this, "eta"),
@@ -924,6 +920,14 @@ class DiPlayActivity : ComponentActivity() {
                     // other cards' rows and its size was somewhere else entirely.
                     cardGroup(card, getString(R.string.cluster_card_turn_title)) { group ->
                         cardScaleRow(group, getString(R.string.card_scale_turn), "turn")
+                        // Background strength, same control the song card has (2026-10-25).
+                        percentRow(
+                            group,
+                            getString(R.string.cluster_card_background_alpha),
+                            AirPlayPersistence.loadClusterCardAlpha(this, "turn"),
+                        ) { percent ->
+                            AirPlayPersistence.saveClusterCardAlpha(this, "turn", percent)
+                        }
                         toggle(group, getString(R.string.turn_card_show),
                             getString(R.string.cluster_card_show_desc),
                             AirPlayPersistence.loadClusterTurnCardVisible(this)) { visible ->
@@ -996,6 +1000,16 @@ class DiPlayActivity : ComponentActivity() {
                             AirPlayPersistence.saveClusterCardVisible(this, cardId, visible)
                         }
                         if (scaleTitle != null) cardScaleRow(group, getString(scaleTitle), cardId)
+                        // Same background-strength control the song card has (2026-10-25).
+                        if (cardId == "eta") {
+                            percentRow(
+                                group,
+                                getString(R.string.cluster_card_background_alpha),
+                                AirPlayPersistence.loadClusterCardAlpha(this, cardId),
+                            ) { percent ->
+                                AirPlayPersistence.saveClusterCardAlpha(this, cardId, percent)
+                            }
+                        }
                         group.addView(LinearLayout(this).apply {
                             orientation = LinearLayout.HORIZONTAL
                             gravity = Gravity.CENTER_VERTICAL

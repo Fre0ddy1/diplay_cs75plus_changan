@@ -1541,12 +1541,9 @@ class CarPlayHostActivity : ComponentActivity() {
      * recovery) must use this instead of reading the preference again.
      */
     private fun currentClusterMirrorMode(): Boolean {
-        val content = AirPlayPersistence.loadClusterContent(this)
-        // Fly-card mode feeds on the 111 map stream: the whole-screen mirror (110) never belongs
-        // inside the dashboard.
-        if (content == CarPlayClusterDisplay.Content.FLY_CARD) {
-            return false
-        }
+        // Every picture source can reach the whole-screen mirror (field 2026-10-25: FLY_CARD used
+        // to be pinned to nav-only here, so the three-finger swipe and the reconnect both looked
+        // broken). FLY_CARD simply hides its instruction-card window while mirrored.
         if (clusterSwipePosition >= 0) return clusterSwipePosition == 0
         if (AirPlayPersistence.loadClusterAutoNavMode(this)) {
             lastAutoNavState?.let { return !it }

@@ -386,6 +386,8 @@
     <string name="cluster_card_song_show_artwork">Show album artwork</string>
     <string name="cluster_card_song_alpha">Card background strength</string>
     <string name="cluster_card_song_alpha_desc">100 is an opaque black card, 0 fully transparent.</string>
+    <string name="cluster_card_background_alpha">Card background strength</string>
+    <string name="cluster_card_background_alpha_desc">100 is an opaque black card, 0 fully transparent.</string>
     <string name="cluster_card_album_title">Album artwork</string>
     <string name="card_scale_album">Album artwork size</string>
     <string name="cluster_card_song_show_artwork_desc">Off shows only the song name and artist.</string>
@@ -482,7 +484,6 @@
     <string name="reset_turn_card_to_centre">Reset turn card to centre</string>
     <string name="card_scale_turn">Turn card size</string>
     <string name="card_scale_eta">Arrival card size</string>
-    <string name="card_scale_lane">Lane card size</string>
     <string name="card_scale_song">Song card size</string>
     <string name="cluster_turn_card_controls_hidden">Turn card position and size are only shown when "仪表盘显示" is set to "地图 + 自绘转向卡" - switch that option above to adjust them.</string>
     <string name="cluster_card_song_title">Song card</string>
@@ -494,7 +495,6 @@
     <string name="cluster_card_position_preview_note">Origin is the top-left corner (0,0) of the full dashboard projection (1920x720); X grows right, Y grows down, and the coordinates are the card\'s top-left corner in px. Type a number into the X/Y boxes to preview the move — nothing changes on the dashboard until you press Apply &amp; save, which persists and refreshes the live cards immediately. If an auto-sized card overflows the panel it is pulled back inside and the corrected position is saved.</string>
     <string name="cluster_card_position_apply">Apply &amp; save</string>
     <string name="cluster_card_position_applied">Card positions saved and applied</string>
-    <string name="cluster_card_lane_title">Lane guidance card</string>
     <string name="cluster_card_eta_title">Arrival card</string>
     <string name="cluster_card_apple_window_title">Apple full-navigation card position</string>
     <string name="cluster_card_apple_window_desc">Places the card window that Apple draws for its full-navigation stream. Default 0,0 (the panel\'s upper-left corner); a position that would push the card past the dashboard edge is pulled back inside automatically.</string>

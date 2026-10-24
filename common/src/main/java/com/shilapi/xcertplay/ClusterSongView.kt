@@ -145,6 +145,15 @@ internal class ClusterSongView(context: Context) : View(context) {
 
         val left = posX.coerceIn(0f, (width - w).coerceAtLeast(0f))
         val top = posY.coerceIn(0f, (height - h).coerceAtLeast(0f))
+        // Overflow correction, same rule as every other drawn card (field request 2026-10-25):
+        // shift back inside and persist the corrected position silently, so the next read is
+        // already inside the panel instead of clamping again on every frame.
+        if (left != posX || top != posY) {
+            AirPlayPersistence.saveClusterCardXSilent(context, CARD, left.toInt())
+            AirPlayPersistence.saveClusterCardYSilent(context, CARD, top.toInt())
+            posX = left
+            posY = top
+        }
         rect.set(left, top, left + w, top + h)
 
         val cardFill = Color.argb(

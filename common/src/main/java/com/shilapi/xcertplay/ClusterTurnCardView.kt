@@ -27,6 +27,8 @@ internal class ClusterTurnCardView(context: Context) : View(context) {
     private var yPx = AirPlayPersistence.DEFAULT_CLUSTER_TURN_CARD_Y_PX
     /** Size in percent of the designed card (100 = the old MEDIUM preset). */
     private var scalePercent = AirPlayPersistence.CLUSTER_CARD_SCALE_DEFAULT
+    /** Fill opacity 0-100, same control the song card has (50 = the shared default). */
+    private var backgroundAlpha = 50
 
     private val accent = Color.rgb(10, 132, 255)
     private val badgePaint = Paint(Paint.ANTI_ALIAS_FLAG).apply { color = accent }
@@ -60,6 +62,17 @@ internal class ClusterTurnCardView(context: Context) : View(context) {
         this.scalePercent = scalePercent
         invalidate()
     }
+
+    /** Background strength from the settings page (0 = glass edge only, 100 = opaque black). */
+    fun setBackgroundAlpha(percent: Int) {
+        val next = percent.coerceIn(0, 100)
+        if (next == backgroundAlpha) return
+        backgroundAlpha = next
+        invalidate()
+    }
+
+    private fun backgroundFill(): Int =
+        Color.argb((255 * backgroundAlpha.coerceIn(0, 100) / 100f).toInt().coerceIn(0, 255), 0, 0, 0)
 
     fun setGuidance(next: ClusterTurnGuidance?) {
         if (guidance == next) {
@@ -128,7 +141,7 @@ internal class ClusterTurnCardView(context: Context) : View(context) {
 
         rect.set(left, top, left + w, top + h)
         // Liquid-glass capsule: translucent fill + top sheen + bevel + soft drop shadow.
-        GlassCardStyle.drawCapsule(canvas, rect, radius)
+        GlassCardStyle.drawCapsule(canvas, rect, radius, backgroundFill())
 
         val chipTop = top + (h - chip) / 2f
         rect.set(chipLeft + left, chipTop, chipLeft + left + chip, chipTop + chip)
