@@ -65,16 +65,6 @@ object CarPlayClusterDisplay {
     private const val WIDTH_PHYSICAL_MM = 292 // a 12.3-inch 8:3 cluster panel; Apple Maps ignores it here
     private const val FPS = 30
 
-    /**
-     * Bottom safe area for Apple's own cluster views, in percent of the stream height.
-     *
-     * Apple lays the 3D car model at the very bottom of its view, where the UNI-V panel cuts it in
-     * half (field screenshots 2026-10-24). The self-drawn map keeps the model fully visible with a
-     * 25 % bottom reserve, so Apple's views get the same value. Left and right stay 0 - reserving
-     * there letterboxes Apple's layout for no benefit, since it already centres everything itself.
-     */
-    private const val APPLE_CLUSTER_BOTTOM_SAFE_PERCENT = 25
-
     fun config(
         widthPixels: Int,
         heightPixels: Int,
@@ -88,24 +78,19 @@ object CarPlayClusterDisplay {
         val scale = scalePercent.coerceIn(25, 100)
         val height = roundTo8(heightPixels * scale / 100.0)
         val width = roundTo8(height * widthPixels.toDouble() / heightPixels)
-        // The centred safe area is the only mode left (field decision 2026-10-18): with a
-        // zero inset Amap renders its detailed follow map and puts the car marker left of
-        // centre, leaving the panel's right column to its own info strip. The centred area
-        // makes Amap show the overview with the marker dead centre, which is what the driver
-        // wants on this head unit; the marker steps still move it from there.
-        // Apple's own views lay the content out themselves, so they get no horizontal inset - but
-        // they do put the car model right at the bottom edge and the panel clips it there. A
-        // bottom-only reserve lifts it into view without letterboxing the layout.
-        val safe = if (usesOfficialTurnCard(content)) {
-            AirPlayInsets(
-                top = 0,
-                bottom = height * APPLE_CLUSTER_BOTTOM_SAFE_PERCENT / 100,
-                left = 0,
-                right = 0,
-            )
-        } else {
-            safeArea(width, height, horizontalStep, verticalStep)
-        }
+        // ONE safe area for every content mode.
+        //
+        // The centred area is the only mode left (field decision 2026-10-18): with a zero inset
+        // Amap renders its detailed follow map and puts the car marker left of centre, leaving the
+        // panel's right column to its own info strip. The centred area makes Amap show the overview
+        // with the marker dead centre; the marker steps still move it from there.
+        //
+        // Apple's own cluster views get the same area. It used to be assumed that they lay the
+        // content out themselves and need the whole panel, but the field comparison on 2026-10-24
+        // settled it the other way: the self-drawn map shows the car model fully with this area,
+        // while Apple's instrument cluster showed it lower and cut by the panel edge. The two modes
+        // differ only in the requested URL, so they must not differ in geometry either.
+        val safe = safeArea(width, height, horizontalStep, verticalStep)
         return AirPlayDisplayConfig(
             widthPixels = width,
             heightPixels = height,

@@ -22,9 +22,9 @@ class CarPlayClusterDisplayTest {
         assertEquals(2, displays.size)
         val alt = displays[1] as Map<*, *>
         assertEquals(111, alt["type"])
-        // 83 % of the 1920x720 panel, same 8:3 aspect.
-        assertEquals(1600, alt["widthPixels"])
-        assertEquals(600, alt["heightPixels"])
+        // The panel at 100 %: 1920x720, same 8:3 aspect.
+        assertEquals(1920, alt["widthPixels"])
+        assertEquals(720, alt["heightPixels"])
         assertEquals(0, alt["features"])
         assertEquals(0, alt["primaryInputDevice"])
         assertEquals("maps:/car/instrumentcluster/map", alt["initialURL"])
@@ -32,14 +32,14 @@ class CarPlayClusterDisplayTest {
         assertEquals(110, alt["heightPhysical"])
 
         val view = (alt["viewAreas"] as List<*>).single() as Map<*, *>
-        assertEquals(1600, view["widthPixels"])
-        assertEquals(600, view["heightPixels"])
+        assertEquals(1920, view["widthPixels"])
+        assertEquals(720, view["heightPixels"])
         val safe = view["safeArea"] as Map<*, *>
         // The centre area clear in both cluster navi modes: left 35 %, right 36 %, top 16 %, bottom 25 %.
-        assertEquals(560, safe["originXPixels"])
-        assertEquals(96, safe["originYPixels"])
-        assertEquals(464, safe["widthPixels"])
-        assertEquals(354, safe["heightPixels"])
+        assertEquals(672, safe["originXPixels"])
+        assertEquals(115, safe["originYPixels"])
+        assertEquals(557, safe["widthPixels"])
+        assertEquals(425, safe["heightPixels"])
         assertEquals(true, safe["drawUIOutsideSafeArea"])
 
         // The main screen keeps its touch and knob features.
