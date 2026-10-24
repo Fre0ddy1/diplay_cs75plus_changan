@@ -790,11 +790,11 @@ object AirPlayPersistence {
     fun loadClusterContent(context: Context): CarPlayClusterDisplay.Content {
         val stored = context.getSharedPreferences(PREFS, Context.MODE_PRIVATE)
             .getString(KEY_CLUSTER_CONTENT, null)
-        // Default: Apple's own instrument cluster. A stored name that no longer exists (the
-        // instruction card and the experimental paths were removed on 2026-10-24) resolves to the
-        // default as well, so an old install lands on something that works.
+        // Default: the map with our movable cards. A stored name that no longer exists (Apple's
+        // instruments view and the experimental paths were removed) resolves to the default as
+        // well, so an old install lands on something that works.
         return CarPlayClusterDisplay.Content.entries.firstOrNull { it.name == stored }
-            ?: CarPlayClusterDisplay.Content.INSTRUMENTS
+            ?: CarPlayClusterDisplay.Content.MAP_WITH_CUSTOM_CARD
     }
 
     fun saveClusterContent(context: Context, content: CarPlayClusterDisplay.Content) {

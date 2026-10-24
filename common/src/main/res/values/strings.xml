@@ -377,9 +377,8 @@
     <string name="instrument_cluster_entire_interface">Entire CarPlay screen (mirror, stays in sync)</string>
     <string name="instrument_cluster_navigation_stream">Navigation cluster stream (guidance only)</string>
     <string name="cluster_content_title">Cluster picture source in nav-only mode</string>
-    <string name="cluster_content_instruments">Apple full map (car model + turn hint)</string>
     <string name="cluster_content_custom">Map + cards drawn here (movable)</string>
-    <string name="cluster_content_flycard">Apple full navigation, pure (nothing drawn on top)</string>
+    <string name="cluster_content_flycard">Apple full navigation</string>
     <string name="cluster_content_hint">All are pictures the phone sends; switching reconnects, because the URL is fixed when the window is built.</string>
     <string name="cluster_card_song_max_chars">Song card maximum characters</string>
     <string name="cluster_card_song_max_chars_desc">Each line is sized to this many characters: shorter text keeps the full width, longer text wraps to the next line.</string>

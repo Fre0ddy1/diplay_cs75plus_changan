@@ -1541,16 +1541,9 @@ class CarPlayHostActivity : ComponentActivity() {
      * recovery) must use this instead of reading the preference again.
      */
     private fun currentClusterMirrorMode(): Boolean {
-        // Apple's own cluster views exist only on the navigation stream (111). Asking for the
-        // whole-screen mirror would show CarPlay's main screen instead, which is what the driver
-        // kept seeing as "our own drawn style" while "dashboard shows" was Apple's instruments view
-        // (field 2026-10-24).
         val content = AirPlayPersistence.loadClusterContent(this)
-        if (content == CarPlayClusterDisplay.Content.INSTRUMENTS) {
-            return false
-        }
-        // Fly-card mode feeds on the 111 map stream, exactly like Apple's own views: the
-        // whole-screen mirror (110) never belongs inside the card.
+        // Fly-card mode feeds on the 111 map stream: the whole-screen mirror (110) never belongs
+        // inside the dashboard.
         if (content == CarPlayClusterDisplay.Content.FLY_CARD) {
             return false
         }

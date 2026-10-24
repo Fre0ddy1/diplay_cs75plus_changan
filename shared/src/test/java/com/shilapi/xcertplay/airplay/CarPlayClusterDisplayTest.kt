@@ -48,8 +48,6 @@ class CarPlayClusterDisplayTest {
 
     @Test
     fun theDashboardOffersOnlyTwoSources() {
-        val instruments = CarPlayClusterDisplay.config(1920, 720, content = CarPlayClusterDisplay.Content.INSTRUMENTS)
-        assertEquals("maps:/car/instrumentcluster", instruments.initialUrl)
         val custom = CarPlayClusterDisplay.config(1920, 720, content = CarPlayClusterDisplay.Content.MAP_WITH_CUSTOM_CARD)
         assertEquals("maps:/car/instrumentcluster/map", custom.initialUrl)
         // MAP stays as an internal value for stored settings from older builds.
@@ -57,7 +55,6 @@ class CarPlayClusterDisplayTest {
         // turn card comes from the separate instruction-card display.
         assertEquals(
             listOf(
-                "maps:/car/instrumentcluster",
                 "maps:/car/instrumentcluster/map",
                 "maps:/car/instrumentcluster/map",
                 "maps:/car/instrumentcluster/map",

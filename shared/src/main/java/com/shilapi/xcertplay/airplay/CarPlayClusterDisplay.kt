@@ -24,8 +24,6 @@ object CarPlayClusterDisplay {
      * MAP_WITH_CUSTOM_CARD asks for the map stream so DiPlay can draw a movable card on top.
      */
     enum class Content(val url: String) {
-        /** Apple's own instrument-cluster view: map, car model and its turn box. */
-        INSTRUMENTS("maps:/car/instrumentcluster"),
         /** The map stream, with our own movable cards drawn on top of it. */
         MAP_WITH_CUSTOM_CARD(MAP_URL),
         /**
@@ -56,13 +54,6 @@ object CarPlayClusterDisplay {
 
     /** The pure-Apple-cluster mode: full-screen instruments stream, nothing of ours on top. */
     fun isFlyCard(content: Content): Boolean = content == Content.FLY_CARD
-
-    /**
-     * True for every cluster view whose 111 stream already contains the turn instruction, so no
-     * card of ours belongs on top of it. FLY_CARD is deliberately absent: its map stream carries
-     * no iOS glass card any more - the instruction card arrives as a SEPARATE stream instead.
-     */
-    fun usesOfficialTurnCard(content: Content): Boolean = content == Content.INSTRUMENTS
 
     /**
      * Where the car marker goes, as percent of the panel (left, top, right, bottom). Measured on a
