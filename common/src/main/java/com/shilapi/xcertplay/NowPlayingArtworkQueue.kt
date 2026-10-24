@@ -41,6 +41,12 @@ internal class NowPlayingArtworkQueue<Image : Any>(
     }
 
     fun submit(expected: Any, id: Int, bytes: ByteArray) {
+        // An empty transfer says one artwork slot is empty, NOT that the current cover is gone.
+        // iAP2 alternates two slots (0x80/0x81) and sends the idle one with zero bytes right after
+        // the real cover on the other, so honouring it cleared a cover that had just arrived - the
+        // field report for 2026-10-24 is exactly that: bytes=80569 on 0x81, then bytes=0 on 0x80,
+        // and the card showed no cover at all.
+        if (bytes.isEmpty()) return
         if (id !in 0..255 || bytes.size > Iap2FileTransferReceiver.DEFAULT_MAXIMUM_ARTWORK_BYTES) return
         val schedule = synchronized(lock) {
             if (owner !== expected) return
