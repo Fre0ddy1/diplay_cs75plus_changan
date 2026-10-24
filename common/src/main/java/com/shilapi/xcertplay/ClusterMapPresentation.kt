@@ -68,7 +68,11 @@ internal class ClusterMapPresentation(
     private var genericTextureView: TextureView? = null
     private var navTextureView: TextureView? = null
     private var cardTextureView: TextureView? = null
-    /** Real decoded picture size of the instruction-card stream; the window follows it 1:1. */
+    /** Root the card window is attached to while it exists (FLY_CARD only). */
+    private var rootView: FrameLayout? = null
+    /** The instruction-card stream is up right now (the phone is sending frames). */
+    private var cardStreamActive = false
+    /** Current decoded picture size of the instruction-card stream, in its own pixels. */
     private var cardVideoWidth = CarPlayClusterDisplay.CARD_WIDTH_PIXELS
     private var cardVideoHeight = CarPlayClusterDisplay.CARD_HEIGHT_PIXELS
     private val projectionSize: Point = sizeOf(display)
@@ -227,6 +231,7 @@ internal class ClusterMapPresentation(
                 },
             )
         }
+        rootView = root
         if (plan != null) {
             window?.setBackgroundDrawable(ColorDrawable(Color.TRANSPARENT))
             window?.clearFlags(WindowManager.LayoutParams.FLAG_DIM_BEHIND)
@@ -329,41 +334,14 @@ internal class ClusterMapPresentation(
                 }
             }
             root.addView(navView, videoParams)
-            if (flyCard) {
-                // The 风清速连 turn-card window (dual-stream FLY_CARD, 2026-10-25): the
-                // instruction-card stream (maps:/car/instrumentcluster/instructioncard) is shown
-                // EXACTLY AS IT ARRIVES, one stream pixel per panel pixel, at the panel's
-                // upper-left corner, composited ON TOP of the full-screen map view.
-                //
-                // Nothing of ours is drawn around it - no background colour, no rounded mask, no
-                // stroke. An earlier build drew a translucent blue panel of a guessed size and
-                // stretched the picture into it, which is what the driver saw as a large black
-                // slab. Whatever Apple paints is now what the dashboard shows.
-                //
-                // Black until the first frames arrive: the card stream carries 0-5 kbit/s.
-                val cardView = TextureView(context)
-                cardView.surfaceTextureListener = object : TextureView.SurfaceTextureListener {
-                    override fun onSurfaceTextureAvailable(texture: SurfaceTexture, width: Int, height: Int) {
-                        Log.i(TAG, "cluster card surface created")
-                        texture.setDefaultBufferSize(cardVideoWidth, cardVideoHeight)
-                        cardOutputSurface = Surface(texture).also(onCardSurface)
-                    }
-
-                    override fun onSurfaceTextureSizeChanged(texture: SurfaceTexture, width: Int, height: Int) = Unit
-
-                    override fun onSurfaceTextureUpdated(texture: SurfaceTexture) = Unit
-
-                    override fun onSurfaceTextureDestroyed(texture: SurfaceTexture): Boolean {
-                        Log.i(TAG, "cluster card surface destroyed")
-                        cardOutputSurface?.release()
-                        cardOutputSurface = null
-                        onCardSurface(null)
-                        return true
-                    }
-                }
-                cardTextureView = cardView
-                root.addView(cardView, cardWindowParams())
-            }
+            // The instruction-card window (FLY_CARD) is NOT built here.
+            //
+            // It exists only while the phone is actually sending that stream AND there is
+            // guidance to show: createCardWindow() builds a TextureView sized to the stream's own
+            // picture and drops it at the panel's upper-left corner, destroyCardWindow() removes
+            // it again. Nothing of ours is ever drawn around it - no background, no mask, no
+            // stroke - so the dashboard shows exactly the frames the phone sends, and nothing at
+            // all when it sends none. See setCardStreamActive().
         }
         waitingLabel = TextView(context).apply {
             text = context.getString(R.string.cluster_waiting_for_map)
@@ -505,10 +483,73 @@ internal class ClusterMapPresentation(
     }
 
     /**
+     * The instruction-card stream came up or went away (FLY_CARD only).
+     *
+     * The card window is not a fixed part of the dashboard: it exists while the phone is really
+     * sending that stream and there is guidance to show, and is destroyed otherwise. That is what
+     * keeps an idle dashboard free of a black slab - no stream (or no guidance), no window.
+     */
+    fun setCardStreamActive(active: Boolean) {
+        if (!flyCard) return
+        if (cardStreamActive == active) return
+        cardStreamActive = active
+        updateCardWindow()
+    }
+
+    /** Creates or destroys the card window from the stream's state and the guidance data. */
+    private fun updateCardWindow() {
+        if (!flyCard) return
+        val wanted = cardStreamActive && lastTurnGuidance != null
+        if (wanted == (cardTextureView != null)) return
+        if (wanted) createCardWindow() else destroyCardWindow()
+    }
+
+    /**
+     * Builds the window from the stream's own picture: no background, no rounded mask, no stroke,
+     * parked at the panel's upper-left corner. Frames arrive straight from the decoder surface, so
+     * one stream pixel is one panel pixel.
+     */
+    private fun createCardWindow() {
+        val root = rootView ?: return
+        if (cardTextureView != null) return
+        val cardView = TextureView(context)
+        cardView.surfaceTextureListener = object : TextureView.SurfaceTextureListener {
+            override fun onSurfaceTextureAvailable(texture: SurfaceTexture, width: Int, height: Int) {
+                Log.i(TAG, "cluster card surface created")
+                texture.setDefaultBufferSize(cardVideoWidth, cardVideoHeight)
+                cardOutputSurface = Surface(texture).also(onCardSurface)
+            }
+
+            override fun onSurfaceTextureSizeChanged(texture: SurfaceTexture, width: Int, height: Int) = Unit
+
+            override fun onSurfaceTextureUpdated(texture: SurfaceTexture) = Unit
+
+            override fun onSurfaceTextureDestroyed(texture: SurfaceTexture): Boolean {
+                Log.i(TAG, "cluster card surface destroyed")
+                cardOutputSurface?.release()
+                cardOutputSurface = null
+                onCardSurface(null)
+                return true
+            }
+        }
+        cardTextureView = cardView
+        root.addView(cardView, cardWindowParams())
+        Log.i(TAG, "cluster card window created ${cardVideoWidth}x$cardVideoHeight")
+    }
+
+    /** Drops the window and its surface; the host releases the decoder with it. */
+    private fun destroyCardWindow() {
+        val view = cardTextureView ?: return
+        cardTextureView = null
+        (view.parent as? android.view.ViewGroup)?.removeView(view)
+        Log.i(TAG, "cluster card window destroyed")
+    }
+
+    /**
      * The instruction-card stream reported its real decoded picture size.
      *
-     * The window is that size, 1:1, with no scaling: the card is shown exactly as the phone
-     * sends it. Fires once per codec from the video output format's crop rectangle
+     * The window follows it, 1:1, with no scaling: the card is shown exactly as the phone sends
+     * it. Fires once per codec from the video output format's crop rectangle
      * (AndroidMediaSink.onScreenStreamOutputSize).
      */
     fun setCardVideoSize(width: Int, height: Int) {
@@ -606,6 +647,8 @@ internal class ClusterMapPresentation(
         lastTurnGuidance = guidance
         turnCardView?.setGuidance(guidance)
         if (navOnlyCards) applyCardsVisibility()
+        // The card window lives only while there is guidance to draw (FLY_CARD).
+        updateCardWindow()
     }
 
     fun setEtaGuidance(guidance: ClusterTurnGuidance?) {

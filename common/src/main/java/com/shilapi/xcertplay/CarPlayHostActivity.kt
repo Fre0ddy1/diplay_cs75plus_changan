@@ -1401,6 +1401,9 @@ class CarPlayHostActivity : ComponentActivity() {
             presentation.setMode(currentClusterMirrorMode())
             updateClusterMapShown()
             presentation.setStreamActive(clusterStreamActive())
+            // A window built while the card stream was already up must not wait for the next
+            // stream event, which only comes on a transition.
+            presentation.setCardStreamActive(activeScreenStreamTypes.contains(SCREEN_TYPE_ALT_CARD))
             // Invisible until the head unit is really in projection mode. Before activation incall
             // maps the ext-screen to a small placeholder box at the right of the panel, and this
             // window is created 4-5 s before the open sequence (measured 2026-10-18 14:18: window
@@ -1475,6 +1478,7 @@ class CarPlayHostActivity : ComponentActivity() {
             if (AirPlayPersistence.loadClusterAutoNavMode(this)) autoNavModePending = true
             presentation.setMode(currentClusterMirrorMode())
             presentation.setStreamActive(clusterStreamActive())
+            presentation.setCardStreamActive(activeScreenStreamTypes.contains(SCREEN_TYPE_ALT_CARD))
             presentation.setMapVisible(false)
             applyClusterTurnOverlay()
             appendLog("Cluster map: quiet window shown display=${display.displayId}")
@@ -1800,7 +1804,7 @@ class CarPlayHostActivity : ComponentActivity() {
     /**
      * The instruction-card stream's real decoded picture size (from the codec's crop rectangle).
      * Delivered on a media thread; the presentation window is re-laid out on the UI thread so the
-     * FLY_CARD window keeps the stream's own aspect (480x400 in the field, not a guessed ratio).
+     * FLY_CARD window is always exactly the size of the picture the phone sends.
      */
     private fun onClusterCardVideoSize(width: Int, height: Int) {
         appendLog("Cluster card stream size ${width}x$height")
@@ -6341,6 +6345,12 @@ class CarPlayHostActivity : ComponentActivity() {
                 if (clusterPresentation == null) ensureClusterWindowQuiet()
             } else {
                 activeScreenStreamTypes.remove(type)
+            }
+            if (type == SCREEN_TYPE_ALT_CARD) {
+                // FLY_CARD's instruction-card window exists only while this stream is really up;
+                // the presentation destroys it when the stream goes away (no idle black slab).
+                Log.i(ClusterMapPresentation.TAG, "cluster card stream active=$active")
+                clusterPresentation?.setCardStreamActive(active)
             }
             if (type == SCREEN_TYPE_ALT || (currentClusterMirrorMode() && type == SCREEN_TYPE_MAIN)) {
                 Log.i(ClusterMapPresentation.TAG, "cluster stream active=$active")
