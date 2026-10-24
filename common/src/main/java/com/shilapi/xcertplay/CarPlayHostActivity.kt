@@ -1533,13 +1533,6 @@ class CarPlayHostActivity : ComponentActivity() {
         // independent of the "dashboard shows" content setting. DiLink 5.1 keeps the upstream
         // behavior: turn card follows the content setting, no ETA card.
         val changanCards = !DiLink51ClusterLayout.supported()
-        // Apple's own cluster views carry their own instructions and junction picture. Drawing our
-        // cards over them is what made the dashboard show the glass-style card first on a cold
-        // start / re-route, before Apple's own card arrived (field screenshots 2026-10-24). In
-        // those two modes every self-drawn card is cleared; only the custom map mode draws ours.
-        val appleClusterContent = AirPlayPersistence.loadClusterContent(this).let {
-            it == CarPlayClusterDisplay.Content.INSTRUMENTS || it == CarPlayClusterDisplay.Content.TURN_CARD
-        }
         val g = clusterTurnGuidance
         // Navigation starting or ending is exactly the moment iOS stops repainting the cluster: the
         // alt screen keeps the previous route on screen (field report: "退出导航后重新导航，仪表盘
@@ -1555,7 +1548,6 @@ class CarPlayHostActivity : ComponentActivity() {
         // Dedupe the card-state line: ETA seconds tick every second, so log once per state
         // change (or at least every 5 s) instead of once per refresh tick.
         val cardsLog = "Cluster cards: mode=${if (clusterPresentation?.isMirrorMode() == true) "mirror" else "nav-only"} " +
-            "selfCards=${!appleClusterContent} " +
             "turn=${g != null} road=${g?.road?.isNotEmpty() == true || g?.currentRoad?.isNotEmpty() == true} " +
             "eta=${g?.arrivalEpochSeconds != null || g?.remainingSeconds != null} " +
             "contentTop=${AirPlayPersistence.loadClusterCardContentTopPx(this)} " +
@@ -1576,14 +1568,12 @@ class CarPlayHostActivity : ComponentActivity() {
             )
             presentation.setSong(clusterSong)
             presentation.setSongArtwork(CarPlayMediaKeys.currentArtwork())
-            // Apple's own cluster views already contain the turn instruction, lane guidance and
-            // junction picture. Our cards must not cover them: on a cold start they appeared first
-            // as the glass card and only later gave way to Apple's own card.
-            if (appleClusterContent) {
-                presentation.setTurnCardGuidance(null)
-                presentation.setEtaGuidance(null)
-                presentation.setRoadNameGuidance(null)
-            } else if (changanCards) {
+            // Every card here is drawn by us, so none of them depends on which cluster picture the
+            // iPhone streams. Apple's "instruments" view turned out to contain no turn card at all
+            // (field 2026-10-22: hiding our card left the panel without one), so the content mode
+            // must not gate any of them - only nav-only mode and the driver's own switches do,
+            // inside applyCardsVisibility().
+            if (changanCards) {
                 presentation.setTurnCardGuidance(clusterTurnGuidance)
                 presentation.setEtaGuidance(clusterTurnGuidance)
                 presentation.setRoadNameGuidance(clusterTurnGuidance)

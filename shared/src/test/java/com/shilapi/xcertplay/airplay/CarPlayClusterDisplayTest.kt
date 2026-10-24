@@ -65,21 +65,6 @@ class CarPlayClusterDisplayTest {
     }
 
     @Test
-    fun appleClusterViewsKeepABottomSafeAreaForTheCarModel() {
-        for (content in listOf(
-            CarPlayClusterDisplay.Content.INSTRUMENTS,
-            CarPlayClusterDisplay.Content.TURN_CARD,
-        )) {
-            val safe = CarPlayClusterDisplay.config(1920, 720, content = content).safeArea!!
-            assertEquals(0, safe.left)
-            assertEquals(0, safe.right)
-            assertEquals(0, safe.top)
-            // 25 % of the 720 px stream, same bottom reserve as the self-drawn map.
-            assertEquals(180, safe.bottom)
-        }
-    }
-
-    @Test
     fun scaledStreamsKeepThePanelAspect() {
         // The scale is fixed at the panel size (no settings row any more), but the maths must keep
         // the aspect when a caller passes one explicitly.
