@@ -268,6 +268,12 @@ class AndroidMediaSink(
     context: Context? = null,
     private val navigationStreamType: Int = AudioChannelMapper.DEFAULT_NAVIGATION_STREAM_TYPE,
     onScreenStreamActiveChanged: ((Int, Boolean) -> Unit)? = null,
+    /**
+     * Real decoded picture size of a screen stream (type, width, height), fired once per codec
+     * from the output format's crop rectangle. The instruction-card stream (112) uses it to size
+     * its dashboard window by the stream's own aspect instead of a guessed panel percentage.
+     */
+    onScreenStreamOutputSize: ((Int, Int, Int) -> Unit)? = null,
     private val mediaBufferMillis: Int = MediaAudioBuffer.DEFAULT_MILLIS,
     private val onAudioDiagnostic: (String) -> Unit = {},
     /** True while any music ("media") audio stream is running; called from media threads. */
@@ -289,6 +295,7 @@ class AndroidMediaSink(
     private val activeScreenTypes = mutableSetOf<Int>()
     private val defaultSurface = surface
     @Volatile private var screenStreamActiveChanged = onScreenStreamActiveChanged
+    @Volatile private var screenStreamOutputSize = onScreenStreamOutputSize
     private val surfaces = ConcurrentHashMap<Int, Surface>()
     private val videoDecoders = ConcurrentHashMap<Int, VideoDecoder>()
     private val mediaAudioTypes = mutableSetOf<AudioStreamId>()
@@ -475,6 +482,14 @@ class AndroidMediaSink(
             screenStreamActiveChanged = listener
             activeScreenTypes.forEach { listener?.invoke(it, true) }
         }
+    }
+
+    /**
+     * Installs the real-picture-size reporter on an ALREADY created sink (a reused background
+     * session builds its sink before this activity attaches).
+     */
+    fun setScreenStreamOutputSizeListener(listener: ((Int, Int, Int) -> Unit)?) {
+        screenStreamOutputSize = listener
     }
 
     override fun onVideoCodec(type: Int, codec: VideoCodec) {
@@ -936,6 +951,7 @@ class AndroidMediaSink(
         requestKeyFrame = { requestVideoRecovery(type) },
         report = { videoDiagnosticHandlers[type]?.invoke(it) },
         statsLabel = statsLabel,
+        onOutputSize = { w, h -> screenStreamOutputSize?.invoke(type, w, h) },
     )
 
     @Synchronized
@@ -968,6 +984,8 @@ private class VideoDecoder(
     private val requestKeyFrame: () -> Unit,
     private val report: (String) -> Unit,
     statsLabel: String? = null,
+    /** Fires once per codec with the crop rectangle's real picture size (coded may be padded). */
+    private val onOutputSize: ((Int, Int) -> Unit)? = null,
 ) : Closeable {
     private val queue = VideoDecodeQueue()
     @Volatile private var running = true
@@ -976,6 +994,7 @@ private class VideoDecoder(
     private var lastConfig: VideoJob.Config? = null
     private var renderedFrameLogged = false
     private var submittedFrameLogged = false
+    private var outputSizeReported = false
     /**
      * Set while the codec is behind on its own queue, which is not the same as having lost frames.
      *
@@ -1271,7 +1290,11 @@ private class VideoDecoder(
             val index = codec.dequeueOutputBuffer(info, 0)
             when {
                 index == MediaCodec.INFO_TRY_AGAIN_LATER -> return
-                index == MediaCodec.INFO_OUTPUT_FORMAT_CHANGED -> logOutputFormat(codec.outputFormat)
+                index == MediaCodec.INFO_OUTPUT_FORMAT_CHANGED -> {
+                    val format = codec.outputFormat
+                    logOutputFormat(format)
+                    reportOutputSize(format)
+                }
                 index >= 0 -> {
                     // While the codec is catching up its stale frames are released unseen, which is
                     // what makes the picture current again. Identical to the original when not
@@ -1334,6 +1357,27 @@ private class VideoDecoder(
                 "range=${format.intOrNull(MediaFormat.KEY_COLOR_RANGE)} " +
                 "transfer=${format.intOrNull(MediaFormat.KEY_COLOR_TRANSFER)}",
         )
+    }
+
+    /**
+     * Publishes the REAL picture size once per codec, taken from the output format's crop
+     * rectangle (the coded size may be padded to a macroblock multiple). The instruction-card
+     * window sizes itself from this, so the card is never stretched to a guessed ratio.
+     */
+    private fun reportOutputSize(format: MediaFormat) {
+        if (outputSizeReported) return
+        val codedWidth = format.intOrNull(MediaFormat.KEY_WIDTH) ?: return
+        val codedHeight = format.intOrNull(MediaFormat.KEY_HEIGHT) ?: return
+        val left = format.intOrNull("crop-left") ?: 0
+        val top = format.intOrNull("crop-top") ?: 0
+        val right = format.intOrNull("crop-right") ?: (codedWidth - 1)
+        val bottom = format.intOrNull("crop-bottom") ?: (codedHeight - 1)
+        val realWidth = right - left + 1
+        val realHeight = bottom - top + 1
+        if (realWidth <= 0 || realHeight <= 0) return
+        outputSizeReported = true
+        report("video output size ${realWidth}x${realHeight}")
+        onOutputSize?.invoke(realWidth, realHeight)
     }
 
     private fun reportFailure(context: String, error: Throwable) {

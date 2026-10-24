@@ -1798,6 +1798,19 @@ class CarPlayHostActivity : ComponentActivity() {
     }
 
     /**
+     * The instruction-card stream's real decoded picture size (from the codec's crop rectangle).
+     * Delivered on a media thread; the presentation window is re-laid out on the UI thread so the
+     * FLY_CARD window keeps the stream's own aspect (480x400 in the field, not a guessed ratio).
+     */
+    private fun onClusterCardVideoSize(width: Int, height: Int) {
+        appendLog("Cluster card stream size ${width}x$height")
+        runOnUiThread {
+            clusterPresentation?.setCardVideoSize(width, height)
+            clusterLayers.values.forEach { it.setCardVideoSize(width, height) }
+        }
+    }
+
+    /**
      * Re-applies the saved left-rail crop transform to every live
      * cluster TextureView. Called from the overlay settings listener so a slider change in the
      * settings page takes effect on the dashboard immediately - without reconnecting (a
@@ -4336,6 +4349,9 @@ class CarPlayHostActivity : ComponentActivity() {
             onScreenStreamActiveChanged = { type, active ->
                 onScreenStreamStateChanged(controllerGeneration, type, active)
             },
+            onScreenStreamOutputSize = { type, width, height ->
+                if (type == SCREEN_TYPE_ALT_CARD) onClusterCardVideoSize(width, height)
+            },
             mediaBufferMillis = AirPlayPersistence.loadMediaBufferMillis(this),
             onAudioDiagnostic = { message ->
                 if (message.startsWith("Microphone: ")) {
@@ -4860,6 +4876,9 @@ class CarPlayHostActivity : ComponentActivity() {
         )
         snapshot.sink.setScreenStreamActiveChangedListener { type, active ->
             onScreenStreamStateChanged(restartGeneration, type, active)
+        }
+        snapshot.sink.setScreenStreamOutputSizeListener { type, width, height ->
+            if (type == SCREEN_TYPE_ALT_CARD) onClusterCardVideoSize(width, height)
         }
         currentSurface?.let(::attachSurface)
         val serviceReused = snapshot.controller.hasActiveAirPlayAttachment()

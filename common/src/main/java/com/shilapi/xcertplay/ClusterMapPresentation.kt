@@ -69,6 +69,11 @@ internal class ClusterMapPresentation(
     private var genericTextureView: TextureView? = null
     private var navTextureView: TextureView? = null
     private var cardTextureView: TextureView? = null
+    /** The FLY_CARD instruction-card window, re-placed when the stream reports its real size. */
+    private var cardPanelView: FrameLayout? = null
+    /** Real decoded picture size of the instruction-card stream; 480x400 until it reports. */
+    private var cardVideoWidth = CarPlayClusterDisplay.CARD_WIDTH_PIXELS
+    private var cardVideoHeight = CarPlayClusterDisplay.CARD_HEIGHT_PIXELS
     private val projectionSize: Point = sizeOf(display)
     var mirrorOutputSurface: Surface? = null
         private set
@@ -372,17 +377,8 @@ internal class ClusterMapPresentation(
                     FrameLayout.LayoutParams(-1, -1),
                 )
                 cardTextureView = cardView
-                root.addView(
-                    cardPanel,
-                    FrameLayout.LayoutParams(
-                        size.x * CARD_WIDTH_PERCENT / 100,
-                        size.y * CARD_HEIGHT_PERCENT / 100,
-                        Gravity.TOP or Gravity.LEFT,
-                    ).apply {
-                        leftMargin = size.x * CARD_LEFT_PERCENT / 100
-                        topMargin = size.y * CARD_TOP_PERCENT / 100
-                    },
-                )
+                cardPanelView = cardPanel
+                root.addView(cardPanel, cardWindowParams(size))
             }
         }
         waitingLabel = TextView(context).apply {
@@ -522,6 +518,35 @@ internal class ClusterMapPresentation(
     /** Hides the placeholder once the phone streams the cluster screen. */
     fun setStreamActive(active: Boolean) {
         waitingLabel?.visibility = if (active) View.GONE else View.VISIBLE
+    }
+
+    /**
+     * The instruction-card stream reported its real decoded picture size.
+     *
+     * FLY_CARD's window keeps the configured panel WIDTH and takes its HEIGHT from this size, so
+     * Apple's card is never stretched to a guessed aspect. Fires once per codec from the video
+     * output format's crop rectangle (AndroidMediaSink.onScreenStreamOutputSize).
+     */
+    fun setCardVideoSize(width: Int, height: Int) {
+        if (width <= 0 || height <= 0) return
+        if (width == cardVideoWidth && height == cardVideoHeight) return
+        cardVideoWidth = width
+        cardVideoHeight = height
+        val panel = cardPanelView ?: return
+        val params = cardWindowParams(projectionSize)
+        panel.layoutParams = params
+        Log.i(TAG, "cluster card picture ${width}x$height window=${params.width}x${params.height}")
+    }
+
+    /** Upper-left card window: width from the panel, height from the stream's true aspect. */
+    private fun cardWindowParams(size: Point): FrameLayout.LayoutParams {
+        val width = size.x * CARD_WIDTH_PERCENT / 100
+        val byAspect = (width.toLong() * cardVideoHeight / cardVideoWidth).toInt()
+        val height = byAspect.coerceIn(1, size.y * CARD_MAX_HEIGHT_PERCENT / 100)
+        return FrameLayout.LayoutParams(width, height, Gravity.TOP or Gravity.LEFT).apply {
+            leftMargin = size.x * CARD_LEFT_PERCENT / 100
+            topMargin = size.y * CARD_TOP_PERCENT / 100
+        }
     }
 
     /** Current display mode (true = whole-screen mirror, false = nav-only), for diagnostics. */
@@ -675,13 +700,15 @@ internal class ClusterMapPresentation(
         const val TAG = "DiPlay-Cluster"
 
         // —— Instruction-card window geometry (FLY_CARD), percent of the cluster panel ——
-        // Docked at the panel's upper-left, like the 风清速连 box: left 4 %, top 10 %, a fifth of
-        // the panel wide and a bit over a third tall. The map view and car marker stay centred
-        // underneath, so the card does not displace anything.
+        // Docked at the panel's upper-left, like the 风清速连 box. The WIDTH is fixed here; the
+        // HEIGHT follows the instruction-card stream's own decoded picture size (setCardVideoSize),
+        // so the card is shown at its true aspect instead of a guessed one. The map view and car
+        // marker stay centred underneath, so the card does not displace anything.
         const val CARD_LEFT_PERCENT = 4
         const val CARD_TOP_PERCENT = 10
         const val CARD_WIDTH_PERCENT = 22
-        const val CARD_HEIGHT_PERCENT = 38
+        /** Safety cap while a stream reports an unusually tall picture. */
+        const val CARD_MAX_HEIGHT_PERCENT = 55
 
         // Dark glass look, reused from the deleted ClusterFlyCard: translucent dark blue,
         // rounded, thin light stroke.
