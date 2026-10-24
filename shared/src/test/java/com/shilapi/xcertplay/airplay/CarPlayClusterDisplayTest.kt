@@ -53,11 +53,13 @@ class CarPlayClusterDisplayTest {
         val custom = CarPlayClusterDisplay.config(1920, 720, content = CarPlayClusterDisplay.Content.MAP_WITH_CUSTOM_CARD)
         assertEquals("maps:/car/instrumentcluster/map", custom.initialUrl)
         // MAP stays as an internal value for stored settings from older builds.
+        // FLY_CARD uses the same URL as INSTRUMENTS so iOS paints the turn card into the stream.
         assertEquals(
             listOf(
                 "maps:/car/instrumentcluster",
                 "maps:/car/instrumentcluster/map",
                 "maps:/car/instrumentcluster/map",
+                "maps:/car/instrumentcluster",
             ),
             CarPlayClusterDisplay.Content.entries.map { it.url },
         )

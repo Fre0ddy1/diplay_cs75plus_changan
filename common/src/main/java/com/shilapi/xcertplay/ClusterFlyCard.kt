@@ -130,28 +130,23 @@ internal class ClusterFlyCard(
     }
 
     /**
-     * Maps the centre crop of the source picture onto the card (cover fit, centred).
+     * Scales the whole source picture to fill the card (cover fit, centred).
      *
-     * The crop region is where the 111 map keeps the route and car marker (the panel's centre,
-     * inside the safe area), so the card shows a usable map instead of a shrunken whole panel.
+     * The stream is maps:/car/instrumentcluster: iOS paints the map, car marker, turn card,
+     * lane guidance and junction view into the same video. No centre crop – the card must show
+     * all of it, scaled to fit.
      */
     fun applyTransform() {
         val cardW = cardWidthPx()
         val cardH = cardHeightPx()
         if (panelWidth <= 0 || panelHeight <= 0 || cardW <= 0 || cardH <= 0) return
-        val cropL = panelWidth * SRC_CROP_LEFT_PERCENT / 100f
-        val cropT = panelHeight * SRC_CROP_TOP_PERCENT / 100f
-        val cropR = panelWidth - panelWidth * SRC_CROP_RIGHT_PERCENT / 100f
-        val cropB = panelHeight - panelHeight * SRC_CROP_BOTTOM_PERCENT / 100f
-        val cropW = cropR - cropL
-        val cropH = cropB - cropT
-        if (cropW < 1f || cropH < 1f) return
-        // Cover: fill the card entirely, cropping whichever source axis is too tall/wide.
-        val scale = maxOf(cardW / cropW, cardH / cropH)
+        // Cover fit: scale the whole panel picture onto the card, cropping whatever overflows.
+        val scale = maxOf(cardW.toFloat() / panelWidth, cardH.toFloat() / panelHeight)
         val cardLeft = cardLeftPx().toFloat()
         val cardTop = ((panelHeight - cardHeightPx()) / 2).toFloat()
-        val tx = cardLeft + cardW / 2f - (cropL + cropW / 2f) * scale
-        val ty = cardTop + cardH / 2f - (cropT + cropH / 2f) * scale
+        // Centre the (scaled) source on the card.
+        val tx = cardLeft + cardW / 2f - panelWidth * scale / 2f
+        val ty = cardTop + cardH / 2f - panelHeight * scale / 2f
         navTextureView.setTransform(Matrix().apply {
             setScale(scale, scale)
             postTranslate(tx, ty)
@@ -168,15 +163,6 @@ internal class ClusterFlyCard(
         const val CARD_LEFT_PERCENT = 4
         const val CARD_WIDTH_PERCENT = 24
         const val CARD_HEIGHT_PERCENT = 58
-
-        // —— Source crop, percent of the 111 stream picture ——
-        // The stream is laid out for the whole panel with Apple's centred safe area
-        // (35/16/36/25 in percent). Cropping to x 30..70 / y 12..88 keeps the route and the
-        // car marker large inside the card.
-        const val SRC_CROP_LEFT_PERCENT = 30
-        const val SRC_CROP_TOP_PERCENT = 12
-        const val SRC_CROP_RIGHT_PERCENT = 30
-        const val SRC_CROP_BOTTOM_PERCENT = 12
 
         // Dark glass look: translucent dark blue, rounded, thin light stroke.
         const val CARD_BACKGROUND_COLOR = 0xD9101820.toInt()
