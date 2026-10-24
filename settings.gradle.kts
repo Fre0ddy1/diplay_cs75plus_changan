@@ -23,6 +23,9 @@ dependencyResolutionManagement {
 }
 
 rootProject.name = "xcertplay"
+include(":vehicle-customization-api", ":changan-hud")
+project(":vehicle-customization-api").projectDir = file("customizations/api")
+project(":changan-hud").projectDir = file("customizations/changan-hud")
 include(":common")
 include(":mobile")
 include(":automotive")

@@ -608,6 +608,9 @@ object InCallClusterBridge {
 
     private fun broadcastSource(state: Int) {
         val ctx = contextRef ?: return
+        // S311 uses these same navigation states for its windshield HUD. Keep the
+        // projection handshake intact; the HUD output resumes once it has settled.
+        com.freddyq.diplay.customization.VehicleCustomizations.onProjectionNavigationState(state)
         val intent = Intent(ACTION_AUTONAVI).apply {
             setPackage(PKG_INCALL)
             putExtra(EXTRA_KEY_TYPE, 10019)

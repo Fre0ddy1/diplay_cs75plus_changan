@@ -1,0 +1,6 @@
+<?xml version='1.0' encoding='utf-8'?>
+<resources>
+    <string name="settings_changan_hud_title">Навігація Changan HUD (експериментально)</string>
+    <string name="settings_changan_hud_enabled">Показувати навігацію CarPlay на HUD</string>
+    <string name="settings_changan_hud_description">Показує повороти, відстань і дороги з телефона. У спеціальній версії ввімкнено типово; збережений вибір залишається. Залиште штатний AMap у фоні та спочатку перевірте HUD і проєкцію панелі приладів на стоянці.</string>
+</resources>

@@ -1,0 +1,112 @@
+package com.freddyq.diplay.customization
+
+import android.content.Context
+import org.junit.Assert.*
+import org.junit.Test
+import org.junit.runner.RunWith
+import org.robolectric.RobolectricTestRunner
+import org.robolectric.RuntimeEnvironment
+import org.robolectric.annotation.Config
+
+@RunWith(RobolectricTestRunner::class)
+@Config(manifest = Config.NONE, sdk = [28])
+class VehicleCustomizationRegistryTest {
+    private val registry = VehicleCustomizationRegistry()
+    private val app get() = RuntimeEnvironment.getApplication()
+
+    @Test fun `session and projection events preserve order`() {
+        val events = mutableListOf<String>()
+        registry.register(object : VehicleCustomization {
+            override val id = "test"
+            override fun onSessionStarted(context: Context) { events += "start" }
+            override fun onNavigationFrame(messageId: Int, payload: ByteArray) { events += "frame" }
+            override fun onProjectionNavigationState(state: Int) { events += "projection=$state" }
+            override fun onSessionEnded() { events += "end" }
+        })
+        registry.onSessionStarted(app)
+        registry.onNavigationFrame(0x5201,byteArrayOf(1))
+        registry.onProjectionNavigationState(9)
+        registry.onSessionEnded()
+        assertEquals(listOf("start","frame","projection=9","end"),events)
+    }
+
+    @Test fun `extensions cannot change another extension or transport payload`() {
+        registry.register(object : VehicleCustomization {
+            override val id = "mutator"
+            override fun onNavigationFrame(messageId: Int, payload: ByteArray) { payload[0] = 9 }
+        })
+        var seen: ByteArray? = null
+        registry.register(object : VehicleCustomization {
+            override val id = "reader"
+            override fun onNavigationFrame(messageId: Int, payload: ByteArray) { seen = payload }
+        })
+        val original = byteArrayOf(1,2)
+        registry.onNavigationFrame(0x5202,original)
+        assertArrayEquals(byteArrayOf(1,2),original)
+        assertArrayEquals(original,seen)
+        assertNotSame(original,seen)
+    }
+
+    @Test fun `non navigation traffic is not dispatched`() {
+        var calls = 0
+        registry.register(object : VehicleCustomization {
+            override val id = "counter"
+            override fun onNavigationFrame(messageId: Int, payload: ByteArray) { calls++ }
+        })
+        listOf(0x5000,0x5201,0x5202,0x5204).forEach { registry.onNavigationFrame(it,byteArrayOf()) }
+        assertEquals(3,calls)
+    }
+
+    @Test fun `repeated provider registration does not duplicate outputs`() {
+        var calls = 0
+        val module = object : VehicleCustomization {
+            override val id = "one"
+            override fun onSessionEnded() { calls++ }
+        }
+        registry.register(module)
+        registry.register(module)
+        registry.onSessionEnded()
+        assertEquals(1,calls)
+    }
+
+    @Test fun `one failing extension cannot stop the next extension or core callback`() {
+        var delivered = false
+        registry.register(object : VehicleCustomization {
+            override val id = "broken"
+            override fun onSessionEnded() { error("failure") }
+        })
+        registry.register(object : VehicleCustomization {
+            override val id = "working"
+            override fun onSessionEnded() { delivered = true }
+        })
+        registry.onSessionEnded()
+        assertTrue(delivered)
+    }
+
+    @Test fun `broken settings do not hide other modules`() {
+        registry.register(object : VehicleCustomization {
+            override val id = "broken"
+            override fun settings(context: Context): List<CustomizationSettingsGroup> = error("failure")
+        })
+        registry.register(object : VehicleCustomization {
+            override val id = "working"
+            override fun settings(context: Context) = listOf(CustomizationSettingsGroup(123,emptyList()))
+        })
+        assertEquals(123,registry.settings(app).single().title)
+    }
+
+    @Test fun `diagnostic consumer failure does not escape into output`() {
+        registry.diagnosticListener = { error("closed activity") }
+        registry.diagnostic("module","message")
+    }
+
+    @Test fun `setting callback failure cannot crash the host settings UI`() {
+        registry.register(object : VehicleCustomization {
+            override val id = "broken-toggle"
+            override fun settings(context: Context) = listOf(CustomizationSettingsGroup(1,listOf(
+                CustomizationToggle(2,3,true) { error("failure") },
+            )))
+        })
+        registry.settings(app).single().toggles.single().onChanged(false)
+    }
+}

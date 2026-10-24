@@ -1,0 +1,11 @@
+<manifest xmlns:android="http://schemas.android.com/apk/res/android">
+    <queries>
+        <package android:name="com.incall.interactive" />
+    </queries>
+    <application>
+        <provider
+            android:name="com.freddyq.diplay.changan.ChanganCustomizationInitializer"
+            android:authorities="${applicationId}.customizations.changan"
+            android:exported="false" />
+    </application>
+</manifest>

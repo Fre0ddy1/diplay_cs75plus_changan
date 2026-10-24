@@ -1069,6 +1069,7 @@ class CarPlayHostActivity : ComponentActivity() {
         com.shilapi.xcertplay.hud.BydNavigationOutputs.setSongListener(clusterSongListener)
         com.shilapi.xcertplay.hud.BydNavigationOutputs.setLaneOverlayListener(clusterLaneOverlayListener)
         com.shilapi.xcertplay.hud.BydNavigationOutputs.routeTraceListener = routeTraceListener
+        com.freddyq.diplay.customization.VehicleCustomizations.diagnosticListener = routeTraceListener
         mainHandler.removeCallbacks(refreshTurnOverlay)
         mainHandler.post(refreshTurnOverlay)
         maybeStartCarPlay()

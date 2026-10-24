@@ -1,0 +1,6 @@
+<?xml version='1.0' encoding='utf-8'?>
+<resources>
+    <string name="settings_changan_hud_title">Navegación HUD de Changan (experimental)</string>
+    <string name="settings_changan_hud_enabled">Mostrar la navegación de CarPlay en el HUD</string>
+    <string name="settings_changan_hud_description">Muestra los giros, la distancia y las calles del teléfono. Activado por defecto en la edición personalizada; conserva tu elección. Mantén AMap de fábrica en segundo plano y comprueba primero el HUD y la proyección del cuadro con el coche estacionado.</string>
+</resources>
