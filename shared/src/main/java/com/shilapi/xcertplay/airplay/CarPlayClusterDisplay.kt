@@ -87,6 +87,14 @@ object CarPlayClusterDisplay {
      */
     const val STREAM_SCALE_PERCENT = 100
 
+    /**
+     * Default safe-area offset for the pure-Apple mode (FLY_CARD), in marker steps of 10 % of
+     * the panel. Two left + one up puts the iOS turn card into the panel's upper-left region,
+     * matching the 风清速连 box layout; applied on top of the saved Car-marker steps.
+     */
+    const val FLY_CARD_HORIZONTAL_OFFSET = -2
+    const val FLY_CARD_VERTICAL_OFFSET = -1
+
     private const val WIDTH_PHYSICAL_MM = 292 // a 12.3-inch 8:3 cluster panel; Apple Maps ignores it here
     private const val FPS = 30
 
@@ -98,6 +106,13 @@ object CarPlayClusterDisplay {
         verticalStep: Int = 0,
         content: Content = Content.MAP,
     ): AirPlayDisplayConfig {
+        // The pure-Apple mode defaults to the 风清速连 layout: map, car marker and glass turn
+        // card all live INSIDE the safe area (iOS puts the card at its top centre), so a
+        // left-shifted area puts the turn card into the panel's upper-left, like the box does.
+        // The saved Car-marker steps still apply on top, so the driver can fine-tune it.
+        val fly = content == Content.FLY_CARD
+        val hStep = horizontalStep + if (fly) FLY_CARD_HORIZONTAL_OFFSET else 0
+        val vStep = verticalStep + if (fly) FLY_CARD_VERTICAL_OFFSET else 0
         // Height rounds to a multiple of 8 and width follows it, so the panel's aspect is kept
         // (100 % of 1920x720 gives exactly 1920x720). The cluster scales the stream to the panel.
         val scale = scalePercent.coerceIn(25, 100)
@@ -115,7 +130,7 @@ object CarPlayClusterDisplay {
         // settled it the other way: the self-drawn map shows the car model fully with this area,
         // while Apple's instrument cluster showed it lower and cut by the panel edge. The two modes
         // differ only in the requested URL, so they must not differ in geometry either.
-        val safe = safeArea(width, height, horizontalStep, verticalStep)
+        val safe = safeArea(width, height, hStep, vStep)
         return AirPlayDisplayConfig(
             widthPixels = width,
             heightPixels = height,

@@ -113,4 +113,16 @@ class CarPlayClusterDisplayTest {
 
         assertTrue("centre x $centreX", centreX in 48.0..52.0)
     }
+
+    @Test
+    fun flyCardShiftsTheSafeAreaToUpperLeft() {
+        val plain = CarPlayClusterDisplay.config(1920, 720, content = CarPlayClusterDisplay.Content.MAP_WITH_CUSTOM_CARD).safeArea!!
+        val fly = CarPlayClusterDisplay.config(1920, 720, content = CarPlayClusterDisplay.Content.FLY_CARD).safeArea!!
+
+        // Default offset: two steps left (384 px) and one step up (72 px) of the centred area.
+        assertEquals(plain.left - 384, fly.left)
+        assertEquals(plain.right + 384, fly.right)
+        assertEquals(plain.top - 72, fly.top)
+        assertEquals(plain.bottom + 72, fly.bottom)
+    }
 }
