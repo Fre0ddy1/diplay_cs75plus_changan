@@ -1535,9 +1535,7 @@ class CarPlayHostActivity : ComponentActivity() {
         // kept seeing as "our own drawn style" while "dashboard shows" was Apple's instruments view
         // (field 2026-10-24).
         val content = AirPlayPersistence.loadClusterContent(this)
-        if (content == CarPlayClusterDisplay.Content.INSTRUMENTS ||
-            content == CarPlayClusterDisplay.Content.TURN_CARD
-        ) {
+        if (content == CarPlayClusterDisplay.Content.INSTRUMENTS) {
             return false
         }
         if (clusterSwipePosition >= 0) return clusterSwipePosition == 0

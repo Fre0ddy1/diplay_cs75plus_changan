@@ -757,15 +757,13 @@ class DiPlayActivity : ComponentActivity() {
                 // Which cluster content the iPhone streams for the nav-only view. Apple's own views
                 // are the only source of lane guidance and the junction zoom image; the "map + cards"
                 // entry keeps the locally drawn, movable cards.
-                // The order here is the order of the list below; keep both in step.
+                // Two choices only (field decision 2026-10-24): Apple's own instrument cluster, or
+                // the map stream with our movable cards. The extra Apple views were dropped - the
+                // lane-guide/junction/ETA paths were never advertised by the phone and stayed
+                // blank, and the instruction card duplicated what the instrument view shows.
                 val clusterContentChoices = listOf(
                     CarPlayClusterDisplay.Content.INSTRUMENTS to R.string.cluster_content_instruments,
-                    CarPlayClusterDisplay.Content.TURN_CARD to R.string.cluster_content_turn_card,
                     CarPlayClusterDisplay.Content.MAP_WITH_CUSTOM_CARD to R.string.cluster_content_custom,
-                    CarPlayClusterDisplay.Content.LANE_GUIDE to R.string.cluster_content_lane_guide,
-                    CarPlayClusterDisplay.Content.JUNCTION_VIEW to R.string.cluster_content_junction_view,
-                    CarPlayClusterDisplay.Content.MAP_VIEW to R.string.cluster_content_map_view,
-                    CarPlayClusterDisplay.Content.ETA_CARD to R.string.cluster_content_eta_card,
                 )
                 choice(
                     card,

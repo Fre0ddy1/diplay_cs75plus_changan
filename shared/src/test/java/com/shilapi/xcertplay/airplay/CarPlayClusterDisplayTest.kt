@@ -47,22 +47,16 @@ class CarPlayClusterDisplayTest {
     }
 
     @Test
-    fun theDashboardCanAskForTheTurnCardInstead() {
-        val card = CarPlayClusterDisplay.config(1920, 720, content = CarPlayClusterDisplay.Content.TURN_CARD)
-
-        assertEquals("maps:/car/instrumentcluster/instructioncard", card.initialUrl)
+    fun theDashboardOffersOnlyTwoSources() {
+        val instruments = CarPlayClusterDisplay.config(1920, 720, content = CarPlayClusterDisplay.Content.INSTRUMENTS)
+        assertEquals("maps:/car/instrumentcluster", instruments.initialUrl)
         val custom = CarPlayClusterDisplay.config(1920, 720, content = CarPlayClusterDisplay.Content.MAP_WITH_CUSTOM_CARD)
         assertEquals("maps:/car/instrumentcluster/map", custom.initialUrl)
+        // MAP stays as an internal value for stored settings from older builds.
         assertEquals(
             listOf(
-                "maps:/car/instrumentcluster/map",
-                "maps:/car/instrumentcluster/instructioncard",
                 "maps:/car/instrumentcluster",
-                // Experimental family: not advertised in altScreenURLs, offered for testing.
-                "maps:/car/instrumentcluster/mapview",
-                "maps:/car/instrumentcluster/etacard",
-                "maps:/car/instrumentcluster/laneguide",
-                "maps:/car/instrumentcluster/junctionview",
+                "maps:/car/instrumentcluster/map",
                 "maps:/car/instrumentcluster/map",
             ),
             CarPlayClusterDisplay.Content.entries.map { it.url },
