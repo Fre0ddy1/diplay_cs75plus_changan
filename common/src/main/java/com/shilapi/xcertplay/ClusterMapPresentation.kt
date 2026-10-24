@@ -65,6 +65,8 @@ internal class ClusterMapPresentation(
     // cropped mirror, no cards. DiLink 5.1 keeps the upstream behavior (turn card follows the
     // "dashboard shows" content setting, no ETA/lane cards).
     private var mirrorMode = true
+    /** Last mode requested by the host, kept even while the TextureViews are still being created. */
+    private var desiredMirror = AirPlayPersistence.loadClusterMirrorMain(context)
     private var lastTurnGuidance: ClusterTurnGuidance? = null
     private var lastEtaGuidance: ClusterTurnGuidance? = null
     private var lastRoadNameGuidance: ClusterTurnGuidance? = null
@@ -100,7 +102,9 @@ internal class ClusterMapPresentation(
         val textureView = genericTextureView ?: return
         val baseW = projectionSize.x
         val baseH = projectionSize.y
-        val mirrorMode = AirPlayPersistence.loadClusterMirrorMain(context)
+        // The auto navigation switch changes the live mode without writing the saved setting;
+        // use this window's actual mode, not the persisted one, or crop adjustments are ignored
+        // while the dashboard is showing the mirror.
         if (!mirrorMode) {
             // Nav-only stream: full-screen, untouched. No target frame and no left-rail crop
             // - the driver wants the raw navigation stream edge to edge.
@@ -267,9 +271,9 @@ internal class ClusterMapPresentation(
                     navOutputSurface = Surface(texture).also(onNavSurface)
                     // The TextureViews are created asynchronously, so a setMode() issued while
                     // they were still null would have been lost (e.g. cold-start auto-project to
-                    // nav-only would show the mirror view). Now both views exist: re-assert the
-                    // persisted mode so the correct view is visible.
-                    setMode(AirPlayPersistence.loadClusterMirrorMain(context))
+                    // nav-only would show the mirror view). Re-assert the last requested mode;
+                    // never the saved setting, which the navigation auto-switch bypasses.
+                    setMode(desiredMirror)
                 }
 
                 override fun onSurfaceTextureSizeChanged(texture: SurfaceTexture, width: Int, height: Int) = Unit
@@ -312,9 +316,14 @@ internal class ClusterMapPresentation(
      * announce "全屏导航已开启". On the DiLink 5.1 layout (single TextureView) the mode is a no-op.
      */
     fun setMode(mirror: Boolean) {
+        // Remember the request before checking the views: on a cold start the host can ask for
+        // nav-only while the TextureViews are still null, and the surface callback below must
+        // re-apply this mode rather than the saved setting (which the auto-switch intentionally
+        // does not update).
+        desiredMirror = mirror
+        mirrorMode = mirror
         val nav = navTextureView ?: return
         val mirrorView = genericTextureView ?: return
-        mirrorMode = mirror
         mirrorView.visibility = if (mirror) View.VISIBLE else View.GONE
         nav.visibility = if (mirror) View.GONE else View.VISIBLE
         if (navOnlyCards) applyCardsVisibility()

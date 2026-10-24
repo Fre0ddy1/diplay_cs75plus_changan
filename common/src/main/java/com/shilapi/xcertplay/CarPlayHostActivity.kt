@@ -956,7 +956,7 @@ class CarPlayHostActivity : ComponentActivity() {
                                 if (p != null) {
                                     appendLog(
                                         "Cluster crop: adjust -> refreshCrop (mirror=" +
-                                            AirPlayPersistence.loadClusterMirrorMain(this) + ")",
+                                            (clusterPresentation?.isMirrorMode() ?: AirPlayPersistence.loadClusterMirrorMain(this)) + ")",
                                     )
                                     p.refreshCrop()
                                 } else {
@@ -1326,7 +1326,7 @@ class CarPlayHostActivity : ComponentActivity() {
         appendLog("Cluster map: $reason; 仪表屏就绪，补建投屏窗口（不发激活序列）")
         runCatching { ensureClusterPresentation() }
         if (clusterPresentation == null) return
-        val mirror = AirPlayPersistence.loadClusterMirrorMain(this)
+        val mirror = currentClusterMirrorMode()
         // Show only when the channel is actually open. The start-up watcher owns activation, so
         // this path must never send the sequence - a display arriving late is not a reason to
         // announce again.
@@ -1373,7 +1373,7 @@ class CarPlayHostActivity : ComponentActivity() {
             // A window built after the auto-switch changed the desired mode must be re-applied on
             // the next tick; this path otherwise uses the saved display choice.
             if (AirPlayPersistence.loadClusterAutoNavMode(this)) autoNavModePending = true
-            presentation.setMode(AirPlayPersistence.loadClusterMirrorMain(this))
+            presentation.setMode(currentClusterMirrorMode())
             updateClusterMapShown()
             presentation.setStreamActive(clusterStreamActive())
             // Invisible until the head unit is really in projection mode. Before activation incall
@@ -1443,7 +1443,7 @@ class CarPlayHostActivity : ComponentActivity() {
             // A window built after the auto-switch changed the desired mode must be re-applied on
             // the next tick; this path otherwise uses the saved display choice.
             if (AirPlayPersistence.loadClusterAutoNavMode(this)) autoNavModePending = true
-            presentation.setMode(AirPlayPersistence.loadClusterMirrorMain(this))
+            presentation.setMode(currentClusterMirrorMode())
             presentation.setStreamActive(clusterStreamActive())
             presentation.setMapVisible(false)
             applyClusterTurnOverlay()
@@ -1495,8 +1495,24 @@ class CarPlayHostActivity : ComponentActivity() {
 
     /** Which CarPlay stream feeds the instrument cluster window (main-screen mirror or cluster stream). */
     private fun clusterStreamActive(): Boolean {
-        val type = if (AirPlayPersistence.loadClusterMirrorMain(this)) SCREEN_TYPE_MAIN else SCREEN_TYPE_ALT
+        val type = if (currentClusterMirrorMode()) SCREEN_TYPE_MAIN else SCREEN_TYPE_ALT
         return type in activeScreenStreamTypes
+    }
+
+    /**
+     * The dashboard mode actually in use, not the saved display preference.
+     *
+     * The navigation auto-switch changes the mode for this run without writing
+     * [AirPlayPersistence.KEY_CLUSTER_MIRROR_MAIN], so every runtime decision (crop, stream binding,
+     * recovery) must use this instead of reading the preference again.
+     */
+    private fun currentClusterMirrorMode(): Boolean {
+        if (clusterSwipePosition >= 0) return clusterSwipePosition == 0
+        clusterPresentation?.let { return it.isMirrorMode() }
+        if (AirPlayPersistence.loadClusterAutoNavMode(this)) {
+            lastAutoNavState?.let { return !it }
+        }
+        return AirPlayPersistence.loadClusterMirrorMain(this)
     }
 
     private fun applyClusterTurnOverlay() {
@@ -1666,7 +1682,7 @@ class CarPlayHostActivity : ComponentActivity() {
         clusterSurface = surface
         // Never fall back to the main surface: two decoders must not draw into one Surface.
         if (surface != null) {
-            if (AirPlayPersistence.loadClusterMirrorMain(this)) {
+            if (currentClusterMirrorMode()) {
                 // Whole CarPlay screen: mirror stream 110 (main) onto the cluster window with its
                 // own decoder, leaving the centre screen untouched (same mechanism as centre-card mirrors).
                 sink?.setMirrorSurface(SCREEN_TYPE_MAIN, CLUSTER_MAIN_MIRROR, surface)
@@ -4377,7 +4393,7 @@ class CarPlayHostActivity : ComponentActivity() {
             return
         }
         autoProjectTriggered = true
-        val mirror = AirPlayPersistence.loadClusterMirrorMain(this)
+        val mirror = currentClusterMirrorMode()
         appendLog("Auto project: 连接成功，稍后自动投屏 mirror=$mirror")
         val token = autoProjectToken
         // One second of settle, then the readiness gate decides. It used to be a flat 5 s, which the
@@ -4850,7 +4866,7 @@ class CarPlayHostActivity : ComponentActivity() {
         // stream here overwrote the mirror binding and froze the dashboard to nav-only.
         if (DiLink51ClusterLayout.supported()) {
             clusterSurface?.let { surface ->
-                if (AirPlayPersistence.loadClusterMirrorMain(this)) {
+                if (currentClusterMirrorMode()) {
                     renderer.setMirrorSurface(SCREEN_TYPE_MAIN, CLUSTER_MAIN_MIRROR, surface)
                 } else {
                     renderer.setSurface(SCREEN_TYPE_ALT, surface)
@@ -5331,7 +5347,7 @@ class CarPlayHostActivity : ComponentActivity() {
         if (hasClusterSurface) {
             if (DiLink51ClusterLayout.supported()) {
                 clusterSurface?.let {
-                    if (AirPlayPersistence.loadClusterMirrorMain(this)) {
+                    if (currentClusterMirrorMode()) {
                         sink?.setMirrorSurface(SCREEN_TYPE_MAIN, CLUSTER_MAIN_MIRROR, it)
                     } else {
                         sink?.setSurface(SCREEN_TYPE_ALT, it)
@@ -6210,7 +6226,7 @@ class CarPlayHostActivity : ComponentActivity() {
             } else {
                 activeScreenStreamTypes.remove(type)
             }
-            if (type == SCREEN_TYPE_ALT || (AirPlayPersistence.loadClusterMirrorMain(this) && type == SCREEN_TYPE_MAIN)) {
+            if (type == SCREEN_TYPE_ALT || (currentClusterMirrorMode() && type == SCREEN_TYPE_MAIN)) {
                 Log.i(ClusterMapPresentation.TAG, "cluster stream active=$active")
                 appendLog("Cluster map: stream active=$active")
                 clusterPresentation?.setStreamActive(active)
@@ -6230,13 +6246,13 @@ class CarPlayHostActivity : ComponentActivity() {
                     if (clusterWindowHidden) {
                         clusterWindowHidden = false
                         clusterPresentation?.setMapVisible(shouldShowClusterWindow())
-                        clusterPresentation?.setMode(AirPlayPersistence.loadClusterMirrorMain(this))
+                        clusterPresentation?.setMode(currentClusterMirrorMode())
                         scheduleClusterFrameCheck()
                         appendLog("Cluster map: 画面恢复，静默显示仪表窗口（未重发激活序列）")
                     }
                 }
                 // Centre-card and launcher mirrors track the navigation cluster stream only.
-                if (!AirPlayPersistence.loadClusterMirrorMain(this)) {
+                if (!currentClusterMirrorMode()) {
                     MapMirrors.setStreamActive(active)
                     if (active) {
                         mainHandler.removeCallbacks(hideIdleCenterMap)
