@@ -64,6 +64,13 @@ object CarPlayClusterDisplay {
 
     private const val WIDTH_PHYSICAL_MM = 292 // a 12.3-inch 8:3 cluster panel; Apple Maps ignores it here
     private const val FPS = 30
+    /**
+     * Bottom safe area for Apple's own cluster views, in percent of the stream height.
+     *
+     * The 3D car model sits at the bottom of Apple's view and was clipped by the UNI-V panel edge
+     * without it; 20 % leaves the top instruction card untouched and keeps the full stream width.
+     */
+    private const val APPLE_CLUSTER_BOTTOM_SAFE_PERCENT = 20
 
     fun config(
         widthPixels: Int,
@@ -86,8 +93,18 @@ object CarPlayClusterDisplay {
         // Apple's own views lay the content out themselves and must get the whole panel: the
         // centred area below exists only to move the car marker on OUR map stream, and applying it
         // to the instruction card or the full instruments view would letterbox them.
+        //
+        // They do need a bottom inset, though: Apple draws the 3D car model at the bottom edge, and
+        // on the UNI-V panel it was cut in half by the dashboard's lower edge (field screenshots
+        // 2026-10-24). A bottom-only safe area lifts the model while leaving the full width for the
+        // map and the top-left instruction card. Left/right stay 0 so the view is not letterboxed.
         val safe = if (usesOfficialTurnCard(content)) {
-            AirPlayInsets(top = 0, bottom = 0, left = 0, right = 0)
+            AirPlayInsets(
+                top = 0,
+                bottom = (height * APPLE_CLUSTER_BOTTOM_SAFE_PERCENT / 100),
+                left = 0,
+                right = 0,
+            )
         } else {
             safeArea(width, height, horizontalStep, verticalStep)
         }
