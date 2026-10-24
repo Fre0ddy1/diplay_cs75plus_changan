@@ -30,13 +30,13 @@ object CarPlayClusterDisplay {
          */
         MAP(MAP_URL),
         /**
-         * The fly-in card ("飞屏" style, 2026-10-24): the dashboard keeps the stock cluster UI and
-         * we show the Apple instrument-cluster stream (map + Apple's own glass turn card with lane
-         * guidance, junction view etc.) inside a small card docked at the driver's side of the
-         * panel. The window root is fully transparent, so the gauge cluster shows around the card.
+         * The pure Apple cluster (2026-10-24): the FULL dashboard shows the instrument-cluster
+         * stream (map + Apple's own glass turn card with lane guidance, junction view etc.),
+         * and nothing of ours is drawn on top. Unlike INSTRUMENTS this mode is also pinned to
+         * navigation-only (mirror requests are ignored) and draws no song card.
          *
          * Uses the same URL as INSTRUMENTS so that iOS paints the turn card, lane guidance and
-         * junction view into the video stream; the card then crops the stream to its bounds.
+         * junction view into the video stream.
          */
         FLY_CARD("maps:/car/instrumentcluster"),
     }
@@ -44,7 +44,7 @@ object CarPlayClusterDisplay {
 
     fun usesCustomTurnCard(content: Content): Boolean = content == Content.MAP_WITH_CUSTOM_CARD
 
-    /** The fly-in card mode: transparent dashboard with one small map card. */
+    /** The pure-Apple-cluster mode: full-screen instruments stream, nothing of ours on top. */
     fun isFlyCard(content: Content): Boolean = content == Content.FLY_CARD
 
     /**
