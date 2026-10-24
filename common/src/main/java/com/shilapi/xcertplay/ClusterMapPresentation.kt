@@ -576,15 +576,15 @@ internal class ClusterMapPresentation(
         const val TAG = "DiPlay-Cluster"
 
         /**
-         * TEMPORARY: builds a dashboard with no self-drawn card at all.
+         * Builds a dashboard with no self-drawn card at all.
          *
-         * Set by the driver to settle one question with a screenshot: is the glass turn box that
-         * appears in the middle of the dashboard ours or Apple's? With this true nothing is created
-         * or drawn here - not the turn card, the ETA card, the road-name card or the song card - so
-         * whatever the dashboard still shows came from the phone. Flip it back to false to restore
-         * every card; nothing else depends on it.
+         * Used once, on 2026-10-24, to settle where a dashboard element comes from: with this true
+         * the log shows cards=turnCard=false etaCard=false roadCard=false songCard=false, and the
+         * glass turn box in the middle was still on screen - so it is Apple's, from its own
+         * instrument-cluster view. Kept as a switch because the same question will come up again;
+         * false is the normal build.
          */
-        const val CARDS_DISABLED = true
+        const val CARDS_DISABLED = false
 
         /** A verified 5.1 profile chooses its layer explicitly; other firmware keeps PR #5 behavior. */
         fun findDisplay(context: Context, theme: DiLink51ClusterLayout.Theme = DiLink51ClusterLayout.theme(context)): Display? {
