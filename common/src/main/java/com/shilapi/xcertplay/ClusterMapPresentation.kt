@@ -83,6 +83,8 @@ internal class ClusterMapPresentation(
     )
     private var turnCardVisibleCache = AirPlayPersistence.loadClusterTurnCardVisible(context)
     private var frontedCards: List<View> = emptyList()
+    /** The window's root, where guidance cards are added and removed as the mode changes. */
+    private var cardsRoot: FrameLayout? = null
 
     /**
      * Re-applies the saved dashboard target rectangle to the generic TextureView without
@@ -308,12 +310,15 @@ internal class ClusterMapPresentation(
             gravity = Gravity.CENTER
         }
         root.addView(waitingLabel, FrameLayout.LayoutParams(videoParams))
-        turnCardView = ClusterTurnCardView(context).apply { visibility = View.GONE }
-        root.addView(turnCardView, FrameLayout.LayoutParams(-1, -1))
-        etaCardView = ClusterEtaCardView(context).apply { visibility = View.GONE }
-        root.addView(etaCardView, FrameLayout.LayoutParams(-1, -1))
-        roadNameCardView = ClusterRoadNameView(context).apply { visibility = View.GONE }
-        root.addView(roadNameCardView, FrameLayout.LayoutParams(-1, -1))
+        // The guidance cards are NOT created here.
+        //
+        // They belong to the navigation stream only, and the driver's rule is that a dashboard
+        // which is not showing that stream must have none of them at all - not hidden, not
+        // created - so nothing can flash over CarPlay's own picture before it arrives, and no
+        // leftover card can appear when the mode changes. setMode() creates them from the saved
+        // switches once the window is known to be nav-only, which happens before the stream is
+        // shown.
+        cardsRoot = root
         // Added last so it draws above the guidance cards.
         songView = ClusterSongView(context).apply { visibility = View.GONE }
         root.addView(songView, FrameLayout.LayoutParams(-1, -1))
@@ -326,6 +331,60 @@ internal class ClusterMapPresentation(
      * visibility changes, so the incall service never sees a 111 (re-)activation and does not
      * announce "全屏导航已开启". On the DiLink 5.1 layout (single TextureView) the mode is a no-op.
      */
+    /**
+     * Creates the guidance cards the driver's switches ask for.
+     *
+     * Only ever called in nav-only mode. Everything here is idempotent: an existing card is left
+     * alone, a missing one is created with the guidance data already known, and the music card is
+     * never touched because it belongs to every mode.
+     */
+    private fun materializeGuidanceCards() {
+        val root = cardsRoot ?: return
+        if (mirrorMode) return
+        if (turnCardView == null && turnCardVisibleCache) {
+            turnCardView = ClusterTurnCardView(context).apply { visibility = View.GONE }
+            root.addView(turnCardView, FrameLayout.LayoutParams(-1, -1))
+            // A rebuilt card starts at its own defaults, so restore the driver's saved geometry
+            // before it can draw.
+            turnCardView?.setLayout(
+                AirPlayPersistence.loadClusterTurnCardX(context),
+                AirPlayPersistence.loadClusterTurnCardY(context),
+                AirPlayPersistence.loadClusterCardScalePercent(context, "turn"),
+            )
+            turnCardView?.setGuidance(lastTurnGuidance)
+        }
+        if (etaCardView == null && (cardVisibleCache["eta"] ?: true)) {
+            etaCardView = ClusterEtaCardView(context).apply { visibility = View.GONE }
+            root.addView(etaCardView, FrameLayout.LayoutParams(-1, -1))
+            etaCardView?.setGuidance(lastEtaGuidance)
+        }
+        if (roadNameCardView == null && (cardVisibleCache["road"] ?: true)) {
+            roadNameCardView = ClusterRoadNameView(context).apply { visibility = View.GONE }
+            root.addView(roadNameCardView, FrameLayout.LayoutParams(-1, -1))
+            roadNameCardView?.setGuidance(lastRoadNameGuidance)
+        }
+        // The cards are inserted after the video surfaces, so they must be raised again.
+        listOfNotNull(turnCardView, etaCardView, roadNameCardView).forEach { it.bringToFront() }
+        // The music card was added after the guidance cards in onCreate; keep it on top.
+        songView?.bringToFront()
+    }
+
+    /**
+     * Removes every guidance card from the window.
+     *
+     * Destroyed rather than hidden: a hidden view can still be brought back by a stray
+     * setGuidance(), and the driver's complaint was exactly that a card stayed on screen after the
+     * dashboard left nav-only mode. The music card stays - it belongs to every mode.
+     */
+    private fun destroyGuidanceCards() {
+        val root = cardsRoot ?: return
+        listOfNotNull(turnCardView, etaCardView, roadNameCardView).forEach { root.removeView(it) }
+        turnCardView = null
+        etaCardView = null
+        roadNameCardView = null
+        frontedCards = emptyList()
+    }
+
     fun setMode(mirror: Boolean) {
         // Remember the request before checking the views: on a cold start the host can ask for
         // nav-only while the TextureViews are still null, and the surface callback below must
@@ -333,11 +392,17 @@ internal class ClusterMapPresentation(
         // does not update).
         desiredMirror = mirror
         mirrorMode = mirror
+        // The cards follow the mode, not the TextureViews: both surfaces are created
+        // asynchronously and either may report first, so card lifecycle must not be behind that
+        // check. This is what guarantees the decision is made before the stream is shown.
+        if (navOnlyCards) {
+            if (mirror) destroyGuidanceCards() else materializeGuidanceCards()
+            applyCardsVisibility()
+        }
         val nav = navTextureView ?: return
         val mirrorView = genericTextureView ?: return
         mirrorView.visibility = if (mirror) View.VISIBLE else View.GONE
         nav.visibility = if (mirror) View.GONE else View.VISIBLE
-        if (navOnlyCards) applyCardsVisibility()
         Log.i(TAG, "cluster display mode: ${if (mirror) "mirror(110)" else "nav-only(111)"}")
     }
 
@@ -439,26 +504,28 @@ internal class ClusterMapPresentation(
      */
     private fun applyCardsVisibility() {
         if (!navOnlyCards) return
+        // Not the navigation stream: no guidance card may exist, whatever the switches say.
         if (mirrorMode) {
-            turnCardView?.visibility = View.GONE
-            etaCardView?.visibility = View.GONE
-            roadNameCardView?.visibility = View.GONE
+            destroyGuidanceCards()
             return
         }
-        fun applyVisible(card: String, turn: Boolean, v: View?) {
-            if (v == null) return
-            // User switch OFF -> never render, even when guidance data is present.
-            // Switch ON -> leave the view's own visibility to its setGuidance() (data-driven),
-            // so a card without data never shows as an empty glass block.
-            // Visibility switches are cached: this runs on every guidance tick (per second)
-            // and must not touch SharedPreferences on the hot path.
-            val shown = if (turn) turnCardVisibleCache
-            else cardVisibleCache[card] ?: true
-            if (!shown) v.visibility = View.GONE
+        // Nav-only: the driver's switches alone decide which cards exist. A card whose switch was
+        // turned off while it was on screen is destroyed here, and one whose switch was turned on
+        // is created - so a settings change is reflected without waiting for the next mode change.
+        // The music card is not in this group: it is drawn in every mode.
+        if (!turnCardVisibleCache) {
+            turnCardView?.let { cardsRoot?.removeView(it) }
+            turnCardView = null
         }
-        applyVisible("turn", true, turnCardView)
-        applyVisible("eta", false, etaCardView)
-        applyVisible("road", false, roadNameCardView)
+        if (cardVisibleCache["eta"] == false) {
+            etaCardView?.let { cardsRoot?.removeView(it) }
+            etaCardView = null
+        }
+        if (cardVisibleCache["road"] == false) {
+            roadNameCardView?.let { cardsRoot?.removeView(it) }
+            roadNameCardView = null
+        }
+        materializeGuidanceCards()
         // bringToFront() triggers a layout pass, so only re-front when the visible set
         // actually changed — guidance ticks every second and must not requestLayout each time.
         val visibleNow = listOfNotNull(turnCardView, etaCardView, roadNameCardView)

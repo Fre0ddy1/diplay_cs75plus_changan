@@ -1542,15 +1542,6 @@ class CarPlayHostActivity : ComponentActivity() {
         // independent of the "dashboard shows" content setting. DiLink 5.1 keeps the upstream
         // behavior: turn card follows the content setting, no ETA card.
         val changanCards = !DiLink51ClusterLayout.supported()
-        // Apple's own cluster views already carry the turn instruction, the lane guidance and the
-        // junction picture. Feeding our glass cards over them is what made a cold start or a
-        // re-route show the self-drawn card first, covering Apple's stream (field screenshots
-        // 2026-10-24). Those two content modes therefore clear the cards that duplicate Apple's
-        // content. The ETA card and the song card stay: Apple draws neither, and the driver asked
-        // for them to be independent of the content mode.
-        val appleClusterContent = AirPlayPersistence.loadClusterContent(this).let {
-            it == CarPlayClusterDisplay.Content.INSTRUMENTS || it == CarPlayClusterDisplay.Content.TURN_CARD
-        }
         val g = clusterTurnGuidance
         // Navigation starting or ending is exactly the moment iOS stops repainting the cluster: the
         // alt screen keeps the previous route on screen (field report: "退出导航后重新导航，仪表盘
@@ -1591,16 +1582,14 @@ class CarPlayHostActivity : ComponentActivity() {
             )
             presentation.setSong(clusterSong)
             presentation.setSongArtwork(CarPlayMediaKeys.currentArtwork())
-            // In Apple's content modes the turn and road-name cards would cover the stream that
-            // already contains them, so they are cleared here rather than in applyCardsVisibility():
-            // this runs on the first overlay pass after start-up too, which is what a cold start
-            // needs - the cards used to be painted once before the driver's switch was applied.
-            // The ETA card and the song card stay; Apple draws neither.
-            if (appleClusterContent) {
-                presentation.setTurnCardGuidance(null)
-                presentation.setRoadNameGuidance(null)
-                presentation.setEtaGuidance(clusterTurnGuidance)
-            } else if (changanCards) {
+            // Every card here is drawn by us, and which of them exists is decided by the
+            // presentation itself: it creates them only in nav-only mode and only for the switches
+            // the driver turned on, and destroys them the moment the dashboard leaves that mode.
+            // The "dashboard shows" content setting deliberately plays no part - it only picks
+            // which URL the phone streams, never whether our cards exist (field requirement
+            // 2026-10-24: a card must not appear over CarPlay's own picture just because the
+            // driver left its switch on).
+            if (changanCards) {
                 presentation.setTurnCardGuidance(clusterTurnGuidance)
                 presentation.setEtaGuidance(clusterTurnGuidance)
                 presentation.setRoadNameGuidance(clusterTurnGuidance)
