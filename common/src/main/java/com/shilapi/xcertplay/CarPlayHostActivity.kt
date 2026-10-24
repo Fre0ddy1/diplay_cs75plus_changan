@@ -475,6 +475,8 @@ class CarPlayHostActivity : ComponentActivity() {
     // like CarPlay boxes: -1 = initial (setting default), 0 = navigation stream, 1 = whole
     // interface mirror. Left swipes advance, right swipes go back, past the ends nothing happens.
     private var clusterSwipePosition = -1
+    /** True when [clusterSwipePosition] was set by the navigation auto-switch, not by the driver. */
+    private var clusterPositionFromAuto = false
     private var initialClusterMirror: Boolean? = null
     /** Last navigation state seen by the auto-switch setting; null = re-evaluate on next tick. */
     private var lastAutoNavState: Boolean? = null
@@ -1254,6 +1256,14 @@ class CarPlayHostActivity : ComponentActivity() {
         // stream would make the head unit announce "全屏导航已开启", which the driver rejected).
         AirPlayPersistence.overlaySettingsListener = {
             runOnUiThread {
+                // Turning the navigation auto-switch off must hand the three-finger position
+                // machine back immediately, not on the next one-second tick: if auto left it at
+                // 1, a left swipe is the end of the machine and looks like "three-finger does
+                // nothing". A position the driver set manually is left alone.
+                if (!AirPlayPersistence.loadClusterAutoNavMode(this) && clusterPositionFromAuto) {
+                    clusterSwipePosition = if (clusterSwipePosition == 1) -1 else 0
+                    clusterPositionFromAuto = false
+                }
                 applyClusterTurnOverlay()
                 // Every nav card re-reads its persisted (x, y) right away, so position
                 // changes are visible on the dashboard immediately after saving.
@@ -4634,6 +4644,7 @@ class CarPlayHostActivity : ComponentActivity() {
                     autoProjectToken = Any()
                     autoProjectLadderActive = false
                     clusterSwipePosition = -1
+                    clusterPositionFromAuto = false
                     clusterActivationAttempted = false
                     // A released ext-screen must not survive a reconnect: the next open re-runs
                     // the full sequence anyway, and a stale flag would only force it again.
@@ -5180,6 +5191,7 @@ class CarPlayHostActivity : ComponentActivity() {
         // makes the head unit announce "全屏导航已开启" on every reconnect (field report
         // 10-08). The swipe position and activation flags are still reset below.
         clusterSwipePosition = -1
+        clusterPositionFromAuto = false
         clusterActivationAttempted = false
         clusterExtScreenReleased = false
         autoProjectTriggered = false
@@ -5647,6 +5659,15 @@ class CarPlayHostActivity : ComponentActivity() {
      */
     private fun maybeAutoSwitchClusterForNavigation() {
         if (!AirPlayPersistence.loadClusterAutoNavMode(this)) {
+            if (clusterPositionFromAuto) {
+                // The auto-switch left the position machine at 0 or 1. At 1 a left swipe is the
+                // end of the machine and does nothing, which read as "three-finger stopped
+                // working" after turning the switch off. Leave 0 at 0 so a left swipe advances to
+                // nav-only; move 1 back to -1 so a left swipe goes to the mirror. A position the
+                // driver set manually is never touched.
+                clusterSwipePosition = if (clusterSwipePosition == 1) -1 else 0
+                clusterPositionFromAuto = false
+            }
             lastAutoNavState = null
             autoNavModePending = false
             manualClusterOverride = false
@@ -5669,6 +5690,7 @@ class CarPlayHostActivity : ComponentActivity() {
             // incall is actually projecting. Never force it visible here (small preview box).
             autoNavModePending = true
             clusterSwipePosition = if (navigating) 1 else 0
+            clusterPositionFromAuto = true
             if (clusterPresentation == null) runCatching { ensureClusterPresentation() }
             clusterPresentation?.setMode(!navigating)
             if (changed) {
@@ -5687,6 +5709,7 @@ class CarPlayHostActivity : ComponentActivity() {
         if (shuttingDown.get() || isFinishing || isDestroyed) return
         val mirror = !navigating
         clusterSwipePosition = if (mirror) 0 else 1
+        clusterPositionFromAuto = true
         if (clusterPresentation == null) runCatching { ensureClusterPresentation() }
         val presentation = clusterPresentation ?: run {
             appendLog("Nav auto: 无仪表投影显示，暂不切换")
@@ -5736,8 +5759,9 @@ class CarPlayHostActivity : ComponentActivity() {
         }
         clusterSwipePosition = nextPos
         if (direction != "auto") {
-            // The driver took over: auto-switch waits for the next navigation transition instead
-            // of undoing the choice one tick later.
+            // The driver took over: the position machine now belongs to them, and auto-switch
+            // waits for the next navigation transition instead of undoing the choice.
+            clusterPositionFromAuto = false
             manualClusterOverride = true
             // The driver took over: cancel any pending auto-project retry ladder, so it can never
             // fight a manual swipe (it would re-send the open sequence on top of the driver's
