@@ -1090,6 +1090,31 @@ object AirPlayPersistence {
             .getInt("cluster_card_alpha_$card", 50)
             .coerceIn(0, 100)
 
+    /**
+     * Declared safe area of the cluster stream, in panel pixels, one value per edge.
+     *
+     * The bottom defaults to the 110 px the UNI-V's moulding hides; every other edge is 0. The
+     * values go into the /info the phone reads when it connects, so a change takes effect on the
+     * NEXT connection, not on the running one.
+     */
+    fun loadClusterSafeInset(context: Context, edge: String): Int {
+        val max = if (edge == "top" || edge == "bottom") 720 else 1920
+        val default = if (edge == "bottom") CLUSTER_SAFE_BOTTOM_DEFAULT_PX else 0
+        return context.getSharedPreferences(PREFS, Context.MODE_PRIVATE)
+            .getInt("cluster_safe_$edge", default)
+            .coerceIn(0, max)
+    }
+
+    fun saveClusterSafeInset(context: Context, edge: String, px: Int) {
+        val max = if (edge == "top" || edge == "bottom") 720 else 1920
+        context.getSharedPreferences(PREFS, Context.MODE_PRIVATE).edit()
+            .putInt("cluster_safe_$edge", px.coerceIn(0, max))
+            .apply()
+    }
+
+    /** Default of the bottom safe-area edge: the strip under the UNI-V dashboard moulding. */
+    const val CLUSTER_SAFE_BOTTOM_DEFAULT_PX = 110
+
     fun saveClusterCardAlpha(context: Context, card: String, percent: Int) {
         context.getSharedPreferences(PREFS, Context.MODE_PRIVATE).edit()
             .putInt("cluster_card_alpha_$card", percent.coerceIn(0, 100)).apply()

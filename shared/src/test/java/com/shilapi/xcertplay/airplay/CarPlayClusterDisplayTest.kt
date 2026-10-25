@@ -124,15 +124,15 @@ class CarPlayClusterDisplayTest {
 
     @Test
     fun markerStepsMoveTheMarkerInsideTheFullPanel() {
-        // Since 2026-10-25 the declared area is the whole panel, so it cannot grow any further;
-        // what the steps move is the marker itself, one 10 % step at a time.
-        val centre = CarPlayClusterDisplay.markerPercent(0, 0)
-        val farLeftHigher = CarPlayClusterDisplay.markerPercent(-2, -1)
+        // The steps move the marker itself, one 10 % step at a time, inside the declared area.
+        val insets = CarPlayClusterDisplay.defaultSafeInsets(1920, 720)
+        val centre = CarPlayClusterDisplay.markerPercentIn(insets, 1920, 720, 0, 0)
+        val farLeftHigher = CarPlayClusterDisplay.markerPercentIn(insets, 1920, 720, -2, -1)
 
         assertEquals(50.0, centre.first, 0.01)
-        assertEquals(50.0, centre.second, 0.01)
+        assertEquals(42.36, centre.second, 0.05)
         assertEquals(30.0, farLeftHigher.first, 0.01)
-        assertEquals(40.0, farLeftHigher.second, 0.01)
+        assertEquals(32.36, farLeftHigher.second, 0.05)
 
         // The advertised area is the full width with the hidden bottom strip excluded.
         val safe = CarPlayClusterDisplay.config(1920, 720, scalePercent = 100).safeArea!!
@@ -157,14 +157,19 @@ class CarPlayClusterDisplayTest {
         // Marker at 14.5 % from the top: the area reaches the top edge and stays centred on it.
         assertEquals(0, top.top)
         assertEquals(290, 1000 - top.top - top.bottom)
-        assertEquals(20.0, CarPlayClusterDisplay.markerPercent(0, -3).second, 0.001)
+        val marker = CarPlayClusterDisplay.markerPercentIn(
+            CarPlayClusterDisplay.defaultSafeInsets(1000, 1000), 1000, 1000, 0, -3,
+        )
+        assertEquals(14.5, marker.second, 0.001)
     }
 
     @Test
     fun theCarSitsNearThePanelCentre() {
-        val safe = CarPlayClusterDisplay.SAFE_AREA_PERCENT
-        val centreX = (safe.left + 100 - safe.right) / 2.0
+        val insets = CarPlayClusterDisplay.defaultSafeInsets(1920, 720)
+        val marker = CarPlayClusterDisplay.markerPercentIn(insets, 1920, 720, 0, 0)
 
-        assertTrue("centre x $centreX", centreX in 48.0..52.0)
+        assertEquals(50.0, marker.first, 0.01)
+        // 720 - 110 puts the marker at 42.36 %: the middle of the visible strip.
+        assertEquals(42.36, marker.second, 0.05)
     }
 }

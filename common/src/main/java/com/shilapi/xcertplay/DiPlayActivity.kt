@@ -1155,6 +1155,38 @@ class DiPlayActivity : ComponentActivity() {
                     "apple",
                     getString(R.string.cluster_card_apple_window_desc),
                 )
+                // The four edges of the declared safe area, in panel pixels. Unlike the card
+                // positions these are read into /info when the phone connects, so a change only
+                // lands on the NEXT connection.
+                cardGroup(card, getString(R.string.cluster_safe_area_title)) { group ->
+                    group.addView(label(getString(R.string.cluster_safe_area_desc), 13, MUTED).apply {
+                        setPadding(0, 0, 0, dp(6))
+                    })
+                    fun safeRow(titleRes: Int, edge: String, max: Int) {
+                        group.addView(LinearLayout(this@DiPlayActivity).apply {
+                            orientation = LinearLayout.HORIZONTAL
+                            gravity = Gravity.CENTER_VERTICAL
+                            setPadding(0, dp(6), 0, 0)
+                            addView(
+                                label(getString(titleRes), 15, TEXT, true),
+                                LinearLayout.LayoutParams(0, -2, 1f),
+                            )
+                            addView(
+                                numberInput(
+                                    AirPlayPersistence.loadClusterSafeInset(this@DiPlayActivity, edge),
+                                    max,
+                                ) { value ->
+                                    AirPlayPersistence.saveClusterSafeInset(this@DiPlayActivity, edge, value)
+                                },
+                                LinearLayout.LayoutParams(dp(150), dp(48)).apply { leftMargin = dp(8) },
+                            )
+                        })
+                    }
+                    safeRow(R.string.cluster_safe_area_top, "top", 720)
+                    safeRow(R.string.cluster_safe_area_bottom, "bottom", 720)
+                    safeRow(R.string.cluster_safe_area_left, "left", 1920)
+                    safeRow(R.string.cluster_safe_area_right, "right", 1920)
+                }
                 card.addView(button(getString(R.string.cluster_card_position_apply), false) {
                     pendingXY.forEach { (id, pair) ->
                         if (id == "turn") {

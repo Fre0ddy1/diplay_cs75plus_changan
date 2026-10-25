@@ -498,6 +498,12 @@
     <string name="cluster_card_eta_title">Arrival card</string>
     <string name="cluster_card_apple_window_title">Apple full-navigation card position</string>
     <string name="cluster_card_apple_window_desc">Places the card window that Apple draws for its full-navigation stream. Default 0,0 (the panel\'s upper-left corner); a position that would push the card past the dashboard edge is pulled back inside automatically.</string>
+    <string name="cluster_safe_area_title">Dashboard safe area (nav-only)</string>
+    <string name="cluster_safe_area_desc">The four edges kept free, in panel pixels (1920x720). Default: bottom 110 (hidden behind the dashboard moulding), every other edge 0. The phone reads this when it connects, so a change takes effect on the NEXT connection.</string>
+    <string name="cluster_safe_area_top">Top</string>
+    <string name="cluster_safe_area_bottom">Bottom</string>
+    <string name="cluster_safe_area_left">Left</string>
+    <string name="cluster_safe_area_right">Right</string>
     <string name="cluster_card_exit_title">Exit badge</string>
     <string name="cluster_card_show">Show %1$s</string>
     <string name="cluster_card_show_desc">When off, this card is not rendered on the dashboard.</string>

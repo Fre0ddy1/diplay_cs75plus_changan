@@ -55,38 +55,37 @@ object CarPlayClusterDisplay {
     /** The pure-Apple-cluster mode: full-screen instruments stream, nothing of ours on top. */
     fun isFlyCard(content: Content): Boolean = content == Content.FLY_CARD
 
-    /**
-     * Where the car marker goes, as percent of the panel (left, top, right, bottom).
-     *
-     * Full panel since 2026-10-25 (Changan UNI-V field request). The old centre window
-     * (35/16/36/25) was measured on a BYD DiLink 5.0 cluster whose own UI covers the edges; the
-     * UNI-V panel has no such overlay, so the phone should be given the whole display. The map
-     * was already painted edge to edge (safeAreaDrawOutside); this only frees the car marker and
-     * any Apple view from the BYD-shaped box.
-     */
-    val SAFE_AREA_PERCENT = AirPlayInsets(top = 0, bottom = 0, left = 0, right = 0)
-
     /** The driver can move the marker from that centre, in steps of 10 % of the panel. */
     const val MARKER_STEP_PERCENT = 10
     val horizontalSteps = -4..4 // negative = left
     val verticalSteps = -3..3 // negative = up
 
+    /** The default area: whole panel, minus the strip the UNI-V moulding hides. */
+    fun defaultSafeInsets(panelWidth: Int, panelHeight: Int): AirPlayInsets = AirPlayInsets(
+        top = 0,
+        bottom = PANEL_BOTTOM_OCCLUSION_PX.coerceIn(0, (panelHeight - 1).coerceAtLeast(0)),
+        left = 0,
+        right = 0,
+    )
+
     /**
-     * Where the car marker lands, in percent of the panel (x from the left, y from the top).
+     * The car marker inside [insets], in percent of the panel, moved by the driver's steps.
      *
-     * [bottomOcclusionPx] is the slice of the panel the dashboard hides (UNI-V moulding), so the
-     * marker centres on the part the driver can actually see.
+     * Steps are 10 % of the panel each and are clamped to [MARKER_MARGIN], so the marker can never
+     * be pushed against an edge.
      */
-    fun markerPercent(
+    fun markerPercentIn(
+        insets: AirPlayInsets,
+        panelWidth: Int,
+        panelHeight: Int,
         horizontalStep: Int,
         verticalStep: Int,
-        bottomOcclusionPx: Int = 0,
-        panelHeight: Int = 720,
     ): Pair<Double, Double> {
-        val area = SAFE_AREA_PERCENT
-        val bottomPercent = if (panelHeight > 0) bottomOcclusionPx * 100.0 / panelHeight else 0.0
-        val x = (area.left + 100 - area.right) / 2.0 + horizontalStep.coerceIn(horizontalSteps) * MARKER_STEP_PERCENT
-        val y = (area.top + 100 - bottomPercent) / 2.0 + verticalStep.coerceIn(verticalSteps) * MARKER_STEP_PERCENT
+        if (panelWidth <= 0 || panelHeight <= 0) return 50.0 to 50.0
+        val centreX = (insets.left + (panelWidth - insets.right)) / 2.0 / panelWidth * 100
+        val centreY = (insets.top + (panelHeight - insets.bottom)) / 2.0 / panelHeight * 100
+        val x = centreX + horizontalStep.coerceIn(horizontalSteps) * MARKER_STEP_PERCENT
+        val y = centreY + verticalStep.coerceIn(verticalSteps) * MARKER_STEP_PERCENT
         return x.coerceIn(MARKER_MARGIN, 100 - MARKER_MARGIN) to y.coerceIn(MARKER_MARGIN, 100 - MARKER_MARGIN)
     }
 
@@ -167,6 +166,7 @@ object CarPlayClusterDisplay {
         horizontalStep: Int = 0,
         verticalStep: Int = 0,
         content: Content = Content.MAP,
+        safeInsets: AirPlayInsets? = null,
     ): AirPlayDisplayConfig {
         // Height rounds to a multiple of 8 and width follows it, so the panel's aspect is kept
         // (100 % of 1920x720 gives exactly 1920x720). The cluster scales the stream to the panel.
@@ -175,17 +175,16 @@ object CarPlayClusterDisplay {
         val width = roundTo8(height * widthPixels.toDouble() / heightPixels)
         // ONE safe area for every content mode.
         //
-        // The centred area is the only mode left (field decision 2026-10-18): with a zero inset
-        // Amap renders its detailed follow map and puts the car marker left of centre, leaving the
-        // panel's right column to its own info strip. The centred area makes Amap show the overview
-        // with the marker dead centre; the marker steps still move it from there.
-        //
-        // Apple's own cluster views get the same area. It used to be assumed that they lay the
-        // content out themselves and need the whole panel, but the field comparison on 2026-10-24
-        // settled it the other way: the self-drawn map shows the car model fully with this area,
-        // while Apple's instrument cluster showed it lower and cut by the panel edge. The two modes
-        // differ only in the requested URL, so they must not differ in geometry either.
-        val safe = safeArea(width, height, horizontalStep, verticalStep)
+        // The driver sets its four edges in the settings page (px, default bottom 110 = the strip
+        // the UNI-V moulding hides). The values go into the /info the phone reads when it
+        // connects, so a change lands on the next connection.
+        val safe = safeArea(
+            width,
+            height,
+            horizontalStep,
+            verticalStep,
+            safeInsets ?: defaultSafeInsets(width, height),
+        )
         return AirPlayDisplayConfig(
             widthPixels = width,
             heightPixels = height,
@@ -202,25 +201,39 @@ object CarPlayClusterDisplay {
 
     // The safe area keeps its measured size around the marker and shrinks only where the marker
     // comes close to a panel edge, so the marker always sits at its centre.
-    private fun safeArea(width: Int, height: Int, horizontalStep: Int, verticalStep: Int): AirPlayInsets {
-        val area = SAFE_AREA_PERCENT
-        // The bottom of the panel is hidden behind the dashboard moulding on the UNI-V, so the
-        // declared area stops above it: the phone then lays the car marker out in the middle of
-        // what the driver can see (field measurement 2026-10-25). The STREAM stays full size -
-        // only this area shrinks, so the map is neither cropped nor stretched.
-        val hiddenBottomPx = PANEL_BOTTOM_OCCLUSION_PX.coerceIn(0, (height - 1).coerceAtLeast(0))
-        val hiddenBottomPercent = if (height > 0) hiddenBottomPx * 100.0 / height else 0.0
-        val (x, y) = markerPercent(horizontalStep, verticalStep, hiddenBottomPx, height)
-        val halfWidth = minOf((100 - area.left - area.right) / 2.0, x, 100 - x)
-        val halfHeight = minOf((100 - area.top - hiddenBottomPercent) / 2.0, y, 100 - y)
+    private fun safeArea(
+        width: Int,
+        height: Int,
+        horizontalStep: Int,
+        verticalStep: Int,
+        requested: AirPlayInsets,
+    ): AirPlayInsets {
+        // Legalise the driver's numbers first: the edges on one axis must not overlap, so an
+        // over-large pair is scaled down instead of collapsing the area to nothing.
+        val (left, right) = fitInsets(requested.left, requested.right, width)
+        val (top, bottom) = fitInsets(requested.top, requested.bottom, height)
+        val area = AirPlayInsets(top = top, bottom = bottom, left = left, right = right)
+        val (x, y) = markerPercentIn(area, width, height, horizontalStep, verticalStep)
+        val halfWidth = minOf(x - left * 100.0 / width, (width - right) * 100.0 / width - x)
+        val halfHeight = minOf(y - top * 100.0 / height, (height - bottom) * 100.0 / height - y)
         return AirPlayInsets(
             // Round, not truncate: 720 - 110 must come out as exactly 610, and truncation of
             // 109.99999 handed back 611 instead (seen in the unit test on 2026-10-25).
-            top = Math.round(height * (y - halfHeight) / 100).toInt(),
-            bottom = Math.round(height * (100 - y - halfHeight) / 100).toInt(),
-            left = Math.round(width * (x - halfWidth) / 100).toInt(),
-            right = Math.round(width * (100 - x - halfWidth) / 100).toInt(),
+            top = Math.round(height * (y - halfHeight) / 100).toInt().coerceAtLeast(top),
+            bottom = Math.round(height * (100 - y - halfHeight) / 100).toInt().coerceAtLeast(bottom),
+            left = Math.round(width * (x - halfWidth) / 100).toInt().coerceAtLeast(left),
+            right = Math.round(width * (100 - x - halfWidth) / 100).toInt().coerceAtLeast(right),
         )
+    }
+
+    /** Two opposite edges that together exceed [total] are scaled to fit, keeping their ratio. */
+    private fun fitInsets(first: Int, second: Int, total: Int): Pair<Int, Int> {
+        if (total <= 0) return 0 to 0
+        val a = first.coerceAtLeast(0)
+        val b = second.coerceAtLeast(0)
+        if (a + b < total) return a to b
+        val scale = (total - 1).toDouble() / (a + b)
+        return (a * scale).toInt() to (b * scale).toInt()
     }
 
     private fun roundTo8(value: Double): Int = (Math.round(value / 8) * 8).toInt().coerceAtLeast(8)

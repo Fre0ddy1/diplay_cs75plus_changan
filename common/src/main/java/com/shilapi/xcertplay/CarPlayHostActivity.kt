@@ -1842,6 +1842,14 @@ class CarPlayHostActivity : ComponentActivity() {
             AirPlayPersistence.loadClusterMarkerHorizontalStep(this),
             AirPlayPersistence.loadClusterMarkerVerticalStep(this),
             AirPlayPersistence.loadClusterContent(this),
+            // The driver's four edges (px), default bottom 110 for the moulding strip. These go
+            // into /info, so a change here lands on the next connection.
+            safeInsets = com.shilapi.xcertplay.airplay.AirPlayInsets(
+                top = AirPlayPersistence.loadClusterSafeInset(this, "top"),
+                bottom = AirPlayPersistence.loadClusterSafeInset(this, "bottom"),
+                left = AirPlayPersistence.loadClusterSafeInset(this, "left"),
+                right = AirPlayPersistence.loadClusterSafeInset(this, "right"),
+            ),
         ).also {
             appendLog("Cluster map: requesting ${it.widthPixels}x${it.heightPixels} on ${size.x}x${size.y} safeArea=${it.safeArea} url=${it.initialUrl}")
         }

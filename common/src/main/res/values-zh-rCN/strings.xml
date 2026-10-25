@@ -622,6 +622,12 @@
     <string name="cluster_card_eta_title">到达信息卡片</string>
     <string name="cluster_card_apple_window_title">Apple 完整导航卡位置</string>
     <string name="cluster_card_apple_window_desc">设置 Apple 完整导航（导航流自带卡片）卡窗的左上角坐标。默认 0,0（屏幕左上角）；若坐标会让卡片越出仪表盘，会自动拉回可视区内并保存修正值。</string>
+    <string name="cluster_safe_area_title">仪表盘安全区（仅导航）</string>
+    <string name="cluster_safe_area_desc">四边保留的空白，单位像素（面板 1920×720）。默认：下 110（被仪表饰板遮挡的部分），其它为 0。手机在连接时读取这些值，修改后需重新连接才生效。</string>
+    <string name="cluster_safe_area_top">上</string>
+    <string name="cluster_safe_area_bottom">下</string>
+    <string name="cluster_safe_area_left">左</string>
+    <string name="cluster_safe_area_right">右</string>
     <string name="cluster_card_exit_title">出口徽标</string>
     <string name="cluster_card_show">显示 %1$s</string>
     <string name="cluster_card_show_desc">关闭后此卡片不再渲染到仪表盘。</string>
