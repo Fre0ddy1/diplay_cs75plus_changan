@@ -740,8 +740,8 @@ class DiPlayActivity : ComponentActivity() {
                     if (content.url != next.url) reconnectForClusterMap()
                 }
                 // —— 长安仪表盘卡片设置（始终可见）——
-                // 卡片组在 navOnlyCards 模式下无条件显示（只要仪表盘投屏开启），因此这些
-                // 设置不能藏在 customCard 分支里，否则用户换了“仪表盘显示”选择就找不到入口。
+                // 位置设置始终保留入口；整组导航卡片仅在选中自定义卡片内容时显示，
+                // 切换成纯地图不会删除保存的位置和各卡片开关。
                 // 预览与保存分离：滑块只更新预览/暂存（pending），点击 Apply 才写入持久化并
                 // 通过 overlaySettingsListener 立即刷新仪表盘上的真实卡片。
                 val pendingXY = mutableMapOf(

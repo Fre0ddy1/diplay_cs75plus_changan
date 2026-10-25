@@ -63,7 +63,8 @@ internal class ClusterMapPresentation(
         private set
 
     // Nav-only card group state. When navOnlyCards is true (Chang'an generic path) the turn,
-    // ETA and lane cards are visible ONLY in nav-only mode: whole-screen mirror shows the raw
+    // ETA and lane cards are visible ONLY in nav-only mode with custom content selected:
+    // whole-screen mirror shows the raw
     // cropped mirror, no cards. DiLink 5.1 keeps the upstream behavior (turn card follows the
     // "dashboard shows" content setting, no ETA/lane cards).
     private var mirrorMode = true
@@ -78,6 +79,7 @@ internal class ClusterMapPresentation(
     // or calling bringToFront() there would requestLayout/re-read the disk every frame.
     private var cardVisibleCache: Map<String, Boolean>? = null
     private var turnCardVisibleCache = true
+    private var customCardContentCache = false
     private var frontedCards: List<View> = emptyList()
 
     /**
@@ -172,6 +174,7 @@ internal class ClusterMapPresentation(
 
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
+        reloadCardVisibilityCache()
         val size = projectionSize
         val adaptive = DiLink51ClusterLayout.supported()
         val plan = if (adaptive) DiLink51ClusterLayout.plan(size.x, size.y, theme) else null
@@ -317,7 +320,10 @@ internal class ClusterMapPresentation(
         mirrorMode = mirror
         mirrorView.visibility = if (mirror) View.VISIBLE else View.GONE
         nav.visibility = if (mirror) View.GONE else View.VISIBLE
-        if (navOnlyCards) applyCardsVisibility()
+        if (navOnlyCards) {
+            restoreCardDataVisibility()
+            applyCardsVisibility()
+        }
         Log.i(TAG, "cluster display mode: ${if (mirror) "mirror(110)" else "nav-only(111)"}")
     }
 
@@ -362,7 +368,10 @@ internal class ClusterMapPresentation(
         exitBadgeView?.notifyPositionChanged()
         // Reload the show/hide switches, then a saved switch change re-applies visibility right away.
         reloadCardVisibilityCache()
-        if (navOnlyCards) applyCardsVisibility()
+        if (navOnlyCards) {
+            restoreCardDataVisibility()
+            applyCardsVisibility()
+        }
     }
 
     /** The song now playing. Null clears the card. */
@@ -402,7 +411,7 @@ internal class ClusterMapPresentation(
 
     /**
      * Nav-only card group visibility. Whole-screen mirror shows the raw cropped mirror with
-     * NO cards; nav-only mode shows the turn card and the ETA card whenever their guidance
+     * NO cards; custom nav-only content shows the turn card and the ETA card when their guidance
      * data is present. DiLink 5.1 (navOnlyCards=false) never reaches this branch.
      *
      * Each view's setGuidance() is the authority on its own visibility (turn needs guidance,
@@ -414,12 +423,13 @@ internal class ClusterMapPresentation(
      */
     private fun applyCardsVisibility() {
         if (!navOnlyCards) return
-        if (mirrorMode) {
+        if (mirrorMode || !customCardContentCache) {
             turnCardView?.visibility = View.GONE
             etaCardView?.visibility = View.GONE
             laneCardView?.visibility = View.GONE
             roadNameCardView?.visibility = View.GONE
             exitBadgeView?.visibility = View.GONE
+            frontedCards = emptyList()
             return
         }
         fun applyVisible(card: String, turn: Boolean, v: View?) {
@@ -450,6 +460,7 @@ internal class ClusterMapPresentation(
 
     /** Reload the cached show/hide switches after a settings change. */
     private fun reloadCardVisibilityCache() {
+        customCardContentCache = CarPlayClusterDisplay.usesCustomTurnCard(AirPlayPersistence.loadClusterContent(context))
         cardVisibleCache = mapOf(
             "eta" to AirPlayPersistence.loadClusterCardVisible(context, "eta"),
             "lane" to AirPlayPersistence.loadClusterCardVisible(context, "lane"),
@@ -457,6 +468,15 @@ internal class ClusterMapPresentation(
             "exit" to AirPlayPersistence.loadClusterCardVisible(context, "exit"),
         )
         turnCardVisibleCache = AirPlayPersistence.loadClusterTurnCardVisible(context)
+    }
+
+    /** Re-enable only cards with cached data after a mode or settings change. */
+    private fun restoreCardDataVisibility() {
+        turnCardView?.setGuidance(lastTurnGuidance)
+        etaCardView?.setGuidance(lastEtaGuidance)
+        laneCardView?.setLaneGuidance(lastLaneGuidance)
+        roadNameCardView?.setGuidance(lastRoadNameGuidance)
+        exitBadgeView?.setGuidance(lastExitGuidance)
     }
 
     companion object {

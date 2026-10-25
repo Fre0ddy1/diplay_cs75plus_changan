@@ -17,6 +17,7 @@ checks={
     'common/src/main/java/com/shilapi/xcertplay/DiPlaySessionService.kt': ['VehicleCustomizations.onSessionEnded()'],
     'common/src/main/java/com/shilapi/xcertplay/InCallClusterBridge.kt': ['VehicleCustomizations.onProjectionNavigationState(state)','VehicleCustomizations.onProjectionStarted(ctx, automatic, projectionControl)','VehicleCustomizations.onProjectionLayoutRequested(layout)','VehicleCustomizations.onProjectionReleased()'],
     'common/src/main/java/com/shilapi/xcertplay/DiPlayActivity.kt': ['VehicleCustomizations.settings(this)'],
+    'common/src/main/java/com/shilapi/xcertplay/ClusterMapPresentation.kt': ['mirrorMode || !customCardContentCache','CarPlayClusterDisplay.usesCustomTurnCard(AirPlayPersistence.loadClusterContent(context))','restoreCardDataVisibility()'],
     'common/src/main/java/com/shilapi/xcertplay/CarPlayHostActivity.kt': ['VehicleCustomizations.diagnosticListener = routeTraceListener','VehicleCustomizations.onProjectionManualControl()','VehicleCustomizations.shouldRetryAutomaticProjection()','InCallClusterBridge.openProjection(this, automatic = direction == "auto")'],
 }
 failures=[]
