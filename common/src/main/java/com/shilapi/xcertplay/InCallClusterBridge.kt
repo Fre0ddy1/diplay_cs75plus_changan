@@ -14,6 +14,9 @@ import android.os.Looper
 import android.os.Parcel
 import android.os.SystemClock
 import android.util.Log
+import com.freddyq.diplay.customization.ProjectionControl
+import com.freddyq.diplay.customization.ProjectionLayout
+import com.freddyq.diplay.customization.VehicleCustomizations
 
 /**
  * InCallClusterBridge
@@ -320,9 +323,23 @@ object InCallClusterBridge {
     private var silentHoldScheduled = false
     /** Set once the entering state (9) has been sent for this open. */
     private var sourceEnterSent = false
-    private var generation = 0
+    @Volatile private var generation = 0
     private val mainHandler = Handler(Looper.getMainLooper())
     private val token = Any()
+    private val projectionControl = object : ProjectionControl {
+        override fun requestLayout(layout: ProjectionLayout): Boolean {
+            check(Looper.myLooper() == Looper.getMainLooper())
+            if (!openState || binder?.isBinderAlive != true) return false
+            val mode = when (layout) {
+                ProjectionLayout.CARD -> 1
+                ProjectionLayout.FULLSCREEN -> 3
+            }
+            logSeq(generation, "customization layout request=$layout; existing C0($mode) + Z once")
+            val dispatched = setMode(mode)
+            setCarProperties()
+            return dispatched
+        }
+    }
 
     // Real INavigateCallback stub, matching the reference box: the head-unit
     // registers callbacks against this interface descriptor; passing any other binder
@@ -383,6 +400,18 @@ object InCallClusterBridge {
                     // during a state ladder the head unit answers every broadcast, and with the
                     // callback now registered before activation that would flood the report.
                     val previous = lastCallbackValue.put(code, value)
+                    // code 1 is onRequestLVDS: 1=small, 3=full. Code 2 is a different status space.
+                    if (code == 1) {
+                        val layout = when (value) {
+                            1 -> ProjectionLayout.CARD
+                            3 -> ProjectionLayout.FULLSCREEN
+                            else -> null
+                        }
+                        val gen = generation
+                        if (layout != null) mainHandler.post {
+                            if (gen == generation && openState) VehicleCustomizations.onProjectionLayoutRequested(layout)
+                        }
+                    }
                     if (previous == null || previous != value) {
                         runCatching {
                             diagnosticSink?.invoke(
@@ -476,6 +505,24 @@ object InCallClusterBridge {
         }
     }
 
+    /** Adopt a channel already reported by incall without re-sending its activation sequence. */
+    fun adoptObservedProjection(context: Context) {
+        check(Looper.myLooper() == Looper.getMainLooper())
+        if (openState || !reportsProjecting()) return
+        contextRef = context.applicationContext
+        val ctx = contextRef ?: return
+        openState = true
+        generation++
+        VehicleCustomizations.onProjectionStarted(ctx, true, projectionControl)
+        val layout = when (lastCallbackValue[1]) {
+            1 -> ProjectionLayout.CARD
+            3 -> ProjectionLayout.FULLSCREEN
+            else -> null
+        }
+        if (layout != null) VehicleCustomizations.onProjectionLayoutRequested(layout)
+        logSeq(generation, "adopt observed channel; no activation sequence; layout=$layout")
+    }
+
     /**
      * Open the dashboard projection (the full W→E0+G0 sequence from the box).
      * Returns immediately; the handshake continues on the binder thread.
@@ -488,9 +535,10 @@ object InCallClusterBridge {
      * field report). Now: wait for the connection, then send the full sequence; if the service
      * never connects, fall back to the broadcast-only half so behaviour is never worse than before.
      */
-    fun openProjection(context: Context) {
+    fun openProjection(context: Context, automatic: Boolean = false) {
         contextRef = context.applicationContext
         val ctx = contextRef ?: return
+        val keepConfirmedFull = openState && incallReportsProjecting() && lastCallbackValue[1] == 3
         mainHandler.removeCallbacksAndMessages(token)
         generation++
         // Read incall's own report before we send anything: if the driver has already brought
@@ -505,7 +553,13 @@ object InCallClusterBridge {
         sourceEnterSent = false
         silentHoldScheduled = false
         silentOpenOnly = alreadyProjecting
+        VehicleCustomizations.onProjectionStarted(ctx, automatic, projectionControl)
         ensureBound(ctx)
+        if (keepConfirmedFull) {
+            logSeq(generation, "open: preserve confirmed fullscreen; no card-mode sequence on reconnect")
+            VehicleCustomizations.onProjectionLayoutRequested(ProjectionLayout.FULLSCREEN)
+            return
+        }
         if (alreadyProjecting) {
             logSeq(generation, "open: incall already reports projecting; silent half only, no source switch")
             runSilentOpen()
@@ -590,6 +644,7 @@ object InCallClusterBridge {
      */
     fun releaseExternalScreen(context: Context) {
         contextRef = context.applicationContext
+        VehicleCustomizations.onProjectionReleased()
         logSeq(generation, "releaseExternalScreen: r0 ext-screen hand-back (no binder teardown)")
         // A pending open-sequence post would send F0 and take the ext-screen straight back, so the
         // open chain is invalidated first (generation bump + pending posts dropped).
@@ -849,12 +904,14 @@ object InCallClusterBridge {
         logSeq(generation, "unregisterCallback tx30 -> $ok")
     }
 
-    private fun setMode(mode: Int) {
-        val b = binder ?: return
-        txWrite(b, 21, intArrayOf(1, 0))
-        txWrite(b, 8, intArrayOf(mode, 0))
-        txWrite(b, 1, intArrayOf(0))
-        logSeq(generation, "setMode($mode) done")
+    private fun setMode(mode: Int): Boolean {
+        val b = binder ?: return false
+        val slide = txWrite(b, 21, intArrayOf(1, 0))
+        val acknowledge = txWrite(b, 8, intArrayOf(mode, 0))
+        val finish = txWrite(b, 1, intArrayOf(0))
+        val dispatched = slide && acknowledge && finish
+        logSeq(generation, "setMode($mode) dispatched=$dispatched")
+        return dispatched
     }
 
     // F0(): open-sequence ext-screen clear — 10116 op=0 mode=2 + 10117 status=0 mode=2 to all
@@ -880,6 +937,9 @@ object InCallClusterBridge {
 
     private fun broadcastSource(state: Int) {
         val ctx = contextRef ?: return
+        // S311 uses these same navigation states for its windshield HUD. Keep the
+        // projection handshake intact; the HUD output resumes once it has settled.
+        com.freddyq.diplay.customization.VehicleCustomizations.onProjectionNavigationState(state)
         val intent = Intent(ACTION_AUTONAVI).apply {
             setPackage(PKG_INCALL)
             putExtra(EXTRA_KEY_TYPE, 10019)
@@ -965,7 +1025,9 @@ object InCallClusterBridge {
             .onFailure { Log.w(TAG, "broadcast 10117 -> $pkg failed", it) }
     }
 
+    private var carPropertyReflectionUnavailable = false
     private fun setCarProperties() {
+        if (carPropertyReflectionUnavailable) return
         // Car.createCar(context).getCarManager("instrument_panel").setIntProperty(id, 0, value)
         // via reflection so a non-system app is not hard-failed at class-load time.
         val ctx = contextRef ?: return
@@ -980,7 +1042,10 @@ object InCallClusterBridge {
             setter.invoke(manager, CAR_PROP_MODE, 0, 1)
             logSeq(generation, "CarProperty setIntProperty(557855845,3)/(557855847,1) ok")
         } catch (e: Exception) {
-            Log.w(TAG, "CarProperty set failed (non-system app likely)", e)
+            if (e is NoSuchMethodException || e is ClassNotFoundException) {
+                carPropertyReflectionUnavailable = true
+                Log.i(TAG,"Optional CarProperty API unavailable; use existing InCall protocol: ${e.javaClass.simpleName}")
+            } else Log.w(TAG, "Optional CarProperty call failed; InCall protocol remains available", e)
         }
     }
 
@@ -993,7 +1058,8 @@ object InCallClusterBridge {
             data.writeInterfaceToken(BINDER_TOKEN)
             for (v in ints) data.writeInt(v)
             val ok = b.transact(code, data, reply, 0)
-            runCatching { reply.readException() }
+            if (!ok) return false
+            reply.readException()
             return ok
         } catch (e: Exception) {
             Log.w(TAG, "tx$code ${ints.contentToString()} failed", e)

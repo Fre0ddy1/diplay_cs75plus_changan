@@ -29,6 +29,8 @@ android {
 
 dependencies {
     api(project(":shared"))
+    implementation(project(":changan-hud"))
+    implementation(project(":changan-projection"))
     implementation(platform(libs.androidx.compose.bom))
     implementation(libs.androidx.activity.compose)
     implementation(libs.androidx.compose.material3)

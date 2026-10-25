@@ -1,0 +1,6 @@
+<?xml version='1.0' encoding='utf-8'?>
+<resources>
+    <string name="settings_changan_hud_title">ملاحة HUD لسيارات Changan (تجريبي)</string>
+    <string name="settings_changan_hud_enabled">عرض ملاحة CarPlay على شاشة HUD</string>
+    <string name="settings_changan_hud_description">يعرض اتجاهات الهاتف والمسافة وأسماء الطرق. مفعّل افتراضياً في النسخة المخصصة مع الاحتفاظ باختيارك المحفوظ. أبقِ AMap الأصلي في الخلفية وتحقق أولاً من HUD وعرض لوحة العدادات والسيارة متوقفة.</string>
+</resources>

@@ -757,11 +757,12 @@ class DiPlayActivity : ComponentActivity() {
                 // Which cluster content the iPhone streams for the nav-only view. Apple's own views
                 // are the only source of lane guidance and the junction zoom image; the "map + cards"
                 // entry keeps the locally drawn, movable cards.
-                // Two choices (field decision 2026-10-24): the map stream with our movable cards,
-                // or Apple's full navigation as the dual-stream layout (map + instruction card).
+                // Three choices: plain map, local movable cards, or native dual-stream navigation.
+                // Keep stored MAP selectable and make the whole local navigation group opt-in.
                 // Apple's single-stream instruments view was removed on request 2026-10-24 - the
                 // full navigation mode covers it and looks better.
                 val clusterContentChoices = listOf(
+                    CarPlayClusterDisplay.Content.MAP to R.string.cluster_content_map_only,
                     CarPlayClusterDisplay.Content.MAP_WITH_CUSTOM_CARD to R.string.cluster_content_custom,
                     CarPlayClusterDisplay.Content.FLY_CARD to R.string.cluster_content_flycard,
                 )
@@ -881,8 +882,8 @@ class DiPlayActivity : ComponentActivity() {
                 // fixed to the map, which is what the custom cards are drawn on.
                 val customCard = CarPlayClusterDisplay.usesCustomTurnCard(AirPlayPersistence.loadClusterContent(this))
                 // —— 长安仪表盘卡片设置（始终可见）——
-                // 卡片组在 navOnlyCards 模式下无条件显示（只要仪表盘投屏开启），因此这些
-                // 设置不能藏在 customCard 分支里，否则用户换了“仪表盘显示”选择就找不到入口。
+                // 位置设置始终保留入口；整组导航卡片仅在选中自定义卡片内容时显示，
+                // 切换成纯地图不会删除保存的位置和各卡片开关。
                 // 预览与保存分离：滑块只更新预览/暂存（pending），点击 Apply 才写入持久化并
                 // 通过 overlaySettingsListener 立即刷新仪表盘上的真实卡片。
                 val pendingXY = mutableMapOf(
@@ -1203,6 +1204,13 @@ class DiPlayActivity : ComponentActivity() {
                 // in the safe area requested at connect time, so there is no marker to nudge.
                 // The custom cards have their own position and size in the blocks above; these
                 // step pickers never moved them.
+            }
+        }
+        com.freddyq.diplay.customization.VehicleCustomizations.settings(this).forEach { group ->
+            section(content, getString(group.title), R.drawable.ic_dp_navigation) { card ->
+                group.toggles.forEach { setting ->
+                    toggle(card, getString(setting.title), getString(setting.description), setting.enabled, save = setting.onChanged)
+                }
             }
         }
         if (BydOutputSettings.navigationAvailable(this)) section(content, getString(R.string.byd_navigation), R.drawable.ic_dp_navigation) { card ->

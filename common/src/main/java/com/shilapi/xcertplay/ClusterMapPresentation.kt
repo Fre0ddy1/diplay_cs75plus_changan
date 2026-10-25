@@ -120,6 +120,7 @@ internal class ClusterMapPresentation(
     private var cardVisibleCache: Map<String, Boolean> = mapOf(
         "eta" to AirPlayPersistence.loadClusterCardVisible(context, "eta"),
     )
+    private var customCardContentCache = CarPlayClusterDisplay.usesCustomTurnCard(AirPlayPersistence.loadClusterContent(context))
     private var turnCardVisibleCache = AirPlayPersistence.loadClusterTurnCardVisible(context)
     private var frontedCards: List<View> = emptyList()
     /** The window's root, where guidance cards are added and removed as the mode changes. */
@@ -403,7 +404,7 @@ internal class ClusterMapPresentation(
      * belongs to every mode.
      */
     private fun materializeGuidanceCards() {
-        if (CARDS_DISABLED) return
+        if (CARDS_DISABLED || !customCardContentCache) return
         val root = cardsRoot ?: return
         // Turn card: nav-only stream only. iOS's own instruction box is the whole picture of the
         // mirror stream, and a second card on top of it was exactly the "glass box" confusion.
@@ -820,6 +821,15 @@ internal class ClusterMapPresentation(
      */
     private fun applyCardsVisibility() {
         if (!navOnlyCards) return
+        // The content choice owns the whole local navigation group. Native FLY_CARD
+        // surfaces and the independent music card keep their upstream lifecycle.
+        if (!customCardContentCache) {
+            destroyTurnCard()
+            etaCardView?.let { cardsRoot?.removeView(it) }
+            etaCardView = null
+            frontedCards = emptyList()
+            return
+        }
         // FLY_CARD is no longer exempt: it shows the ETA and song cards too (2026-10-25). Its
         // turn card is simply never created (see materializeGuidanceCards), so the turn branch
         // below is a no-op there.
@@ -845,6 +855,7 @@ internal class ClusterMapPresentation(
 
     /** Reload the cached show/hide switches after a settings change. */
     private fun reloadCardVisibilityCache() {
+        customCardContentCache = CarPlayClusterDisplay.usesCustomTurnCard(AirPlayPersistence.loadClusterContent(context))
         cardVisibleCache = mapOf(
             "eta" to AirPlayPersistence.loadClusterCardVisible(context, "eta"),
         )

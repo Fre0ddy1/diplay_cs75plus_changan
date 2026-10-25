@@ -1,0 +1,6 @@
+<?xml version='1.0' encoding='utf-8'?>
+<resources>
+    <string name="settings_changan_hud_title">长安 HUD 导航（实验性）</string>
+    <string name="settings_changan_hud_enabled">在 HUD 显示 CarPlay 导航</string>
+    <string name="settings_changan_hud_description">显示手机导航的转向、距离和路名。定制版默认开启，保留已保存的选择。请保持原厂高德在后台，先驻车验证 HUD 与仪表投影同时工作。</string>
+</resources>

@@ -802,6 +802,7 @@ object AirPlayPersistence {
             .edit()
             .putString(KEY_CLUSTER_CONTENT, content.name)
             .apply()
+        overlaySettingsListener?.invoke()
     }
 
     /** Fingers for the swipe-down that opens settings; some head units reserve three. */

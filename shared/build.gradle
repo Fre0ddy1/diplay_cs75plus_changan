@@ -33,6 +33,7 @@ android {
     }
 }
 dependencies {
+    api project(':vehicle-customization-api')
     implementation libs.androidx.app
     implementation libs.bouncycastle
     implementation libs.jmdns

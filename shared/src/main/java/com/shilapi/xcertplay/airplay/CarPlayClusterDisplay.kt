@@ -29,9 +29,8 @@ object CarPlayClusterDisplay {
         /**
          * The map stream with no card of ours.
          *
-         * Not offered in the settings page any more - it became an internal stepping stone when
-         * the dashboard was reduced to two choices (field 2026-10-24) - but kept so a stored value
-         * from an older build still resolves instead of silently falling back.
+         * Selectable in this customization so stored MAP preferences remain visible and local
+         * navigation cards can be disabled independently of the native instruction-card stream.
          */
         MAP(MAP_URL),
         /**

@@ -1289,6 +1289,7 @@ class CarPlayHostActivity : ComponentActivity() {
         com.shilapi.xcertplay.hud.BydNavigationOutputs.setTurnOverlayListener(clusterTurnOverlayListener)
         com.shilapi.xcertplay.hud.BydNavigationOutputs.setSongListener(clusterSongListener)
         com.shilapi.xcertplay.hud.BydNavigationOutputs.routeTraceListener = routeTraceListener
+        com.freddyq.diplay.customization.VehicleCustomizations.diagnosticListener = routeTraceListener
         mainHandler.removeCallbacks(refreshTurnOverlay)
         mainHandler.post(refreshTurnOverlay)
         maybeStartCarPlay()
@@ -1602,13 +1603,9 @@ class CarPlayHostActivity : ComponentActivity() {
             )
             presentation.setSong(clusterSong)
             presentation.setSongArtwork(CarPlayMediaKeys.currentArtwork())
-            // Every card here is drawn by us, and which of them exists is decided by the
-            // presentation itself: the turn card only in nav-only mode, the ETA and song cards in
-            // both modes, each of the drawn cards only for the switches the driver turned on.
-            // The "dashboard shows" content setting deliberately plays no part - it only picks
-            // which URL the phone streams, never whether our cards exist (field requirement
-            // 2026-10-24: a card must not appear over CarPlay's own picture just because the
-            // driver left its switch on).
+            // Feed current guidance to the presentation even while local cards are disabled:
+            // it caches the data for later settings changes and for the native FLY_CARD window.
+            // The presentation applies content, mode and individual-card visibility together.
             if (changanCards) {
                 presentation.setTurnCardGuidance(clusterTurnGuidance)
                 presentation.setEtaGuidance(clusterTurnGuidance)
@@ -2097,6 +2094,7 @@ class CarPlayHostActivity : ComponentActivity() {
             sessionLog?.append("Activity finishing: dashboard window hidden")
         }
         AirPlayPersistence.overlaySettingsListener = null
+        com.freddyq.diplay.customization.VehicleCustomizations.diagnosticListener = null
         com.shilapi.xcertplay.hud.BydNavigationOutputs.setTurnOverlayListener(null)
         com.shilapi.xcertplay.hud.BydNavigationOutputs.setSongListener(null)
         clusterMonitor?.stop()
@@ -5859,6 +5857,7 @@ class CarPlayHostActivity : ComponentActivity() {
         }
         clusterSwipePosition = nextPos
         if (direction != "auto") {
+            com.freddyq.diplay.customization.VehicleCustomizations.onProjectionManualControl()
             // The driver took over: the position machine now belongs to them, and auto-switch
             // waits for the next navigation transition instead of undoing the choice.
             clusterPositionFromAuto = false
@@ -6057,10 +6056,17 @@ class CarPlayHostActivity : ComponentActivity() {
             val retryDelaysMs = longArrayOf(WATCHER_FIRST_SEND_DELAY_MS, 15_000L, 30_000L, 60_000L)
             var attempts = 0
             var lastSentAtMs = 0L
+            var channelWasOpen = false
             while (!shuttingDown.get() && !isFinishing && !isDestroyed) {
                 // 1) Sample the channel. Read-only: incall's own report, nothing goes out here.
                 val open = runCatching { InCallClusterBridge.reportsProjecting() }.getOrDefault(false)
                 watcherChannelOpen = open
+                if (open && !channelWasOpen) mainHandler.post {
+                    if (!shuttingDown.get() && !isFinishing && !isDestroyed) {
+                        InCallClusterBridge.adoptObservedProjection(this)
+                    }
+                }
+                channelWasOpen = open
 
                 // 2) Sample the dashboard display. Runs every period regardless of the channel
                 //    state, and never waits on anything.
@@ -6108,7 +6114,7 @@ class CarPlayHostActivity : ComponentActivity() {
                                         "${watcherWidth}x${watcherHeight}，暂缓完整激活序列",
                                 )
                             }
-                        } else {
+                        } else if (com.freddyq.diplay.customization.VehicleCustomizations.shouldActivateProjectionChannel()) {
                             attempts++
                             lastSentAtMs = now
                             clusterPrewarmAtMs = now
@@ -6118,7 +6124,9 @@ class CarPlayHostActivity : ComponentActivity() {
                             )
                             mainHandler.post {
                                 if (!shuttingDown.get() && !isFinishing && !isDestroyed) {
-                                    InCallClusterBridge.openProjection(this)
+                                    if (com.freddyq.diplay.customization.VehicleCustomizations.shouldActivateProjectionChannel()) {
+                                        InCallClusterBridge.openProjection(this, automatic = true)
+                                    } else appendLog("Cluster watcher: customization recovery active; defer source reactivation")
                                 }
                             }
                         }

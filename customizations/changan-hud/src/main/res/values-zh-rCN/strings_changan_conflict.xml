@@ -1,0 +1,4 @@
+<resources>
+    <string name="settings_changan_hud_conflict_recovery">原厂巡航覆盖后恢复 HUD</string>
+    <string name="settings_changan_hud_conflict_description">手机导航有效时，在外部零图标或退出包之后恢复当前指引。不关闭原厂应用、不改原厂设置，效果待实车验证。</string>
+</resources>

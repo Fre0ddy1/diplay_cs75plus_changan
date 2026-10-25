@@ -1,0 +1,5 @@
+<resources>
+    <string name="settings_changan_projection_title">长安仪表投屏</string>
+    <string name="settings_changan_projection_fullscreen">启动时自动切换仪表全屏</string>
+    <string name="settings_changan_projection_description">自动投屏收到小屏请求后，补发一次全屏切换；之后仍可手动切换。下次自动投屏生效。</string>
+</resources>

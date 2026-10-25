@@ -1,0 +1,5 @@
+<resources>
+    <string name="settings_changan_projection_title">Changan cluster projection</string>
+    <string name="settings_changan_projection_fullscreen">Start cluster projection in full screen</string>
+    <string name="settings_changan_projection_description">During automatic projection, switch once to full screen after the cluster requests its small navigation view. Later manual choices remain available. Applies on the next automatic projection.</string>
+</resources>

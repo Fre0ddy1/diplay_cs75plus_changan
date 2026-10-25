@@ -1,0 +1,6 @@
+<?xml version='1.0' encoding='utf-8'?>
+<resources>
+    <string name="settings_changan_hud_title">Changan HUD navigation (experimental)</string>
+    <string name="settings_changan_hud_enabled">Show CarPlay navigation on the HUD</string>
+    <string name="settings_changan_hud_description">For the Changan custom edition. Show phone navigation arrows, distance and road names. Enabled by default; your saved choice is kept. Keep factory AMap in the background and first verify HUD and dashboard projection together while parked.</string>
+</resources>

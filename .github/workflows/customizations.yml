@@ -1,0 +1,38 @@
+name: CA75PLUS customization checks
+on:
+  push:
+    branches: [main, master, 'codex/**']
+  pull_request:
+  workflow_dispatch:
+permissions:
+  contents: read
+jobs:
+  customization:
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    steps:
+      - uses: actions/checkout@v4
+      - run: python3 scripts/check_public_tree.py
+      - run: python3 scripts/check_customization_integration.py
+      - uses: actions/setup-java@v4
+        with:
+          distribution: temurin
+          java-version: '25'
+      - uses: android-actions/setup-android@v3
+        with:
+          packages: platform-tools platforms;android-37.0 build-tools;36.0.0 ndk;28.2.13676358
+      - uses: gradle/actions/setup-gradle@v4
+      - name: Test module contracts and compile their application integration
+        run: ./gradlew :vehicle-customization-api:testDebugUnitTest :changan-hud:testDebugUnitTest :changan-projection:testDebugUnitTest :mobile:assembleDebug :mobile:lintDebug --stacktrace
+      - name: Focused projection and content regressions
+        run: ./gradlew :common:testDebugUnitTest --tests com.shilapi.xcertplay.InCallProjectionControlTest --tests com.shilapi.xcertplay.ClusterCardContentSelectionTest --stacktrace
+      - uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: customization-test-reports
+          path: |
+            customizations/api/build/reports/tests/
+            customizations/changan-hud/build/reports/tests/
+            customizations/changan-projection/build/reports/tests/
+            common/build/reports/tests/
+            mobile/build/reports/lint-results-debug.html
