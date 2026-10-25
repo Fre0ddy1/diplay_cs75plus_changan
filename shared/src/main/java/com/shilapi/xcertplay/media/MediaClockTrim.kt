@@ -80,12 +80,13 @@ internal class MediaClockTrim(
         if (stressedSinceNs == 0L) stressedSinceNs = nowNs
         if (nowNs - stressedSinceNs < RESET_HOLD_NS) return
         if (lastResetNs != 0L && nowNs - lastResetNs < RESET_COOLDOWN_NS) return
-        // The offset cannot be right while the track is pinned at an end stop: drop it and let the
-        // proportional term pull the level back into the band. Keep correcting for a short while
-        // even if the averaged level returns to the band, otherwise the deadband would freeze the
-        // wrong rate again before the slew-limited correction has moved more than a step.
-        integral = 0.0
-        learnedTrim = 0.0
+        // The offset cannot be right while the track is pinned at an end stop: drop it and lean
+        // the rate the right way AT ONCE. Forgetting it alone started the proportional term from
+        // zero while the queue stayed full, the write thread blocked for 600 ms and the music
+        // stuttered (field 2026-10-25: queue 55 k of 57.6 k frames, rate 47 376 Hz).
+        integral = if (overflow) MAX_TRIM * 0.5 else -MAX_TRIM * 0.5
+        learnedTrim = integral
+        rate = (sampleRate * (1.0 + integral)).roundToInt()
         lastResetNs = nowNs
         stressedSinceNs = 0L
         forceUntilNs = nowNs + FORCE_NS
@@ -103,8 +104,12 @@ internal class MediaClockTrim(
     fun noteOverflow(nowNs: Long) {
         if (lastOverflowAtNs != 0L && nowNs - lastOverflowAtNs < OVERFLOW_NOTICE_COOLDOWN_NS) return
         lastOverflowAtNs = nowNs
-        integral = 0.0
-        learnedTrim = 0.0
+        // The track is full, so the music is playing slower than it arrives. Lean the rate
+        // positive immediately: waiting for the averaged level to cross the deadband took
+        // seconds while the write thread was already blocking (field 2026-10-25).
+        integral = MAX_TRIM * 0.5
+        learnedTrim = integral
+        rate = (sampleRate * (1.0 + integral)).roundToInt()
         stressedSinceNs = 0L
         forceUntilNs = nowNs + FORCE_NS
         lastUpdateNs = null

@@ -2121,6 +2121,10 @@ private class AudioRenderer(
             if (writeMs >= BLOCKED_WRITE_MS) {
                 blockedWritesThisWindow++
                 if (writeMs > longestBlockedWriteMs) longestBlockedWriteMs = writeMs
+                // A blocked write means the track was full: the trim must speed the music up now,
+                // not wait for the averaged level to react. Measured 629-639 ms blocks on
+                // 2026-10-25 with the queue at 55 k of 57.6 k frames.
+                if (mappedChannel == AudioChannel.MEDIA) clockTrim?.noteOverflow(System.nanoTime())
             }
             if (count < 0) {
                 writeErrorsThisWindow++
