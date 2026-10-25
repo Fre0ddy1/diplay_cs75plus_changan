@@ -57,13 +57,13 @@ internal sealed class ChanganHudPacket {
 
 internal data class ChanganHudProjection(val revision: Long = 0, val quietUntilNs: Long = Long.MIN_VALUE)
 
-/** Single-worker session policy. Only fresh phone navigation may start or restore output. */
+/** Change-driven guidance remains valid until the phone or CarPlay session ends it. */
 internal class ChanganHudSession(
     private val nanoTime: () -> Long = System::nanoTime,
     private val projection: () -> ChanganHudProjection = { ChanganHudProjection() },
     private val emit: (ChanganHudPacket) -> Boolean,
 ) {
-    private val route = PhoneNavigationDecoder(nanoTime)
+    private val route = PhoneNavigationDecoder(nanoTime, retainGuidanceUntilSessionEnds = true)
     private var accepting = false
     private var ownsOutput = false
     private var needsStart = true

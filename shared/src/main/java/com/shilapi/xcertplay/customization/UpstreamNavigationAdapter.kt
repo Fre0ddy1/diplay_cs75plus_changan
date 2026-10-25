@@ -6,8 +6,17 @@ import com.shilapi.xcertplay.hud.BydHudRouteState
 import com.shilapi.xcertplay.hud.NavigationOutputWorker
 
 /** The only adapter that knows upstream's internal parser and icon mapping types. */
-class PhoneNavigationDecoder(nanoTime: () -> Long = System::nanoTime) {
-    private val route = BydHudRouteState(nanoTime)
+class PhoneNavigationDecoder(
+    nanoTime: () -> Long = System::nanoTime,
+    retainGuidanceUntilSessionEnds: Boolean = false,
+) {
+    // Stationary AMap can send only changes, with no route heartbeat for over 30 s.
+    // Opt-in consumers must clear on session end. The upstream parser keeps its default policy.
+    private val route = if (retainGuidanceUntilSessionEnds) {
+        BydHudRouteState(nanoTime, staleRouteNs = Long.MAX_VALUE)
+    } else {
+        BydHudRouteState(nanoTime)
+    }
 
     fun accept(messageId: Int, payload: ByteArray) { route.accept(messageId, payload) }
     fun clear() { route.clear() }

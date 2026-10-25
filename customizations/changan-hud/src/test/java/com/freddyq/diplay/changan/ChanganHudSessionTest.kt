@@ -81,15 +81,15 @@ class ChanganHudSessionTest {
         assertEquals(count, packets.size)
     }
 
-    @Test fun `stale data clears and maneuver-only traffic cannot keep it alive`() {
+    @Test fun `stationary change-driven guidance remains visible beyond thirty seconds`() {
         populate()
-        now = 30_000_000_000
-        session.onFrame(0x5202, tlvs(tlv(1,0,7),tlv(3,2)), true)
-        assertEquals(ChanganHudPacket.State(9), packets.last())
-        val count = packets.size
-        now += 1_000_000_000
-        session.tick(true)
-        assertEquals(count, packets.size)
+        for (seconds in listOf(30L, 60L, 90L, 600L, 3600L)) {
+            now = seconds * 1_000_000_000L
+            session.tick(true)
+            assertEquals(ChanganHudFrame(3,159,"HUD测试路A","当前路",0), (packets.last() as ChanganHudPacket.Guidance).frame)
+        }
+        assertEquals(1, packets.count { it == ChanganHudPacket.State(8) })
+        assertFalse(packets.contains(ChanganHudPacket.State(9)))
     }
 
     @Test fun `temporary empty maneuver list does not flash the HUD`() {
@@ -136,11 +136,51 @@ class ChanganHudSessionTest {
         assertTrue(packets.isEmpty())
     }
 
-    @Test fun `malformed traffic cannot refresh a stale route`() {
+    @Test fun `malformed traffic does not corrupt retained stationary guidance`() {
         populate()
-        now = 30_000_000_000
+        now = 60_000_000_000
         session.onFrame(0x5201,byteArrayOf(0,8,0,1,1),true)
-        assertEquals(ChanganHudPacket.State(9),packets.last())
+        assertEquals(ChanganHudFrame(3,159,"HUD测试路A","当前路",0), (packets.last() as ChanganHudPacket.Guidance).frame)
+        assertFalse(packets.contains(ChanganHudPacket.State(9)))
+    }
+
+    @Test fun `phone cancellation after prolonged silence clears and cannot resurrect`() {
+        populate()
+        now = 600_000_000_000L
+        session.tick(true)
+        session.onFrame(0x5201, tlv(1,0), true)
+        assertEquals(ChanganHudPacket.State(9), packets.last())
+        val count = packets.size
+        now += 600_000_000_000L
+        session.onFrame(0x5202, tlvs(tlv(1,0,7),tlv(3,2)), true)
+        session.tick(true)
+        assertEquals(count, packets.size)
+    }
+
+    @Test fun `disconnect after prolonged silence clears and reconnect cannot reuse cached route`() {
+        populate()
+        now = 600_000_000_000L
+        session.tick(true)
+        session.stop()
+        assertEquals(ChanganHudPacket.State(9), packets.last())
+        val count = packets.size
+        session.onFrame(0x5201, tlv(0x0a,0,0,0,27), true)
+        session.start()
+        session.tick(true)
+        assertEquals(count, packets.size)
+    }
+
+    @Test fun `projection restores stationary guidance after prolonged silence`() {
+        populate()
+        now = 600_000_000_000L
+        val count = packets.size
+        projection = ChanganHudProjection(1, now + 1_500_000_000L)
+        session.tick(true)
+        assertEquals(count, packets.size)
+        now += 2_000_000_000L
+        session.tick(true)
+        assertEquals(listOf(ChanganHudPacket.State(8), packets[1]), packets.takeLast(2))
+        assertFalse(packets.contains(ChanganHudPacket.State(9)))
     }
 
     @Test fun `UTF8 road truncation preserves Chinese and emoji boundaries`() {

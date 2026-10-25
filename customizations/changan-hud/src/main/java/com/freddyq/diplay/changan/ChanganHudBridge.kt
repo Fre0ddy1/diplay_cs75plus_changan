@@ -56,7 +56,7 @@ object ChanganHudBridge {
         worker.start {
             val output = runtime ?: Runtime(context.applicationContext).also { runtime = it }
             output.session.start()
-            diagnostic("session ready enabled=${ChanganHudSettings.enabled(output.app)}")
+            diagnostic("session ready enabled=${ChanganHudSettings.enabled(output.app)} retention=session")
         }
         if (ticks?.isCancelled != false) {
             ticks = timer.scheduleAtFixedRate({ worker.submit { tick() } }, 1, 1, TimeUnit.SECONDS)
