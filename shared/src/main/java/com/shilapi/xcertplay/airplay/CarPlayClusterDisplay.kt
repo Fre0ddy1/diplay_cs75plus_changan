@@ -91,6 +91,21 @@ object CarPlayClusterDisplay {
     const val STREAM_SCALE_PERCENT = 100
 
     /**
+     * Panel pixels hidden behind the dashboard's moulding on the UNI-V.
+     *
+     * The cluster reports 1920x720, but the bottom 110 px sit under the plastic (measured by the
+     * driver 2026-10-25). Declaring the full height put the car marker at y 360 - in the hidden
+     * strip - so the phone is told the VISIBLE height instead and the picture is drawn from the
+     * panel's top edge, 1:1. Applies to the generic (Changan) path only; the BYD layout declares
+     * its own fixed stream.
+     */
+    const val PANEL_BOTTOM_OCCLUSION_PX = 110
+
+    /** Height actually visible on the panel, in panel pixels. */
+    fun visiblePanelHeight(panelHeight: Int): Int =
+        (panelHeight - PANEL_BOTTOM_OCCLUSION_PX).coerceAtLeast(1)
+
+    /**
      * The instruction-card display: a small, separate type-111 screen (own UUID) whose stream
      * DiPlay shows as it arrives at the panel's upper-left, over the map stream. The card needs
      * no input and no features, exactly like the map cluster display. The safe area stays at the

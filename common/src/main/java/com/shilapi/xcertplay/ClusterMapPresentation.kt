@@ -256,6 +256,16 @@ internal class ClusterMapPresentation(
             FrameLayout.LayoutParams(plan.width, plan.height, Gravity.TOP or Gravity.LEFT).apply {
                 leftMargin = plan.left; topMargin = plan.top
             }
+        // The UNI-V's bottom 110 px sit behind the moulding (field measurement 2026-10-25). The
+        // navigation picture is therefore drawn from the panel's TOP edge at its visible height
+        // instead of being stretched over the whole panel - that is what keeps the car marker in
+        // the middle of what the driver can actually see.
+        val navVisibleHeight = if (plan == null) CarPlayClusterDisplay.visiblePanelHeight(size.y) else size.y
+        val navParams = if (plan == null) {
+            FrameLayout.LayoutParams(size.x, navVisibleHeight, Gravity.TOP or Gravity.LEFT)
+        } else {
+            videoParams
+        }
         if (plan != null) {
             val textureView = TextureView(context)
             fun transform() {
@@ -328,7 +338,7 @@ internal class ClusterMapPresentation(
             navView.surfaceTextureListener = object : TextureView.SurfaceTextureListener {
                 override fun onSurfaceTextureAvailable(texture: SurfaceTexture, width: Int, height: Int) {
                     Log.i(TAG, "cluster nav surface created")
-                    texture.setDefaultBufferSize(size.x, size.y)
+                    texture.setDefaultBufferSize(size.x, navVisibleHeight)
                     navOutputSurface = Surface(texture).also(onNavSurface)
                     // The TextureViews are created asynchronously, so a setMode() issued while
                     // they were still null would have been lost (e.g. cold-start auto-project to
@@ -349,7 +359,7 @@ internal class ClusterMapPresentation(
                     return true
                 }
             }
-            root.addView(navView, videoParams)
+            root.addView(navView, navParams)
             // The instruction-card window (FLY_CARD) is NOT built here.
             //
             // It exists only while the phone is actually sending that stream AND there is
@@ -684,8 +694,15 @@ internal class ClusterMapPresentation(
                 topMargin = CARD_TOP_PX
             }
         }
+        // The visible panel ends 110 px above the reported bottom on the UNI-V (moulding), so the
+        // card must be kept inside what the driver can see, not inside the raw display size.
+        val panelHeight = if (DiLink51ClusterLayout.supported()) {
+            projectionSize.y
+        } else {
+            CarPlayClusterDisplay.visiblePanelHeight(projectionSize.y)
+        }
         val maxLeft = (projectionSize.x - cardVideoWidth).coerceAtLeast(0)
-        val maxTop = (projectionSize.y - cardVideoHeight).coerceAtLeast(0)
+        val maxTop = (panelHeight - cardVideoHeight).coerceAtLeast(0)
         val savedLeft = AirPlayPersistence.loadClusterCardX(context, CARD_WINDOW_CARD_ID)
         val savedTop = AirPlayPersistence.loadClusterCardY(context, CARD_WINDOW_CARD_ID)
         val left = savedLeft.coerceIn(0, maxLeft)
