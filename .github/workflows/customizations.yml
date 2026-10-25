@@ -23,7 +23,9 @@ jobs:
           packages: platform-tools platforms;android-37.0 build-tools;36.0.0 ndk;28.2.13676358
       - uses: gradle/actions/setup-gradle@v4
       - name: Test module contracts and compile their application integration
-        run: ./gradlew :vehicle-customization-api:testDebugUnitTest :changan-hud:testDebugUnitTest :mobile:assembleDebug :mobile:lintDebug --stacktrace
+        run: ./gradlew :vehicle-customization-api:testDebugUnitTest :changan-hud:testDebugUnitTest :changan-projection:testDebugUnitTest :mobile:assembleDebug :mobile:lintDebug --stacktrace
+      - name: Focused InCall projection contract tests
+        run: ./gradlew :common:testDebugUnitTest --tests com.shilapi.xcertplay.InCallProjectionControlTest --stacktrace
       - uses: actions/upload-artifact@v4
         if: always()
         with:
@@ -31,4 +33,6 @@ jobs:
           path: |
             customizations/api/build/reports/tests/
             customizations/changan-hud/build/reports/tests/
+            customizations/changan-projection/build/reports/tests/
+            common/build/reports/tests/
             mobile/build/reports/lint-results-debug.html

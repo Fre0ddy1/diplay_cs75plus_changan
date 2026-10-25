@@ -13,6 +13,60 @@ import org.robolectric.annotation.Config
 class VehicleCustomizationRegistryTest {
     private val registry = VehicleCustomizationRegistry()
     private val app get() = RuntimeEnvironment.getApplication()
+    @Test fun `empty registry retains upstream projection retries`() {
+        assertTrue(registry.shouldRetryAutomaticProjection())
+    }
+    @Test fun `an opted in customization may stop mode reassertions`() {
+        registry.register(object : VehicleCustomization {
+            override val id = "settled"
+            override fun shouldRetryAutomaticProjection() = false
+        })
+        assertFalse(registry.shouldRetryAutomaticProjection())
+    }
+    @Test fun `broken retry policy does not disable upstream retries`() {
+        registry.register(object : VehicleCustomization {
+            override val id = "broken-retry"
+            override fun shouldRetryAutomaticProjection(): Boolean = error("failure")
+        })
+        assertTrue(registry.shouldRetryAutomaticProjection())
+    }
+
+    @Test fun `projection lifecycle preserves order and passes the same control endpoint`() {
+        val events = mutableListOf<String>()
+        val endpoint = object : ProjectionControl {
+            override fun requestLayout(layout: ProjectionLayout): Boolean { events += "request=$layout"; return true }
+        }
+        registry.register(object : VehicleCustomization {
+            override val id = "projection"
+            override fun onProjectionStarted(context: Context, automatic: Boolean, control: ProjectionControl) {
+                assertSame(endpoint,control)
+                assertSame(app,context)
+                events += "start=$automatic"
+            }
+            override fun onProjectionLayoutRequested(layout: ProjectionLayout) { events += "layout=$layout" }
+            override fun onProjectionManualControl() { events += "manual" }
+            override fun onProjectionReleased() { events += "released" }
+        })
+        registry.onProjectionStarted(app,true,endpoint)
+        registry.onProjectionLayoutRequested(ProjectionLayout.CARD)
+        registry.onProjectionManualControl()
+        registry.onProjectionReleased()
+        assertEquals(listOf("start=true","layout=CARD","manual","released"),events)
+    }
+
+    @Test fun `one projection extension failure does not suppress the following extension`() {
+        var seen = false
+        registry.register(object : VehicleCustomization {
+            override val id = "broken-projection"
+            override fun onProjectionLayoutRequested(layout: ProjectionLayout) { error("failure") }
+        })
+        registry.register(object : VehicleCustomization {
+            override val id = "other-projection"
+            override fun onProjectionLayoutRequested(layout: ProjectionLayout) { seen = true }
+        })
+        registry.onProjectionLayoutRequested(ProjectionLayout.FULLSCREEN)
+        assertTrue(seen)
+    }
 
     @Test fun `session and projection events preserve order`() {
         val events = mutableListOf<String>()

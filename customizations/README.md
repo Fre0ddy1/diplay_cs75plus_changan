@@ -6,9 +6,10 @@
 |---|---|
 | `api/` (`:vehicle-customization-api`) | 会话、导航、投屏、设置与诊断的通用扩展契约及分发器，不含车厂协议 |
 | `changan-hud/` (`:changan-hud`) | 长安广播协议、状态机、开关、资源、初始化 provider 和测试 |
+| `changan-projection/` (`:changan-projection`) | 自动启动后的单次全屏切换策略、设置、初始化与测试 |
 | `shared/.../customization/UpstreamNavigationAdapter.kt` | 复用上游内部解析器、图标映射及串行工作队列的单一适配层 |
 
-模块依赖方向为：`shared → api`，`changan-hud → shared + api`，`common → changan-hud + shared`。shared 不依赖具体长安实现。初始化 provider 由模块清单合并到应用，向注册表注册；设置页按通用描述渲染，因此增加其他定制设置无需再写车型判断。
+模块依赖方向为：`shared → api`，`changan-hud → shared + api`，`changan-projection → api`，`common → 两个长安模块 + shared`。shared 不依赖具体长安实现。初始化 provider 由模块清单合并到应用，向注册表注册；设置页按通用描述渲染，因此增加其他定制设置无需再写车型判断。
 
 ## 接入点
 
@@ -29,7 +30,7 @@
 ```sh
 python3 scripts/check_public_tree.py
 python3 scripts/check_customization_integration.py
-./gradlew :vehicle-customization-api:testDebugUnitTest :changan-hud:testDebugUnitTest :mobile:assembleDebug :mobile:lintDebug
+./gradlew :vehicle-customization-api:testDebugUnitTest :changan-hud:testDebugUnitTest :changan-projection:testDebugUnitTest :mobile:assembleDebug :mobile:lintDebug
 ```
 
 `check_customization_integration.py` 核对模块依赖、初始化和关键调用点，避免合并后静默丢失入口。它是结构检查，不能证明运行时控制流或车机兼容性。还需完整回归及驻车实测。
@@ -41,3 +42,5 @@ python3 scripts/check_customization_integration.py
 开关在本定制版始终显示，首次默认开启，不按 Build.MODEL 或 Android 版本隐藏/阻断。用户保存的关闭选择会保留。没有 interactive 接收包时只记录诊断，不循环发送；设置仍显示。已实测的硬件是梧桐 S311_MCA，去除显示条件不代表其他车机已完成兼容性验证。
 
 输出跟随 CarPlay 会话，切换前台应用本身不结束。实际手机导航数据才触发输出，没有导航时不清理其他来源。协议和实车验收边界见 `docs/CHANGAN_HUD.md`。
+
+自动全屏策略独立于 HUD，接入通用投屏启动、布局请求、手动接管、释放与重试策略接口。仅在实际收到小屏请求后补发一次全屏请求，不把 LVDS 3、扩展屏模式 2、滑动事件来源 1 或完成状态 1 混成一个枚举。详见 `docs/CHANGAN_PROJECTION.md`。

@@ -26,6 +26,8 @@ rootProject.name = "xcertplay"
 include(":vehicle-customization-api", ":changan-hud")
 project(":vehicle-customization-api").projectDir = file("customizations/api")
 project(":changan-hud").projectDir = file("customizations/changan-hud")
+include(":changan-projection")
+project(":changan-projection").projectDir = file("customizations/changan-projection")
 include(":common")
 include(":mobile")
 include(":automotive")

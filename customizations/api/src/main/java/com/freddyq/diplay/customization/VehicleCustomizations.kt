@@ -11,6 +11,11 @@ interface VehicleCustomization {
     fun onNavigationFrame(messageId: Int, payload: ByteArray) {}
     fun onSessionEnded() {}
     fun onProjectionNavigationState(state: Int) {}
+    fun onProjectionStarted(context: Context, automatic: Boolean, control: ProjectionControl) {}
+    fun onProjectionLayoutRequested(layout: ProjectionLayout) {}
+    fun onProjectionManualControl() {}
+    fun onProjectionReleased() {}
+    fun shouldRetryAutomaticProjection(): Boolean = true
     fun settings(context: Context): List<CustomizationSettingsGroup> = emptyList()
 }
 
@@ -51,6 +56,17 @@ open class VehicleCustomizationRegistry {
 
     fun onSessionEnded() = dispatch { it.onSessionEnded() }
     fun onProjectionNavigationState(state: Int) = dispatch { it.onProjectionNavigationState(state) }
+    fun onProjectionStarted(context: Context, automatic: Boolean, control: ProjectionControl) =
+        dispatch { it.onProjectionStarted(context.applicationContext, automatic, control) }
+    fun onProjectionLayoutRequested(layout: ProjectionLayout) = dispatch { it.onProjectionLayoutRequested(layout) }
+    fun onProjectionManualControl() = dispatch { it.onProjectionManualControl() }
+    fun onProjectionReleased() = dispatch { it.onProjectionReleased() }
+    fun shouldRetryAutomaticProjection(): Boolean = extensions.all { extension ->
+        try { extension.shouldRetryAutomaticProjection() } catch (error: Exception) {
+            Log.w(TAG, "${extension.id} retry policy failed", error)
+            true
+        }
+    }
 
     fun settings(context: Context): List<CustomizationSettingsGroup> = extensions.flatMap { extension ->
         try {

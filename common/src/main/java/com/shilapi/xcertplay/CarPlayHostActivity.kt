@@ -4134,6 +4134,11 @@ class CarPlayHostActivity : ComponentActivity() {
             // is recovered by the driver's swipe, which always runs the full sequence and is a
             // deliberate action, so the announcement it may cause is expected.
             appendLog("Auto project: 重试 ${attempt + 1}/${autoProjectRetryDelaysMs.size}，静默重申仪表盘投影")
+            if (!com.freddyq.diplay.customization.VehicleCustomizations.shouldRetryAutomaticProjection()) {
+                autoProjectLadderActive = false
+                appendLog("Auto project: 定制启动布局已处理，停止模式重申")
+                return@postDelayed
+            }
             InCallClusterBridge.reassertProjection(this)
             scheduleAutoProjectRetry(mirror, attempt + 1)
         }, delay)
@@ -5136,6 +5141,7 @@ class CarPlayHostActivity : ComponentActivity() {
         }
         clusterSwipePosition = nextPos
         if (direction != "auto") {
+            com.freddyq.diplay.customization.VehicleCustomizations.onProjectionManualControl()
             // The driver took over: cancel any pending auto-project retry ladder, so it can never
             // fight a manual swipe (it would re-send the open sequence on top of the driver's
             // choice). autoProjectTriggered stays true: auto projection does not re-fire until
@@ -5317,7 +5323,7 @@ class CarPlayHostActivity : ComponentActivity() {
         // head-unit's projection state machine.
         if (bridgeAvailable) {
             appendLog("Cluster activation: InCallClusterBridge.openProjection()")
-            InCallClusterBridge.openProjection(this)
+            InCallClusterBridge.openProjection(this, automatic = direction == "auto")
             // NOTE: a previous attempt to suppress the incall "全屏镜像已开启" voice by sending
             // InCallClusterSdk.sendNavigateStatus(1) (tx22) ~8 s after the open sequence was
             // REVERTED after field testing: tx22 switches the head-unit out of the whole-screen

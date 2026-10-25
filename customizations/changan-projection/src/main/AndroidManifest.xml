@@ -1,0 +1,8 @@
+<manifest xmlns:android="http://schemas.android.com/apk/res/android">
+    <application>
+        <provider
+            android:name="com.freddyq.diplay.changan.projection.ChanganProjectionInitializer"
+            android:authorities="${applicationId}.customizations.changan-projection"
+            android:exported="false" />
+    </application>
+</manifest>
