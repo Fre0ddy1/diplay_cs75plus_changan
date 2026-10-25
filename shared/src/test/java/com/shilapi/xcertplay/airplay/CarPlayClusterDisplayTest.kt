@@ -35,11 +35,12 @@ class CarPlayClusterDisplayTest {
         assertEquals(1920, view["widthPixels"])
         assertEquals(720, view["heightPixels"])
         val safe = view["safeArea"] as Map<*, *>
-        // Full panel since 2026-10-25 (UNI-V field request): the BYD centre window is gone.
+        // Full width, but the UNI-V hides the bottom 110 px behind its moulding (2026-10-25):
+        // the declared area is the visible 1920x610, while the stream itself stays 1920x720.
         assertEquals(0, safe["originXPixels"])
         assertEquals(0, safe["originYPixels"])
         assertEquals(1920, safe["widthPixels"])
-        assertEquals(720, safe["heightPixels"])
+        assertEquals(610, safe["heightPixels"])
         assertEquals(true, safe["drawUIOutsideSafeArea"])
 
         // The main screen keeps its touch and knob features.
@@ -133,12 +134,12 @@ class CarPlayClusterDisplayTest {
         assertEquals(30.0, farLeftHigher.first, 0.01)
         assertEquals(40.0, farLeftHigher.second, 0.01)
 
-        // The advertised area is the full panel and stays inside it.
+        // The advertised area is the full width with the hidden bottom strip excluded.
         val safe = CarPlayClusterDisplay.config(1920, 720, scalePercent = 100).safeArea!!
         assertEquals(0, safe.left)
         assertEquals(0, safe.right)
         assertEquals(0, safe.top)
-        assertEquals(0, safe.bottom)
+        assertEquals(110, safe.bottom)
     }
 
     @Test
@@ -153,9 +154,9 @@ class CarPlayClusterDisplayTest {
     fun nearAnEdgeTheSafeAreaShrinksAroundTheMarker() {
         val top = CarPlayClusterDisplay.config(1000, 1000, scalePercent = 100, verticalStep = -3).safeArea!!
 
-        // Marker at 20 % from the top: the area reaches the top edge and stays centred on it.
+        // Marker at 14.5 % from the top: the area reaches the top edge and stays centred on it.
         assertEquals(0, top.top)
-        assertEquals(400, 1000 - top.top - top.bottom)
+        assertEquals(290, 1000 - top.top - top.bottom)
         assertEquals(20.0, CarPlayClusterDisplay.markerPercent(0, -3).second, 0.001)
     }
 

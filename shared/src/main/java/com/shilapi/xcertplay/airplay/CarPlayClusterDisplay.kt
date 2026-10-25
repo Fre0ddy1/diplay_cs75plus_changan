@@ -71,11 +71,22 @@ object CarPlayClusterDisplay {
     val horizontalSteps = -4..4 // negative = left
     val verticalSteps = -3..3 // negative = up
 
-    /** Where the car marker lands, in percent of the panel (x from the left, y from the top). */
-    fun markerPercent(horizontalStep: Int, verticalStep: Int): Pair<Double, Double> {
+    /**
+     * Where the car marker lands, in percent of the panel (x from the left, y from the top).
+     *
+     * [bottomOcclusionPx] is the slice of the panel the dashboard hides (UNI-V moulding), so the
+     * marker centres on the part the driver can actually see.
+     */
+    fun markerPercent(
+        horizontalStep: Int,
+        verticalStep: Int,
+        bottomOcclusionPx: Int = 0,
+        panelHeight: Int = 720,
+    ): Pair<Double, Double> {
         val area = SAFE_AREA_PERCENT
+        val bottomPercent = if (panelHeight > 0) bottomOcclusionPx * 100.0 / panelHeight else 0.0
         val x = (area.left + 100 - area.right) / 2.0 + horizontalStep.coerceIn(horizontalSteps) * MARKER_STEP_PERCENT
-        val y = (area.top + 100 - area.bottom) / 2.0 + verticalStep.coerceIn(verticalSteps) * MARKER_STEP_PERCENT
+        val y = (area.top + 100 - bottomPercent) / 2.0 + verticalStep.coerceIn(verticalSteps) * MARKER_STEP_PERCENT
         return x.coerceIn(MARKER_MARGIN, 100 - MARKER_MARGIN) to y.coerceIn(MARKER_MARGIN, 100 - MARKER_MARGIN)
     }
 
@@ -193,14 +204,22 @@ object CarPlayClusterDisplay {
     // comes close to a panel edge, so the marker always sits at its centre.
     private fun safeArea(width: Int, height: Int, horizontalStep: Int, verticalStep: Int): AirPlayInsets {
         val area = SAFE_AREA_PERCENT
-        val (x, y) = markerPercent(horizontalStep, verticalStep)
+        // The bottom of the panel is hidden behind the dashboard moulding on the UNI-V, so the
+        // declared area stops above it: the phone then lays the car marker out in the middle of
+        // what the driver can see (field measurement 2026-10-25). The STREAM stays full size -
+        // only this area shrinks, so the map is neither cropped nor stretched.
+        val hiddenBottomPx = PANEL_BOTTOM_OCCLUSION_PX.coerceIn(0, (height - 1).coerceAtLeast(0))
+        val hiddenBottomPercent = if (height > 0) hiddenBottomPx * 100.0 / height else 0.0
+        val (x, y) = markerPercent(horizontalStep, verticalStep, hiddenBottomPx, height)
         val halfWidth = minOf((100 - area.left - area.right) / 2.0, x, 100 - x)
-        val halfHeight = minOf((100 - area.top - area.bottom) / 2.0, y, 100 - y)
+        val halfHeight = minOf((100 - area.top - hiddenBottomPercent) / 2.0, y, 100 - y)
         return AirPlayInsets(
-            top = (height * (y - halfHeight) / 100).toInt(),
-            bottom = (height * (100 - y - halfHeight) / 100).toInt(),
-            left = (width * (x - halfWidth) / 100).toInt(),
-            right = (width * (100 - x - halfWidth) / 100).toInt(),
+            // Round, not truncate: 720 - 110 must come out as exactly 610, and truncation of
+            // 109.99999 handed back 611 instead (seen in the unit test on 2026-10-25).
+            top = Math.round(height * (y - halfHeight) / 100).toInt(),
+            bottom = Math.round(height * (100 - y - halfHeight) / 100).toInt(),
+            left = Math.round(width * (x - halfWidth) / 100).toInt(),
+            right = Math.round(width * (100 - x - halfWidth) / 100).toInt(),
         )
     }
 

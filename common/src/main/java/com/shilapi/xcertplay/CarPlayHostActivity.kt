@@ -1834,10 +1834,7 @@ class CarPlayHostActivity : ComponentActivity() {
         }
         return CarPlayClusterDisplay.config(
             size.x,
-            // The bottom 110 px of the UNI-V panel sit under the moulding (field measurement
-            // 2026-10-25). Declaring them put the car marker in the hidden strip, so the phone is
-            // told the visible height only; the presentation draws the picture from the top edge.
-            CarPlayClusterDisplay.visiblePanelHeight(size.y),
+            size.y,
             // Changan Feiyu OS does not upscale the cluster stream: any scale below 100 %
             // only shrinks the picture (noticeably so in height). Pin the generic path to the
             // full panel size so the dashboard fills the panel regardless of the scale setting.
@@ -1846,7 +1843,7 @@ class CarPlayHostActivity : ComponentActivity() {
             AirPlayPersistence.loadClusterMarkerVerticalStep(this),
             AirPlayPersistence.loadClusterContent(this),
         ).also {
-            appendLog("Cluster map: requesting ${it.widthPixels}x${it.heightPixels} on ${size.x}x${size.y} (visible height ${CarPlayClusterDisplay.visiblePanelHeight(size.y)}) safeArea=${it.safeArea} url=${it.initialUrl}")
+            appendLog("Cluster map: requesting ${it.widthPixels}x${it.heightPixels} on ${size.x}x${size.y} safeArea=${it.safeArea} url=${it.initialUrl}")
         }
     }
 
