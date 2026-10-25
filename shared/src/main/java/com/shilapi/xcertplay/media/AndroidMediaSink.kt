@@ -1371,12 +1371,15 @@ private class VideoDecoder(
     }
 
     /**
-     * Publishes the REAL picture size once per codec, taken from the output format's crop
-     * rectangle (the coded size may be padded to a macroblock multiple). The instruction-card
-     * window sizes itself from this, so the card is never stretched to a guessed ratio.
+     * Publishes the REAL picture size, taken from the output format's crop rectangle (the coded
+     * size may be padded to a macroblock multiple).
+     *
+     * Reported on EVERY format change rather than once per codec: the instruction-card stream can
+     * change its canvas mid-session (a taller card for a junction view, for instance), and a
+     * window stuck at the first size would crop whatever does not fit (field question 2026-10-25).
+     * The window itself ignores repeats of the same size.
      */
     private fun reportOutputSize(format: MediaFormat) {
-        if (outputSizeReported) return
         val codedWidth = format.intOrNull(MediaFormat.KEY_WIDTH) ?: return
         val codedHeight = format.intOrNull(MediaFormat.KEY_HEIGHT) ?: return
         val left = format.intOrNull("crop-left") ?: 0
