@@ -722,20 +722,18 @@ internal class ClusterMapPresentation(
             "songCard=${songView != null} cardWindow=${cardTextureView != null}"
 
     /**
-     * Hands the dashboard back without destroying the TextureView/decoder surface.
+     * Window alpha hides the pixels without destroying the TextureView/decoder surface.
      *
-     * Alpha alone was not enough: the window stayed in the layout, the head unit kept the panel as
-     * our extended display and the car's own UI ended up squeezed into a small box in the top-left
-     * corner (field 2026-10-25: "the original Amap screen is only a 480x400 patch on the left").
-     * The decor view is therefore really gone while hidden - the surface stays attached, so
-     * showing it again is instant and no activation is needed.
+     * Do NOT also set the decor view to GONE. Tried on 2026-10-25: after showing the window again
+     * the TextureView was re-laid out at the wrong size, the instruction-card picture filled the
+     * whole dashboard and the main screen showed our dashboard text. Alpha is the field-proven
+     * hand-back and the occasional "car UI only in a corner" case is on the head unit's side.
      */
     fun setMapVisible(visible: Boolean) {
-        val window = window ?: return
-        val alpha = if (visible) 1f else 0f
-        if (window.attributes.alpha != alpha) window.attributes = window.attributes.apply { this.alpha = alpha }
-        val target = if (visible) View.VISIBLE else View.GONE
-        if (window.decorView.visibility != target) window.decorView.visibility = target
+        window?.let { window ->
+            val alpha = if (visible) 1f else 0f
+            if (window.attributes.alpha != alpha) window.attributes = window.attributes.apply { this.alpha = alpha }
+        }
     }
 
     /**
