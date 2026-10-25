@@ -41,6 +41,7 @@ object CarAmapLauncher {
     // (new CarPlay sessions after a settings change) never flash it again. A fresh app
     // process resets the flag automatically.
     @Volatile private var launchedInCurrentRun = false
+    private var lastReadiness: String? = null
 
     fun launchAndReturn(activity: Activity) =
         launchAndReturnTo(activity, DiPlayActivity::class.java)
@@ -56,7 +57,18 @@ object CarAmapLauncher {
         val pm = context.packageManager
         val candidates = CANDIDATES.filter { runCatching { pm.getPackageInfo(it, 0) }.isSuccess }
         if (candidates.isEmpty()) return true
-        return candidates.any { isProcessRunning(it) }
+        val states = candidates.map(::processPresence)
+        val state = when {
+            ProcessPresence.RUNNING in states -> ProcessPresence.RUNNING
+            ProcessPresence.UNKNOWN in states -> ProcessPresence.UNKNOWN
+            else -> ProcessPresence.ABSENT
+        }
+        val description = state.name
+        if (lastReadiness != description) {
+            lastReadiness = description
+            Log.i(TAG, "stock Amap presence=$state; unknown uses a bounded launcher grace, not the 25s gate")
+        }
+        return StockAmapProcessProbe.ready(state, SystemClock.elapsedRealtime() - lastLaunchAtMs)
     }
 
     fun launchAndReturnTo(activity: Activity, returnActivity: Class<*>) {
@@ -64,9 +76,9 @@ object CarAmapLauncher {
             // The in-run guard exists so reconnects never flash the Amap over DiPlay again,
             // but if the Amap process has since exited (user closed it, system killed it) the
             // cluster has no feed and the dashboard shows nothing. Re-launch in that case.
-            val stillRunning = CANDIDATES.any { isProcessRunning(it) }
-            if (stillRunning) {
-                Log.i(TAG, "stock Amap already launched in this run, skip")
+            val definitelyExited = CANDIDATES.all { processPresence(it) == ProcessPresence.ABSENT }
+            if (!definitelyExited) {
+                Log.i(TAG, "stock Amap launched in this run; running or visibility unknown, skip duplicate launch")
                 return
             }
             Log.i(TAG, "stock Amap launched earlier in this run but process exited, re-launching")
@@ -92,14 +104,12 @@ object CarAmapLauncher {
         // If the stock Amap process is already up, do not bring it to the foreground again:
         // re-launching only flashes the Amap over DiPlay and risks a double foreground hop.
         // The cluster projection needs the Amap running, not focused.
-        // getRunningAppProcesses() is restricted to the caller's own processes since Android
-        // 5.1, so on the API 28 head unit it can never see the Amap. /proc/<pid>/cmdline is
-        // world-readable and is the reliable probe here; the ActivityManager check is kept as
-        // an additional signal where the system exposes it.
+        // ActivityManager is only a positive hint. /proc may use hidepid and cannot prove
+        // absence without visibility; never interpret a hidden process as a dead process.
         val am = activity.getSystemService(Context.ACTIVITY_SERVICE) as? ActivityManager
         val alreadyRunning = runCatching {
             am?.getRunningAppProcesses()?.any { it.processName.startsWith(target) } == true
-        }.getOrDefault(false) || isProcessRunning(target)
+        }.getOrDefault(false) || processPresence(target) == ProcessPresence.RUNNING
         if (alreadyRunning) {
             lastLaunchAtMs = now
             launchedInCurrentRun = true
@@ -108,8 +118,8 @@ object CarAmapLauncher {
         }
         try {
             lastLaunchAtMs = now
-            launchedInCurrentRun = true
             activity.startActivity(launch.addFlags(Intent.FLAG_ACTIVITY_NEW_TASK))
+            launchedInCurrentRun = true
             val app = activity.applicationContext
             Handler(Looper.getMainLooper()).postDelayed({
                 // REORDER covers standard activities without recreating them; NEW_TASK
@@ -126,24 +136,30 @@ object CarAmapLauncher {
     }
 
     /**
-     * Scans /proc for a process whose cmdline starts with [target]. /proc/<pid>/cmdline is
-     * readable by any app on Android 9, so this works where ActivityManager hides other
-     * packages' processes. Any unreadable entry is skipped; on failure the caller falls back
-     * to launching the app (harmless, previous behaviour).
+     * Only a complete, permitted scan can establish absence. The S311 mounts /proc with
+     * hidepid=2,gid=3009, while the normal app has no group3009. ADB run-as retains that
+     * debugger group and is therefore not an equivalent visibility test.
      */
-    private fun isProcessRunning(target: String): Boolean {
+    private fun processPresence(target: String): ProcessPresence {
+        val mounts = runCatching { File("/proc/mounts").readText() }.getOrNull()
+        val groups = StockAmapProcessProbe.groups(runCatching { File("/proc/self/status").readText() }.getOrNull())
+        if (StockAmapProcessProbe.restrictedProc(mounts, groups)) return ProcessPresence.UNKNOWN
         val proc = File("/proc")
-        val entries = runCatching { proc.listFiles() }.getOrNull() ?: return false
+        val entries = runCatching { proc.listFiles() }.getOrNull() ?: return ProcessPresence.UNKNOWN
+        val cmdlines = mutableListOf<String>()
+        var complete = true
         for (entry in entries) {
             val pid = entry.name.toIntOrNull() ?: continue
             if (pid <= 0) continue
             val cmdline = try {
                 File(entry, "cmdline").readBytes().toString(Charsets.UTF_8)
             } catch (_: Exception) {
+                complete = false
                 continue
             }
-            if (cmdline.startsWith(target)) return true
+            if (cmdline.substringBefore('\u0000') == target) return ProcessPresence.RUNNING
+            cmdlines.add(cmdline)
         }
-        return false
+        return StockAmapProcessProbe.classify(target, cmdlines, complete)
     }
 }

@@ -14,13 +14,15 @@ import com.freddyq.diplay.customization.VehicleCustomizations
 
 class ChanganProjectionCustomization : VehicleCustomization {
     override val id = "changan-projection"
-    override fun onSessionStarted(context: Context) = ChanganProjectionBridge.clear()
-    override fun onSessionEnded() = ChanganProjectionBridge.clear()
+    // Controller preparation and AirPlay activation may both announce the same session.
+    // Projection has its own start generation; a duplicate phone-start must not reset recovery.
+    override fun onSessionStarted(context: Context) = Unit
+    override fun onSessionEnded() = ChanganProjectionBridge.clear("session-end")
     override fun onProjectionStarted(context: Context, automatic: Boolean, control: ProjectionControl) =
         ChanganProjectionBridge.start(context, automatic, control)
     override fun onProjectionLayoutRequested(layout: ProjectionLayout) = ChanganProjectionBridge.layoutRequested(layout)
-    override fun onProjectionManualControl() = ChanganProjectionBridge.clear()
-    override fun onProjectionReleased() = ChanganProjectionBridge.clear()
+    override fun onProjectionManualControl() = ChanganProjectionBridge.clear("manual-control")
+    override fun onProjectionReleased() = ChanganProjectionBridge.clear("projection-released")
     override fun shouldRetryAutomaticProjection() = ChanganProjectionBridge.shouldRetryAutomaticProjection()
     override fun settings(context: Context) = listOf(
         CustomizationSettingsGroup(R.string.settings_changan_projection_title, listOf(

@@ -11,6 +11,7 @@ import org.junit.Before
 import org.junit.Test
 import org.junit.runner.RunWith
 import org.robolectric.RobolectricTestRunner
+import org.robolectric.RuntimeEnvironment
 import org.robolectric.annotation.Config
 import org.robolectric.util.ReflectionHelpers
 
@@ -20,10 +21,14 @@ class InCallProjectionControlTest {
     private val calls = mutableListOf<Pair<Int,List<Int>>>()
     private var oldBinder: IBinder? = null
     private var oldOpen = false
+    private var oldCallbacks: Map<Int,Int> = emptyMap()
+    private val callbacks get() = ReflectionHelpers.getStaticField<MutableMap<Int,Int>>(InCallClusterBridge::class.java,"lastCallbackValue")
     private val endpoint get() = ReflectionHelpers.getStaticField<ProjectionControl>(InCallClusterBridge::class.java,"projectionControl")
     @Before fun prepare() {
         oldBinder = ReflectionHelpers.getStaticField(InCallClusterBridge::class.java,"binder")
         oldOpen = ReflectionHelpers.getStaticField(InCallClusterBridge::class.java,"openState")
+        oldCallbacks = callbacks.toMap()
+        callbacks.clear()
         val fake = object : Binder() {
             override fun onTransact(code: Int, data: Parcel, reply: Parcel?, flags: Int): Boolean {
                 data.enforceInterface("com.incall.serversdk.interactive.IDouInteractiveManager")
@@ -41,6 +46,8 @@ class InCallProjectionControlTest {
     @After fun restore() {
         ReflectionHelpers.setStaticField(InCallClusterBridge::class.java,"binder",oldBinder)
         ReflectionHelpers.setStaticField(InCallClusterBridge::class.java,"openState",oldOpen)
+        callbacks.clear()
+        callbacks.putAll(oldCallbacks)
     }
     @Test fun `fullscreen uses LVDS three while preserving gesture source and finish flag`() {
         assertTrue(endpoint.requestLayout(ProjectionLayout.FULLSCREEN))
@@ -56,5 +63,11 @@ class InCallProjectionControlTest {
             override fun onTransact(code: Int, data: Parcel, reply: Parcel?, flags: Int) = false
         })
         assertFalse(endpoint.requestLayout(ProjectionLayout.FULLSCREEN))
+    }
+    @Test fun `reconnect preserves already confirmed full layout without sending card mode`() {
+        callbacks[1] = 3
+        callbacks[2] = 3
+        InCallClusterBridge.openProjection(RuntimeEnvironment.getApplication(),automatic=true)
+        assertTrue(calls.none { it.first in setOf(1,8,21) })
     }
 }

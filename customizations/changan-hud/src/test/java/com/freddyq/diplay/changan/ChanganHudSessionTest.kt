@@ -233,6 +233,43 @@ class ChanganHudSessionTest {
         assertEquals(131071,frame.distanceMeters)
     }
 
+    @Test fun `foreign cruise reset restores only the current owned route without one second wait`() {
+        populate()
+        val before = packets.size
+        assertTrue(session.recoverFromExternalReset(true))
+        assertEquals(ChanganHudPacket.State(8),packets[before])
+        assertEquals(159,(packets.last() as ChanganHudPacket.Guidance).frame.distanceMeters)
+    }
+
+    @Test fun `foreign packet storms are rate limited`() {
+        populate()
+        assertTrue(session.recoverFromExternalReset(true))
+        val count = packets.size
+        repeat(100) { assertFalse(session.recoverFromExternalReset(true)) }
+        assertEquals(count,packets.size)
+        now += 250_000_000L
+        assertTrue(session.recoverFromExternalReset(true))
+    }
+
+    @Test fun `foreign resets cannot resurrect stopped disabled or arrived routes`() {
+        session.start()
+        assertFalse(session.recoverFromExternalReset(true))
+        populate()
+        assertFalse(session.recoverFromExternalReset(false))
+        session.onFrame(0x5201,tlv(1,0),true)
+        assertFalse(session.recoverFromExternalReset(true))
+        session.stop()
+        assertFalse(session.recoverFromExternalReset(true))
+    }
+
+    @Test fun `foreign reset repair respects instrument handshake quiet time`() {
+        populate()
+        projection = ChanganHudProjection(1,2_000_000_000L)
+        assertFalse(session.recoverFromExternalReset(true))
+        now = 2_000_000_000L
+        assertTrue(session.recoverFromExternalReset(true))
+    }
+
     private fun populate(type: Int = 2, distance: Int = 159, enabled: Boolean = true) {
         session.start()
         session.onFrame(0x5202,tlvs(tlv(1,0,7),tlv(3,type),tlv(4,*utf8("HUD测试路A")),tlv(8,0)),enabled)

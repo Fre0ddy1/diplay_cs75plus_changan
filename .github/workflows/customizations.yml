@@ -24,8 +24,8 @@ jobs:
       - uses: gradle/actions/setup-gradle@v4
       - name: Test module contracts and compile their application integration
         run: ./gradlew :vehicle-customization-api:testDebugUnitTest :changan-hud:testDebugUnitTest :changan-projection:testDebugUnitTest :mobile:assembleDebug :mobile:lintDebug --stacktrace
-      - name: Focused InCall projection contract tests
-        run: ./gradlew :common:testDebugUnitTest --tests com.shilapi.xcertplay.InCallProjectionControlTest --stacktrace
+      - name: Focused projection, content and process-visibility regressions
+        run: ./gradlew :common:testDebugUnitTest --tests com.shilapi.xcertplay.InCallProjectionControlTest --tests com.shilapi.xcertplay.ClusterCardContentSelectionTest --tests com.shilapi.xcertplay.StockAmapProcessProbeTest --stacktrace
       - uses: actions/upload-artifact@v4
         if: always()
         with:

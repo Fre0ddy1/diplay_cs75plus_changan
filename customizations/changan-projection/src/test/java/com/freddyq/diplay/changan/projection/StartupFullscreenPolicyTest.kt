@@ -72,4 +72,22 @@ class StartupFullscreenPolicyTest {
         policy.start(false,true)
         assertFalse(policy.claim(ticket,true))
     }
+    @Test fun `successful dispatch without full response has a bounded retry budget`() {
+        policy.start(true,true)
+        var ticket = policy.layoutRequested(ProjectionLayout.CARD)!!
+        repeat(StartupFullscreenPolicy.MAX_ATTEMPTS) { attempt ->
+            assertTrue(policy.claim(ticket,true))
+            assertEquals(attempt + 1,policy.attempts)
+            val next = policy.confirmationTimedOut(true)
+            if (attempt < StartupFullscreenPolicy.MAX_ATTEMPTS - 1) ticket = next!! else assertNull(next)
+        }
+        assertNull(policy.layoutRequested(ProjectionLayout.CARD))
+    }
+    @Test fun `full response cancels confirmation recovery`() {
+        policy.start(true,true)
+        val ticket = policy.layoutRequested(ProjectionLayout.CARD)!!
+        assertTrue(policy.claim(ticket,true))
+        policy.layoutRequested(ProjectionLayout.FULLSCREEN)
+        assertNull(policy.confirmationTimedOut(true))
+    }
 }

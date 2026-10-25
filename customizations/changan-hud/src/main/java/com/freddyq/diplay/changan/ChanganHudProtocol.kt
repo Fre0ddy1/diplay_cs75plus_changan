@@ -70,6 +70,7 @@ internal class ChanganHudSession(
     private var lastFrame: ChanganHudFrame? = null
     private var lastSentNs: Long? = null
     private var projectionRevision = 0L
+    private var lastExternalRecoveryNs: Long? = null
 
     fun start() {
         stop()
@@ -114,6 +115,21 @@ internal class ChanganHudSession(
         accepting = false
         route.clear()
         finishOutput()
+        lastExternalRecoveryNs = null
+    }
+
+    /** Restore only our still-valid phone guidance, never foreign data or an ended route. */
+    fun recoverFromExternalReset(enabled: Boolean): Boolean {
+        if (!accepting || !ownsOutput || !enabled || route.current()==null) return false
+        val now = nanoTime()
+        if (now < projection().quietUntilNs) return false
+        if (lastExternalRecoveryNs?.let { now-it < EXTERNAL_RECOVERY_MIN_NS } == true) return false
+        lastExternalRecoveryNs = now
+        needsStart = true
+        lastFrame = null
+        lastSentNs = null
+        tick(enabled)
+        return !needsStart
     }
 
     private fun finishOutput() {
@@ -127,6 +143,7 @@ internal class ChanganHudSession(
 
     companion object {
         private const val REPEAT_NS = 1_000_000_000L
+        private const val EXTERNAL_RECOVERY_MIN_NS = 250_000_000L
         fun projectionStateClearsGuidance(state: Int): Boolean = state in setOf(0, 9, 12, 25, 311)
     }
 }

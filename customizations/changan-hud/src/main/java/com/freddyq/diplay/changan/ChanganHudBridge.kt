@@ -23,6 +23,7 @@ object ChanganHudBridge {
     private var ticks: ScheduledFuture<*>? = null
 
     private class Runtime(val app: Context) {
+        @Volatile var generation = 0L
         @Volatile var projection = ChanganHudProjection()
         private var frameCount = 0
         private var lastIcon: Int? = null
@@ -46,6 +47,23 @@ object ChanganHudBridge {
                 false
             }
         }
+        val conflicts = ChanganHudConflictObserver(app) { kind ->
+            val observedGeneration = generation
+            worker.submit {
+                if (observedGeneration == generation && ChanganHudSettings.conflictRecoveryEnabled(app)) {
+                    if (session.recoverFromExternalReset(ChanganHudSettings.enabled(app))) {
+                        diagnostic("external reset=$kind repaired from current phone guidance; sender UID not available")
+                    }
+                }
+            }
+        }
+
+        fun updateConflictObserver() {
+            runCatching {
+                if (ChanganHudSettings.enabled(app) && ChanganHudSettings.conflictRecoveryEnabled(app)) conflicts.start()
+                else conflicts.stop()
+            }.onFailure { Log.w(TAG,"External-reset observer unavailable; normal HUD output remains active",it) }
+        }
     }
 
     @Synchronized fun start(context: Context) {
@@ -55,7 +73,9 @@ object ChanganHudBridge {
         }
         worker.start {
             val output = runtime ?: Runtime(context.applicationContext).also { runtime = it }
+            output.generation++
             output.session.start()
+            output.updateConflictObserver()
             diagnostic("session ready enabled=${ChanganHudSettings.enabled(output.app)} retention=session")
         }
         if (ticks?.isCancelled != false) {
@@ -71,7 +91,10 @@ object ChanganHudBridge {
         }
     }
 
-    internal fun settingsChanged() = worker.submit { tick() }
+    internal fun settingsChanged() = worker.submit {
+        runtime?.updateConflictObserver()
+        tick()
+    }
 
     /** Called before the existing projection code sends one of its navigation-reset states. */
     @Synchronized fun projectionStateChanging(state: Int) {
@@ -93,7 +116,11 @@ object ChanganHudBridge {
     }
 
     private fun clearOutput() {
-        runtime?.session?.stop()
+        runtime?.let {
+            it.generation++
+            it.conflicts.stop()
+            it.session.stop()
+        }
     }
 
     private fun diagnostic(message: String) {

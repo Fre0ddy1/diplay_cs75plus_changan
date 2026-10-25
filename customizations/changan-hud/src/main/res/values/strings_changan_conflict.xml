@@ -1,0 +1,4 @@
+<resources>
+    <string name="settings_changan_hud_conflict_recovery">Recover HUD after factory cruise clears</string>
+    <string name="settings_changan_hud_conflict_description">During active phone navigation, restore valid guidance after external zero-icon or navigation-end packets. Leaves factory apps and settings alone. Vehicle verification required.</string>
+</resources>

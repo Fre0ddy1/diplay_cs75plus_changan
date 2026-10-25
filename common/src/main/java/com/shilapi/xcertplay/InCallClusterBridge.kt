@@ -336,6 +336,7 @@ object InCallClusterBridge {
     fun openProjection(context: Context, automatic: Boolean = false) {
         contextRef = context.applicationContext
         val ctx = contextRef ?: return
+        val keepConfirmedFull = openState && incallReportsProjecting() && lastCallbackValue[1] == 3
         mainHandler.removeCallbacksAndMessages(token)
         generation++
         // Read incall's own report before we send anything: if the driver has already brought
@@ -349,6 +350,11 @@ object InCallClusterBridge {
         silentOpenOnly = alreadyProjecting
         VehicleCustomizations.onProjectionStarted(ctx, automatic, projectionControl)
         ensureBound(ctx)
+        if (keepConfirmedFull) {
+            logSeq(generation, "open: preserve confirmed fullscreen; no card-mode sequence on reconnect")
+            VehicleCustomizations.onProjectionLayoutRequested(ProjectionLayout.FULLSCREEN)
+            return
+        }
         if (alreadyProjecting) {
             logSeq(generation, "open: incall already reports projecting; silent half only, no source switch")
             runSilentOpen()
@@ -729,7 +735,9 @@ object InCallClusterBridge {
             .onFailure { Log.w(TAG, "broadcast 10117 -> $pkg failed", it) }
     }
 
+    private var carPropertyReflectionUnavailable = false
     private fun setCarProperties() {
+        if (carPropertyReflectionUnavailable) return
         // Car.createCar(context).getCarManager("instrument_panel").setIntProperty(id, 0, value)
         // via reflection so a non-system app is not hard-failed at class-load time.
         val ctx = contextRef ?: return
@@ -744,7 +752,10 @@ object InCallClusterBridge {
             setter.invoke(manager, CAR_PROP_MODE, 0, 1)
             logSeq(generation, "CarProperty setIntProperty(557855845,3)/(557855847,1) ok")
         } catch (e: Exception) {
-            Log.w(TAG, "CarProperty set failed (non-system app likely)", e)
+            if (e is NoSuchMethodException || e is ClassNotFoundException) {
+                carPropertyReflectionUnavailable = true
+                Log.i(TAG,"Optional CarProperty API unavailable; use existing InCall protocol: ${e.javaClass.simpleName}")
+            } else Log.w(TAG, "Optional CarProperty call failed; InCall protocol remains available", e)
         }
     }
 

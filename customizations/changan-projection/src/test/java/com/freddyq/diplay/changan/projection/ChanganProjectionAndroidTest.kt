@@ -57,6 +57,7 @@ class ChanganProjectionAndroidTest {
         assertTrue(requested.isEmpty())
         idle(1)
         assertEquals(listOf(ProjectionLayout.FULLSCREEN),requested)
+        module.onProjectionLayoutRequested(ProjectionLayout.FULLSCREEN)
         module.onProjectionLayoutRequested(ProjectionLayout.CARD)
         idle(60000)
         assertEquals(1,requested.size)
@@ -103,7 +104,7 @@ class ChanganProjectionAndroidTest {
         idle(1500)
         assertEquals(listOf(ProjectionLayout.FULLSCREEN),requested)
     }
-    @Test fun `endpoint exception cannot crash host or create a retry loop`() {
+    @Test fun `endpoint exceptions cannot crash host or create an unbounded retry loop`() {
         var attempts = 0
         module.onProjectionStarted(app,true,object : ProjectionControl {
             override fun requestLayout(layout: ProjectionLayout): Boolean { attempts++; error("endpoint unavailable") }
@@ -111,8 +112,39 @@ class ChanganProjectionAndroidTest {
         module.onProjectionLayoutRequested(ProjectionLayout.CARD)
         idle(1500)
         module.onProjectionLayoutRequested(ProjectionLayout.CARD)
-        idle(5000)
-        assertEquals(1,attempts)
+        idle(60000)
+        assertEquals(StartupFullscreenPolicy.MAX_ATTEMPTS,attempts)
+    }
+    @Test fun `dispatch success alone does not stop bounded recovery`() {
+        start()
+        module.onProjectionLayoutRequested(ProjectionLayout.CARD)
+        idle(60000)
+        assertEquals(StartupFullscreenPolicy.MAX_ATTEMPTS,requested.size)
+        assertTrue(requested.all { it == ProjectionLayout.FULLSCREEN })
+        assertTrue(module.shouldRetryAutomaticProjection()) // no acknowledgement: retain bounded activation fallback
+        idle(60000)
+        assertEquals(StartupFullscreenPolicy.MAX_ATTEMPTS,requested.size)
+    }
+    @Test fun `manual control cancels retries after a request was already dispatched`() {
+        start()
+        module.onProjectionLayoutRequested(ProjectionLayout.CARD)
+        idle(1500)
+        assertEquals(1,requested.size)
+        module.onProjectionManualControl()
+        idle(60000)
+        assertEquals(1,requested.size)
+    }
+    @Test fun `duplicate phone session start cannot reset pending projection recovery`() {
+        start()
+        module.onProjectionLayoutRequested(ProjectionLayout.CARD)
+        idle(1500)
+        module.onSessionStarted(app)
+        idle(2500)
+        assertEquals(2,requested.size)
+        assertFalse(module.shouldRetryAutomaticProjection())
+        module.onProjectionLayoutRequested(ProjectionLayout.FULLSCREEN)
+        idle(60000)
+        assertEquals(2,requested.size)
     }
     @Test fun `settled full startup suppresses legacy mode retries until next activation`() {
         start()

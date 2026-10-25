@@ -24,6 +24,11 @@ class ChanganCustomization : VehicleCustomization {
                 R.string.settings_changan_hud_description,
                 ChanganHudSettings.enabled(context),
             ) { ChanganHudSettings.setEnabled(context, it) },
+            CustomizationToggle(
+                R.string.settings_changan_hud_conflict_recovery,
+                R.string.settings_changan_hud_conflict_description,
+                ChanganHudSettings.conflictRecoveryEnabled(context),
+            ) { ChanganHudSettings.setConflictRecoveryEnabled(context,it) },
         )),
     )
 }

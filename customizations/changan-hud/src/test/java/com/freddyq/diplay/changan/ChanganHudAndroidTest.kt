@@ -56,10 +56,21 @@ class ChanganHudAndroidTest {
         ReflectionHelpers.setStaticField(Build::class.java,"MODEL","UNRECOGNIZED_MODEL")
         assertFalse(ChanganHudSettings.receiverInstalled(app))
         val module = ChanganCustomization()
-        val setting = module.settings(app).single().toggles.single()
+        val setting = module.settings(app).single().toggles.first { it.title == R.string.settings_changan_hud_enabled }
         assertTrue(setting.enabled)
         setting.onChanged(false)
-        assertFalse(module.settings(app).single().toggles.single().enabled)
+        assertFalse(module.settings(app).single().toggles.first { it.title == R.string.settings_changan_hud_enabled }.enabled)
+    }
+
+    @Test fun `cruise recovery switch is visible defaults on and preserves saved off`() {
+        val app = RuntimeEnvironment.getApplication()
+        app.getSharedPreferences("diplay_changan_hud",0).edit().clear().commit()
+        val module = ChanganCustomization()
+        val toggle = module.settings(app).single().toggles.first { it.title == R.string.settings_changan_hud_conflict_recovery }
+        assertTrue(toggle.enabled)
+        toggle.onChanged(false)
+        assertFalse(ChanganHudSettings.conflictRecoveryEnabled(app))
+        assertTrue(ChanganHudSettings.enabled(app))
     }
 
     @Test fun `manifest initializer registers once and contributes its settings`() {
