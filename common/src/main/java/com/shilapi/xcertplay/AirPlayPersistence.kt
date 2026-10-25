@@ -790,11 +790,11 @@ object AirPlayPersistence {
     fun loadClusterContent(context: Context): CarPlayClusterDisplay.Content {
         val stored = context.getSharedPreferences(PREFS, Context.MODE_PRIVATE)
             .getString(KEY_CLUSTER_CONTENT, null)
-        // Default: the map with our movable cards. A stored name that no longer exists (Apple's
-        // instruments view and the experimental paths were removed) resolves to the default as
-        // well, so an old install lands on something that works.
+        // Default: Apple's full navigation (field decision 2026-10-25). A stored name that no
+        // longer exists (Apple's instruments view and the experimental paths were removed)
+        // resolves to the default as well, so an old install lands on something that works.
         return CarPlayClusterDisplay.Content.entries.firstOrNull { it.name == stored }
-            ?: CarPlayClusterDisplay.Content.MAP_WITH_CUSTOM_CARD
+            ?: CarPlayClusterDisplay.Content.FLY_CARD
     }
 
     fun saveClusterContent(context: Context, content: CarPlayClusterDisplay.Content) {
@@ -974,12 +974,10 @@ object AirPlayPersistence {
      * switch ([loadClusterTurnCardVisible]) and also defaults off. A stored value always wins.
      */
     fun loadClusterCardVisible(context: Context, card: String): Boolean {
-        val default = when (card) {
-            "eta" -> false
-            else -> true
-        }
+        // The arrival card is on by default since 2026-10-25 (field decision): the dashboard
+        // shows it in both nav-only and mirror mode, and hiding it is the exception.
         return context.getSharedPreferences(PREFS, Context.MODE_PRIVATE)
-            .getBoolean(clusterCardKey(card, "visible"), default)
+            .getBoolean(clusterCardKey(card, "visible"), true)
     }
 
     fun saveClusterCardVisible(context: Context, card: String, visible: Boolean) {
