@@ -35,11 +35,11 @@ class CarPlayClusterDisplayTest {
         assertEquals(1920, view["widthPixels"])
         assertEquals(720, view["heightPixels"])
         val safe = view["safeArea"] as Map<*, *>
-        // The centre area clear in both cluster navi modes: left 35 %, right 36 %, top 16 %, bottom 25 %.
-        assertEquals(672, safe["originXPixels"])
-        assertEquals(115, safe["originYPixels"])
-        assertEquals(557, safe["widthPixels"])
-        assertEquals(425, safe["heightPixels"])
+        // Full panel since 2026-10-25 (UNI-V field request): the BYD centre window is gone.
+        assertEquals(0, safe["originXPixels"])
+        assertEquals(0, safe["originYPixels"])
+        assertEquals(1920, safe["widthPixels"])
+        assertEquals(720, safe["heightPixels"])
         assertEquals(true, safe["drawUIOutsideSafeArea"])
 
         // The main screen keeps its touch and knob features.
@@ -122,15 +122,23 @@ class CarPlayClusterDisplayTest {
     }
 
     @Test
-    fun markerStepsMoveTheWholeSafeArea() {
-        val centre = CarPlayClusterDisplay.config(1920, 720, scalePercent = 100).safeArea!!
-        val farLeftHigher = CarPlayClusterDisplay.config(1920, 720, scalePercent = 100, horizontalStep = -2, verticalStep = -1).safeArea!!
+    fun markerStepsMoveTheMarkerInsideTheFullPanel() {
+        // Since 2026-10-25 the declared area is the whole panel, so it cannot grow any further;
+        // what the steps move is the marker itself, one 10 % step at a time.
+        val centre = CarPlayClusterDisplay.markerPercent(0, 0)
+        val farLeftHigher = CarPlayClusterDisplay.markerPercent(-2, -1)
 
-        // Two 10 % steps left (384 px) and one 10 % step up (72 px), same size as the centred area.
-        assertEquals(centre.left - 384, farLeftHigher.left)
-        assertEquals(centre.right + 384, farLeftHigher.right)
-        assertEquals(centre.top - 72, farLeftHigher.top)
-        assertEquals(centre.bottom + 72, farLeftHigher.bottom)
+        assertEquals(50.0, centre.first, 0.01)
+        assertEquals(50.0, centre.second, 0.01)
+        assertEquals(30.0, farLeftHigher.first, 0.01)
+        assertEquals(40.0, farLeftHigher.second, 0.01)
+
+        // The advertised area is the full panel and stays inside it.
+        val safe = CarPlayClusterDisplay.config(1920, 720, scalePercent = 100).safeArea!!
+        assertEquals(0, safe.left)
+        assertEquals(0, safe.right)
+        assertEquals(0, safe.top)
+        assertEquals(0, safe.bottom)
     }
 
     @Test
@@ -145,10 +153,10 @@ class CarPlayClusterDisplayTest {
     fun nearAnEdgeTheSafeAreaShrinksAroundTheMarker() {
         val top = CarPlayClusterDisplay.config(1000, 1000, scalePercent = 100, verticalStep = -3).safeArea!!
 
-        // Marker at 15.5 % from the top: the area reaches the top edge and stays centred on it.
+        // Marker at 20 % from the top: the area reaches the top edge and stays centred on it.
         assertEquals(0, top.top)
-        assertEquals(310, 1000 - top.top - top.bottom)
-        assertEquals(15.5, CarPlayClusterDisplay.markerPercent(0, -3).second, 0.001)
+        assertEquals(400, 1000 - top.top - top.bottom)
+        assertEquals(20.0, CarPlayClusterDisplay.markerPercent(0, -3).second, 0.001)
     }
 
     @Test

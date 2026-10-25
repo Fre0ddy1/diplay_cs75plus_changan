@@ -56,13 +56,15 @@ object CarPlayClusterDisplay {
     fun isFlyCard(content: Content): Boolean = content == Content.FLY_CARD
 
     /**
-     * Where the car marker goes, as percent of the panel (left, top, right, bottom). Measured on a
-     * DiLink 5.0 cluster with a calibration grid. In "Full screen navi" BYD draws a status row,
-     * turn/ADAS icons, the ADAS lane view (from x 68 %), speed and power readouts and a bottom band
-     * over the map; "Small screen navi" crops the panel to a centre window of about x 31–68 %,
-     * y 16–89 %. This centre area is clear in both modes, so no per-mode setting is needed.
+     * Where the car marker goes, as percent of the panel (left, top, right, bottom).
+     *
+     * Full panel since 2026-10-25 (Changan UNI-V field request). The old centre window
+     * (35/16/36/25) was measured on a BYD DiLink 5.0 cluster whose own UI covers the edges; the
+     * UNI-V panel has no such overlay, so the phone should be given the whole display. The map
+     * was already painted edge to edge (safeAreaDrawOutside); this only frees the car marker and
+     * any Apple view from the BYD-shaped box.
      */
-    val SAFE_AREA_PERCENT = AirPlayInsets(top = 16, bottom = 25, left = 35, right = 36)
+    val SAFE_AREA_PERCENT = AirPlayInsets(top = 0, bottom = 0, left = 0, right = 0)
 
     /** The driver can move the marker from that centre, in steps of 10 % of the panel. */
     const val MARKER_STEP_PERCENT = 10
