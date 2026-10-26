@@ -4195,14 +4195,12 @@ class CarPlayHostActivity : ComponentActivity() {
             sourceVersion = "950.7.1",
             main = declared,
             cluster = clusterDisplayConfig(),
-            // The instruction-card display is advertised ONLY in FLY_CARD mode. Its declared size
-            // is the PANEL (the maximum we can display), not a fixed 480x200: iPhone then reports
-            // each frame's real size and setCardVideoSize() lays that frame out at the driver's
-            // chosen position (field request 2026-10-26). A fixed small declaration forced every
-            // iOS build to lay its card out inside that canvas, which shrank the type on some
-            // phones.
+            // The instruction-card display is advertised ONLY in FLY_CARD mode. Back to the small
+            // card canvas: declaring the panel made iPhone stream a full-screen card and the
+            // window covered the dashboard (field 2026-10-26 18:52: stream 1920x720, drawn
+            // 1920x720 at 0,0). iPhone does NOT pick a smaller size on its own.
             clusterCard = if (CarPlayClusterDisplay.isFlyCard(AirPlayPersistence.loadClusterContent(this))) {
-                CarPlayClusterDisplay.cardConfig(display.widthPixels, display.heightPixels)
+                CarPlayClusterDisplay.cardConfig()
             } else {
                 null
             },
@@ -6198,10 +6196,11 @@ class CarPlayHostActivity : ComponentActivity() {
                     lastSentAtMs = 0L
                 } else if (autoFlyEnabled) {
                     val displayMode = InCallClusterBridge.reportedDisplayMode()
-                    // Only full-screen navigation (code=1 == 3) can carry our panel; in incall's
-                    // own small/regular window a sequence would project a small box on the right
-                    // (field 2026-10-26, scenario 5).
-                    val fullScreen = displayMode == 3
+                    // Only an explicit small/regular window (code=1 == 1) must block us. -1 means
+                    // incall has not reported yet - that is the normal state before the first
+                    // activation, so blocking on it left the dashboard unreachable for minutes
+                    // (field 2026-10-26 18:46-18:50: code=1=-1, no sequence at all).
+                    val modeReady = displayMode != 1
                     val sinceLast = if (lastSentAtMs == 0L) now - startedAtMs else now - lastSentAtMs
                     if (sinceLast >= WATCHER_RETRY_INTERVAL_MS) {
                         if (!sizeReady) {
@@ -6215,11 +6214,11 @@ class CarPlayHostActivity : ComponentActivity() {
                                         "${watcherWidth}x${watcherHeight}，暂缓完整激活序列",
                                 )
                             }
-                        } else if (!fullScreen) {
+                        } else if (!modeReady) {
                             if (now - lastClusterSizeWaitLogMs >= CLUSTER_SIZE_WAIT_LOG_MS) {
                                 lastClusterSizeWaitLogMs = now
                                 appendLog(
-                                    "Cluster watcher: incall 非全屏模式（code=1=$displayMode），" +
+                                    "Cluster watcher: incall 处于小窗模式（code=1=$displayMode），" +
                                         "暂缓激活序列",
                                 )
                             }
