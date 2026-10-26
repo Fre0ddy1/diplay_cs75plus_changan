@@ -625,7 +625,7 @@ class CarPlayHostActivity : ComponentActivity() {
                     }
                 }
             } finally {
-                mainHandler.postDelayed(this, 1_000L)
+                mainHandler.postDelayed(this, 700L)
             }
         }
     }
@@ -639,7 +639,7 @@ class CarPlayHostActivity : ComponentActivity() {
             } catch (error: Throwable) {
                 appendLog("Overlay refresh failed: ${error.javaClass.simpleName}: ${error.message}")
             } finally {
-                mainHandler.postDelayed(this, 1_000L)
+                mainHandler.postDelayed(this, 700L)
             }
         }
     }
@@ -873,7 +873,8 @@ class CarPlayHostActivity : ComponentActivity() {
 
         appendLog(
             "Host started; MFI target=${mfiTargetLabel(mfiTarget)}; " +
-                "transport=${if (wirelessEnabled) "wireless" else "wired"}",
+                "transport=${if (wirelessEnabled) "wireless" else "wired"}; " +
+                "installed=${installedAtLabel()}",
         )
         // Every saved setting goes to the log at startup, so a report never needs the driver to
         // describe what they had configured (2026-10-22: the music buffer was assumed to be
@@ -6191,6 +6192,10 @@ class CarPlayHostActivity : ComponentActivity() {
         if (shuttingDown.get() || isFinishing || isDestroyed) return
         watcherThread = Thread({
             val startedAtMs = SystemClock.elapsedRealtime()
+            // The cold-start clock starts with the watcher (app start), not with the session: the
+            // driver wants the panel taken as soon as the dashboard is measured and the channel is
+            // still closed, so that a phone connecting afterwards finds it already projecting.
+            sessionStartedAtElapsedMs = startedAtMs
             // Fixed cadence, no backoff ladder: the send branch below fires every five seconds
             // (5 s, 10 s, 15 s ...) and only while the channel is still closed.
             var lastSentAtMs = 0L
@@ -6253,7 +6258,7 @@ class CarPlayHostActivity : ComponentActivity() {
                     // start without a swipe. Exactly one, and only when the panel size is sane and
                     // the channel is still closed - both are checked around this gate.
                     val coldStartAttempt = !coldStartAttempted &&
-                        now - sessionStartedAtElapsedMs >= 3_000L
+                        now - sessionStartedAtElapsedMs >= 1_000L
                     val modeReady = displayMode == 3 ||
                         (activationRequested && displayMode != 1) ||
                         coldStartAttempt
@@ -6305,6 +6310,13 @@ class CarPlayHostActivity : ComponentActivity() {
             }
         }, "cluster-channel-watcher").apply { isDaemon = true; start() }
     }
+
+    /** Package install time: lets a report prove which build was actually running. */
+    private fun installedAtLabel(): String = runCatching {
+        val info = packageManager.getPackageInfo(packageName, 0)
+        java.text.SimpleDateFormat("MM-dd HH:mm", java.util.Locale.US)
+            .format(java.util.Date(info.lastUpdateTime))
+    }.getOrDefault("?")
 
     /** USB properties, logged so the U-disk vs adb mode (engineering menu) can be identified. */
     private fun usbConfigLabel(): String = runCatching {
