@@ -1373,8 +1373,21 @@ class CarPlayHostActivity : ComponentActivity() {
             appendLog("Cluster map: 投屏通道未开，窗口保持隐藏")
             return
         }
-        clusterPresentation?.setMapVisible(true)
+        showClusterWindow()
         applyClusterMode(mirror, "auto")
+    }
+
+    /**
+     * Shows the dashboard window and schedules the size check.
+     *
+     * incall sometimes lays the ext-screen out as its small preview box on the right of the
+     * panel. Every path that shows the window must therefore check it shortly afterwards -
+     * auto-project and the three-finger swipe used to skip that, so the preview box stayed on
+     * the dashboard until the next confirmation (field 2026-10-26, release build).
+     */
+    private fun showClusterWindow() {
+        clusterPresentation?.setMapVisible(true)
+        scheduleClusterFrameCheck()
     }
 
     private fun ensureClusterPresentation() {
@@ -4606,7 +4619,7 @@ class CarPlayHostActivity : ComponentActivity() {
         if (clusterPresentation == null) {
             runCatching { ensureClusterPresentation() }
         }
-        clusterPresentation?.setMapVisible(true)
+        showClusterWindow()
         applyClusterMode(mirror, direction)
     }
 
@@ -4663,7 +4676,7 @@ class CarPlayHostActivity : ComponentActivity() {
             if (open) {
                 autoProjectLadderActive = false
                 if (clusterPresentation == null) runCatching { ensureClusterPresentation() }
-                clusterPresentation?.setMapVisible(true)
+                showClusterWindow()
                 applyClusterMode(mirror, "auto")
                 appendLog("Auto project: 投屏通道已开，显示窗口（不发序列）")
                 return@postDelayed
@@ -5870,7 +5883,7 @@ class CarPlayHostActivity : ComponentActivity() {
             appendLog("Nav auto: 无仪表投影显示，暂不切换")
             return
         }
-        presentation.setMapVisible(true)
+        showClusterWindow()
         applyClusterMode(
             mirror,
             if (navigating) "nav-auto-start" else "nav-auto-end",
@@ -5960,7 +5973,7 @@ class CarPlayHostActivity : ComponentActivity() {
             return
         }
         if (clusterPresentation == null) ensureClusterPresentation()
-        clusterPresentation?.setMapVisible(true)
+        showClusterWindow()
         applyClusterMode(mirror, direction)
     }
 
@@ -6318,29 +6331,42 @@ class CarPlayHostActivity : ComponentActivity() {
      * window is hidden instead of shown. Nothing is torn down: the next swipe or wheel press shows
      * it again and re-checks, and by then incall usually re-lays it out properly.
      */
-    private val clusterFrameCheck = Runnable { hideClusterWindowIfPlaceholder() }
+    /** Remaining re-checks when the window has not been laid out yet. */
+    private var clusterFrameRetries = 0
+
+    private val clusterFrameCheck: Runnable = object : Runnable {
+        override fun run() {
+            if (!hideClusterWindowIfPlaceholder() && clusterFrameRetries-- > 0) {
+                // The window was not laid out yet; look again rather than giving up on the first try.
+                mainHandler.postDelayed(this, 700L)
+            }
+        }
+    }
 
     private fun scheduleClusterFrameCheck() {
         mainHandler.removeCallbacks(clusterFrameCheck)
+        clusterFrameRetries = 3
         mainHandler.postDelayed(clusterFrameCheck, 700L)
     }
 
-    private fun hideClusterWindowIfPlaceholder() {
-        if (DiLink51ClusterLayout.supported()) return
-        if (shuttingDown.get() || isFinishing || isDestroyed) return
-        val presentation = clusterPresentation ?: return
-        val display = ClusterMapPresentation.findDisplay(this) ?: return
+    /** Returns false while the window still has no usable frame (retry), true once handled. */
+    private fun hideClusterWindowIfPlaceholder(): Boolean {
+        if (DiLink51ClusterLayout.supported()) return true
+        if (shuttingDown.get() || isFinishing || isDestroyed) return true
+        val presentation = clusterPresentation ?: return true
+        val display = ClusterMapPresentation.findDisplay(this) ?: return true
         val expected = ClusterMapPresentation.sizeOf(display)
         val frame = presentation.windowFrame()
         // Not laid out yet: leave it alone rather than hide a window that is still settling.
-        if (frame.x <= 0 || frame.y <= 0) return
+        if (frame.x <= 0 || frame.y <= 0) return false
         val full = frame.x >= expected.x * 9 / 10 && frame.y >= expected.y * 9 / 10
-        if (full) return
+        if (full) return true
         presentation.setMapVisible(false)
         appendLog(
             "Cluster: 仪表窗口只有 ${frame.x}x${frame.y}（应为 ${expected.x}x${expected.y}），" +
                 "已隐藏，避免仪表出现小方块；方向盘或三指可重新打开",
         )
+        return true
     }
 
     private fun tryActivateClusterProjection(
@@ -6398,7 +6424,7 @@ class CarPlayHostActivity : ComponentActivity() {
         clusterProjectionAbandoned = false
         // The window was created hidden (see ensureClusterPresentation): the head unit is about to
         // be put into projection mode, so it may become visible now.
-        clusterPresentation?.setMapVisible(true)
+        showClusterWindow()
         // Drop any window that was created on the pre-activation display: until the head-unit
         // switches to projection mode that display shows nothing on the physical dashboard, and
         // keeping the old window would let later hot-swaps reuse it instead of the activated one.
