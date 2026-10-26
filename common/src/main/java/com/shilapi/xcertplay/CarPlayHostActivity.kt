@@ -6120,12 +6120,11 @@ class CarPlayHostActivity : ComponentActivity() {
     /**
      * Samples the projection channel for the whole life of the activity.
      *
-     * This is the ONLY place allowed to send the activation sequence. It keeps sampling, and while
-     * it has not decided yet it also keeps waiting: [WATCHER_READY_WAIT_MS] after start-up, if the
-     * channel is still closed, it sends the sequence exactly once and never again. If the channel
-     * reports open at any point inside that window, nothing is sent at all. Every other part of the
-     * app only shows or hides the window - re-sending from there is what made the head unit
-     * announce "全屏镜像/导航已开启" on swipes and reconnects.
+     * This is the ONLY place allowed to send the activation sequence. It samples every 500 ms and
+     * sends at a fixed five-second cadence (5 s, 10 s, 15 s ...) while the channel is still closed,
+     * the panel is ON and the size is sane. The moment incall reports projecting, nothing more is
+     * sent. Every other part of the app only shows or hides the window - re-sending from there is
+     * what made the head unit announce "全屏镜像/导航已开启" on swipes and reconnects.
      *
      * `InCallClusterBridge.reportsProjecting()` is a plain read of the state incall reported through
      * its callback; it sends nothing, which is why the loop can call it every period.
@@ -6138,16 +6137,8 @@ class CarPlayHostActivity : ComponentActivity() {
         if (shuttingDown.get() || isFinishing || isDestroyed) return
         watcherThread = Thread({
             val startedAtMs = SystemClock.elapsedRealtime()
-            // Backoff schedule, and a hard cap on how many times this may fire.
-            //
-            // The first send is the normal one; the rest only cover a channel that is still coming
-            // up. It MUST be bounded: a head unit that never enters projection mode (the driver is
-            // not using the dashboard at all) would otherwise be flooded with the full sequence
-            // forever, and each sequence is dozens of binder broadcasts - at one every five seconds
-            // the whole system started stuttering, audio included. The field log for 2026-10-22
-            // shows "第 163 次", thirteen minutes of it, with broadcast 10019 lines every 100 ms.
-            val retryDelaysMs = longArrayOf(WATCHER_FIRST_SEND_DELAY_MS, 15_000L, 30_000L, 60_000L)
-            var attempts = 0
+            // Fixed cadence, no backoff ladder: the send branch below fires every five seconds
+            // (5 s, 10 s, 15 s ...) and only while the channel is still closed.
             var lastSentAtMs = 0L
             while (!shuttingDown.get() && !isFinishing && !isDestroyed) {
                 // The driver closed projection from the wheel: the channel is still theirs and
@@ -6183,26 +6174,24 @@ class CarPlayHostActivity : ComponentActivity() {
                 // the size becomes sane.
                 val sizeReady = clusterDisplaySizeReady()
 
-                // 3) The channel is up: the budget starts over, so a channel the driver closes by
-                //    hand later is picked up again from the first (shortest) delay. With "自动飞屏"
-                //    off the watcher must stay silent: its sequence is what the head unit answers
-                //    with "全屏导航已开启" even though the driver asked for no automatic projection.
+                // 3) A fixed five-second cadence, not a backoff ladder: 5 s, 10 s, 15 s, 20 s ...
+                //    Each round sends only while the channel is still closed, the panel is really
+                //    on and the size is sane; the moment incall reports projecting, nothing is
+                //    sent at all. With "自动飞屏" off the watcher stays silent entirely.
                 val autoFlyEnabled = AirPlayPersistence.loadAutoFlyScreen(this)
                 val now = SystemClock.elapsedRealtime()
                 if (open) {
-                    attempts = 0
-                    lastSentAtMs = 0L
-                } else if (autoFlyEnabled && attempts < retryDelaysMs.size) {
-                    val delay = if (lastSentAtMs == 0L) {
-                        retryDelaysMs[0] - (now - startedAtMs)
-                    } else {
-                        retryDelaysMs[attempts] - (now - lastSentAtMs)
+                    if (lastSentAtMs != 0L) {
+                        appendLog("Cluster watcher: 投屏通道已就绪，停止发送激活序列")
                     }
-                    if (delay <= 0L) {
+                    lastSentAtMs = 0L
+                } else if (autoFlyEnabled) {
+                    val sinceLast = if (lastSentAtMs == 0L) now - startedAtMs else now - lastSentAtMs
+                    if (sinceLast >= WATCHER_RETRY_INTERVAL_MS) {
                         if (!sizeReady) {
-                            // Do not consume an attempt and do not send: wait for the real panel
-                            // size. Log at most every few seconds so a head unit that never
-                            // reports a sane size cannot flood the report.
+                            // Do not send and do not advance the clock: wait for a real panel.
+                            // Log at most every few seconds so a head unit that never reports a
+                            // sane size cannot flood the report.
                             if (now - lastClusterSizeWaitLogMs >= CLUSTER_SIZE_WAIT_LOG_MS) {
                                 lastClusterSizeWaitLogMs = now
                                 appendLog(
@@ -6211,12 +6200,11 @@ class CarPlayHostActivity : ComponentActivity() {
                                 )
                             }
                         } else {
-                            attempts++
                             lastSentAtMs = now
                             clusterPrewarmAtMs = now
                             appendLog(
                                 "Cluster watcher: 投屏通道未就绪，发完整激活序列" +
-                                    "（第 $attempts/${retryDelaysMs.size} 次，仪表 ${watcherWidth}x${watcherHeight}）",
+                                    "（距上次 ${sinceLast}ms，仪表 ${watcherWidth}x${watcherHeight}）",
                             )
                             mainHandler.post {
                                 if (!shuttingDown.get() && !isFinishing && !isDestroyed) {
@@ -6766,7 +6754,8 @@ class CarPlayHostActivity : ComponentActivity() {
          * The report arrives within tens of milliseconds when the channel is up, so this window
          * only has to cover a channel that incall is still bringing up.
          */
-        const val WATCHER_FIRST_SEND_DELAY_MS = 5_000L
+        /** Fixed interval between activation attempts while the channel is closed. */
+        const val WATCHER_RETRY_INTERVAL_MS = 5_000L
         /**
          * After a start-up prewarm, a connect within this window re-asserts silently instead of
          * running the announcing sequence a second time.
