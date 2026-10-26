@@ -6357,6 +6357,10 @@ class CarPlayHostActivity : ComponentActivity() {
      */
     private fun onClusterProjectionWithdrawn() {
         if (shuttingDown.get() || isFinishing || isDestroyed) return
+        // Before a session exists, incall initialises from its persisted state and hands out one
+        // 0 on the way up. That is not the driver closing the panel (field 2026-10-26 23:36:54:
+        // the window then stayed hidden and the head unit's own Amap filled the dashboard).
+        if (activeAirPlaySession == null) return
         // Only a real incall report counts. A window that merely exists proves nothing: it is
         // created at start-up and sits hidden until projection is confirmed, so counting it made
         // the 0 inside our own activation ramp look like the driver closing the panel
@@ -6377,10 +6381,12 @@ class CarPlayHostActivity : ComponentActivity() {
         if (shuttingDown.get() || isFinishing || isDestroyed) return@Runnable
         if (InCallClusterBridge.reportsProjecting()) {
             // The panel came back by itself: this was the 0 inside our own activation ramp, not
-            // the driver closing it. Undo the hand-back.
+            // the driver closing it. Undo the hand-back, and show the window now - the
+            // confirmation callback already ran while the flag was still set and skipped it.
             userHandedBackProjection = false
             lastKnownProjecting = true
             appendLog("Cluster: 投影状态自行恢复，撤销归还判定")
+            onClusterProjectionConfirmed()
             return@Runnable
         }
         clusterPresentation?.setMapVisible(false)
