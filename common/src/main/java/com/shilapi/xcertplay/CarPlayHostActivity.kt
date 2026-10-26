@@ -4185,11 +4185,14 @@ class CarPlayHostActivity : ComponentActivity() {
             sourceVersion = "950.7.1",
             main = declared,
             cluster = clusterDisplayConfig(),
-            // The instruction-card display is advertised ONLY in FLY_CARD mode: there the card
-            // window needs its own small stream. Every other mode keeps the single-cluster
-            // /info declaration, so their behaviour is byte-for-byte unchanged.
+            // The instruction-card display is advertised ONLY in FLY_CARD mode. Its declared size
+            // is the PANEL (the maximum we can display), not a fixed 480x200: iPhone then reports
+            // each frame's real size and setCardVideoSize() lays that frame out at the driver's
+            // chosen position (field request 2026-10-26). A fixed small declaration forced every
+            // iOS build to lay its card out inside that canvas, which shrank the type on some
+            // phones.
             clusterCard = if (CarPlayClusterDisplay.isFlyCard(AirPlayPersistence.loadClusterContent(this))) {
-                CarPlayClusterDisplay.cardConfig()
+                CarPlayClusterDisplay.cardConfig(display.widthPixels, display.heightPixels)
             } else {
                 null
             },
