@@ -487,6 +487,14 @@ class CarPlayHostActivity : ComponentActivity() {
     private var clusterSwipePosition = -1
     /** True when [clusterSwipePosition] was set by the navigation auto-switch, not by the driver. */
     private var clusterPositionFromAuto = false
+    /**
+     * The head unit took the panel back (steering-wheel "close projection") while the channel
+     * itself stayed usable. Our window must stay hidden and the watcher must stop re-activating
+     * until the driver asks again with a swipe or a new connection.
+     */
+    private var userHandedBackProjection = false
+    /** Last projecting state incall reported, to tell a hand-back from our own activation ramp. */
+    private var lastKnownProjecting = false
     private var initialClusterMirror: Boolean? = null
     /** Last navigation state seen by the auto-switch setting; null = re-evaluate on next tick. */
     private var lastAutoNavState: Boolean? = null
@@ -1208,8 +1216,11 @@ class CarPlayHostActivity : ComponentActivity() {
         CarPlayBackgroundSession.releaseSettingsHold()
         CarPlayBackgroundSession.logger = { message -> appendLog(message) }
         // incall telling us the panel is really ours is the signal to show the dashboard window.
+        // The opposite direction matters too: the wheel's close-projection hands the panel back
+        // without closing the channel, and re-activating there is what made it impossible to close.
         InCallClusterBridge.projectingListener = { projecting ->
             if (projecting) runOnUiThread { onClusterProjectionConfirmed() }
+            else runOnUiThread { onClusterProjectionWithdrawn() }
         }
         val languagePreference = AppLocale.preference(this)
         if (Build.VERSION.SDK_INT < 33 && languagePreference != languagePreferenceAtCreate) {
@@ -4706,6 +4717,10 @@ class CarPlayHostActivity : ComponentActivity() {
                     syncAirPlayDarkMode(ThemeModeDiagnostics.Source.SESSION_ACTIVE)
                     if (menuOpen) return@runOnUiThread
                     appendLog("AirPlay session active")
+                    // A new connection is a fresh start: the hand-back from the previous session
+                    // no longer applies.
+                    userHandedBackProjection = false
+                    lastKnownProjecting = false
                     watchMediaAudioRoute()
                     maybeAutoProjectOnConnect()
                     // A connection made while navigation is already running has no transition to
@@ -5839,6 +5854,12 @@ class CarPlayHostActivity : ComponentActivity() {
 
     private fun autoProjectForNavigation(navigating: Boolean) {
         if (shuttingDown.get() || isFinishing || isDestroyed) return
+        // The driver handed the panel back from the wheel; a navigation change must not take it
+        // again behind their back. The next swipe or connection clears this.
+        if (userHandedBackProjection) {
+            appendLog("Nav auto: 用户已归还仪表，跳过自动切换 navigating=$navigating")
+            return
+        }
         val mirror = !navigating
         clusterSwipePosition = if (mirror) 0 else 1
         clusterPositionFromAuto = true
@@ -5875,6 +5896,11 @@ class CarPlayHostActivity : ComponentActivity() {
             return
         }
         if (initialClusterMirror == null) initialClusterMirror = AirPlayPersistence.loadClusterMirrorMain(this)
+        // A swipe is the driver asking for the dashboard again: leave the hand-back state.
+        if (userHandedBackProjection) {
+            userHandedBackProjection = false
+            appendLog("Cluster swipe $direction: 用户重新接管仪表，允许显示")
+        }
         // Left swipe (right-to-left) is FORWARD: not projected -> whole screen (pos 0) ->
         // navigation stream only (pos 1) -> boundary. Right swipe is BACK: pos 1 -> pos 0 ->
         // off (-1) -> boundary, and does nothing before the first projection.
@@ -5921,7 +5947,12 @@ class CarPlayHostActivity : ComponentActivity() {
         // The window exists for the whole session and only ever shows or hides. Whether it can be
         // seen at all depends on one thing: the projection channel the start-up watcher sampled.
         // No path below may send the activation sequence - that is what announced on every swipe.
-        if (!watcherChannelOpen && !InCallClusterBridge.reportsProjecting()) {
+        // The wheel's close-projection only hands the panel back; it does not close the channel.
+        // A window that already exists is therefore proof enough to show it again - requiring a
+        // fresh "projecting" report here is what made the swipe appear dead after a hand-back.
+        val channelReady = clusterPresentation != null || watcherChannelOpen ||
+            runCatching { InCallClusterBridge.reportsProjecting() }.getOrDefault(false)
+        if (!channelReady) {
             clusterPresentation?.setMapVisible(false)
             appendLog("Cluster swipe $direction: 投屏通道未开，不显示窗口 (pos=$nextPos)")
             return
@@ -6090,6 +6121,13 @@ class CarPlayHostActivity : ComponentActivity() {
             var attempts = 0
             var lastSentAtMs = 0L
             while (!shuttingDown.get() && !isFinishing && !isDestroyed) {
+                // The driver closed projection from the wheel: the channel is still theirs and
+                // ours to use later, but re-sending the sequence here is what reopened the
+                // dashboard they just closed. Wait for a swipe or a new connection.
+                if (userHandedBackProjection) {
+                    quietSleep(WATCHER_PERIOD_MS)
+                    continue
+                }
                 // 1) Sample the channel. Read-only: incall's own report, nothing goes out here.
                 val open = runCatching { InCallClusterBridge.reportsProjecting() }.getOrDefault(false)
                 watcherChannelOpen = open
@@ -6202,6 +6240,11 @@ class CarPlayHostActivity : ComponentActivity() {
      */
     private fun onClusterProjectionConfirmed() {
         if (shuttingDown.get() || isFinishing || isDestroyed) return
+        lastKnownProjecting = true
+        if (userHandedBackProjection) {
+            appendLog("Cluster: 投屏已就绪，但用户已归还仪表，保持隐藏（三指可再次打开）")
+            return
+        }
         if (clusterWindowHidden) return
         val presentation = clusterPresentation ?: return
         presentation.setMapVisible(true)
@@ -6212,6 +6255,33 @@ class CarPlayHostActivity : ComponentActivity() {
         } else {
             appendLog("Cluster: 车机确认投屏通道已开，显示仪表窗口")
         }
+    }
+
+    /**
+     * The steering wheel's "close projection" asks us to give the panel back; it does NOT close
+     * the projection channel. Hide our window and stop the watcher from re-activating, otherwise
+     * every close is answered by a fresh activation sequence and the dashboard cannot be closed.
+     *
+     * The 0 that shows up while our own sequence is ramping is not a hand-back, hence the
+     * projecting -> not projecting edge plus a short confirmation.
+     */
+    private fun onClusterProjectionWithdrawn() {
+        if (shuttingDown.get() || isFinishing || isDestroyed) return
+        val wasProjecting = lastKnownProjecting
+        lastKnownProjecting = false
+        if (!wasProjecting) return
+        mainHandler.removeCallbacks(projectionWithdrawConfirmation)
+        mainHandler.postDelayed(projectionWithdrawConfirmation, PROJECTION_WITHDRAW_CONFIRM_MS)
+    }
+
+    private val projectionWithdrawConfirmation = Runnable {
+        if (shuttingDown.get() || isFinishing || isDestroyed) return@Runnable
+        if (InCallClusterBridge.reportsProjecting()) return@Runnable
+        userHandedBackProjection = true
+        clusterPresentation?.setMapVisible(false)
+        clusterSwipePosition = -1
+        clusterPositionFromAuto = false
+        appendLog("Cluster: 车机收回仪表（方向盘关闭投屏），停止自动激活；三指或重连可再次打开")
     }
 
     /**
@@ -6608,6 +6678,8 @@ class CarPlayHostActivity : ComponentActivity() {
         const val WATCHER_PERIOD_MS = 500L
         /** Route-state confirmation window: 0x5201 flips start/end within a second in the field. */
         const val NAV_STATE_CONFIRM_MS = 500L
+        /** Grace before a "not projecting" report is treated as the driver handing the panel back. */
+        const val PROJECTION_WITHDRAW_CONFIRM_MS = 600L
         /**
          * A real dashboard panel is at least this large and landscape. Before activation incall
          * can present a small preview box on the ext-screen; that must never be mistaken for the
