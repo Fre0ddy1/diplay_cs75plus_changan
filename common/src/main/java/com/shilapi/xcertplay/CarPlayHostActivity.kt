@@ -1834,6 +1834,16 @@ class CarPlayHostActivity : ComponentActivity() {
         runOnUiThread {
             clusterPresentation?.setCardVideoSize(width, height)
             clusterLayers.values.forEach { it.setCardVideoSize(width, height) }
+            // What the driver actually sees: the laid-out frame, not just the stream size.
+            mainHandler.postDelayed({
+                val presentation = clusterPresentation ?: return@postDelayed
+                val frame = presentation.cardWindowRect() ?: return@postDelayed
+                val panel = presentation.panelSize()
+                appendLog(
+                    "Cluster card drawn at ${frame[0]},${frame[1]} " +
+                        "size ${frame[2]}x${frame[3]} on panel ${panel[0]}x${panel[1]}",
+                )
+            }, 200L)
         }
     }
 

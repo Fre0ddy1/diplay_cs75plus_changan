@@ -608,6 +608,15 @@ internal class ClusterMapPresentation(
         )
     }
 
+    /** Live card window frame on the panel: left, top, width, height. Null when not created. */
+    fun cardWindowRect(): IntArray? {
+        val view = cardTextureView ?: return null
+        return intArrayOf(view.left, view.top, view.width, view.height)
+    }
+
+    /** Panel size this presentation was built for, for diagnostics. */
+    fun panelSize(): IntArray = intArrayOf(projectionSize.x, projectionSize.y)
+
     /**
      * Re-applies the saved card-window position to the live window (settings change, B4).
      *
