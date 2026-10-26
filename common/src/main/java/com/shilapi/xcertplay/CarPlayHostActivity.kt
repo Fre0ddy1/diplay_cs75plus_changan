@@ -5968,12 +5968,10 @@ class CarPlayHostActivity : ComponentActivity() {
         val channelReady = clusterPresentation != null || watcherChannelOpen ||
             runCatching { InCallClusterBridge.reportsProjecting() }.getOrDefault(false)
         if (!channelReady) {
-            // A deliberate swipe with no channel: the watcher stays silent when "自动飞屏" is off,
-            // so this is the one path allowed to activate - the driver asked for it.
-            appendLog("Cluster swipe $direction: 通道未开，司机主动激活一次 (pos=$nextPos)")
-            if (clusterPresentation == null) runCatching { ensureClusterPresentation() }
-            applyClusterMode(mirror, direction)
-            InCallClusterBridge.openProjection(this)
+            // Activation belongs to the start-up watcher alone. A swipe only shows or hides the
+            // window; with no channel there is nothing to show.
+            clusterPresentation?.setMapVisible(false)
+            appendLog("Cluster swipe $direction: 投屏通道未开，不显示窗口 (pos=$nextPos)")
             return
         }
         if (clusterPresentation == null) ensureClusterPresentation()
