@@ -6334,6 +6334,10 @@ class CarPlayHostActivity : ComponentActivity() {
         if (clusterWindowHidden) return
         val presentation = clusterPresentation ?: return
         presentation.setMapVisible(true)
+        // Apply the driver's "仪表盘显示内容" choice now: on a cold start the auto-projection
+        // path already gave up before the channel opened, so without this the window comes up in
+        // whatever mode it was built with (or the head unit's own Amap stays on the panel).
+        applyClusterMode(currentClusterMirrorMode(), "channel-ready", persist = false)
         scheduleClusterFrameCheck()
         if (clusterProjectionAbandoned) {
             clusterProjectionAbandoned = false
@@ -6353,9 +6357,11 @@ class CarPlayHostActivity : ComponentActivity() {
      */
     private fun onClusterProjectionWithdrawn() {
         if (shuttingDown.get() || isFinishing || isDestroyed) return
-        // "Was projecting" is not only incall's last report: a window that is on screen and not
-        // hidden proves the panel was ours even if the confirmation callback never arrived.
-        val wasProjecting = lastKnownProjecting || (clusterPresentation != null && !clusterWindowHidden)
+        // Only a real incall report counts. A window that merely exists proves nothing: it is
+        // created at start-up and sits hidden until projection is confirmed, so counting it made
+        // the 0 inside our own activation ramp look like the driver closing the panel
+        // (field 2026-10-26 22:20:07, "车机收回仪表" right after a sequence).
+        val wasProjecting = lastKnownProjecting
         lastKnownProjecting = false
         if (!wasProjecting) return
         // Suspend the auto-activation IMMEDIATELY: the watcher samples every 500 ms, so waiting
