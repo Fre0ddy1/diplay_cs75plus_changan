@@ -599,37 +599,6 @@ class CarPlayHostActivity : ComponentActivity() {
     private val airPlayCommandExecutor: ExecutorService = Executors.newSingleThreadExecutor()
     private val logLines = ArrayDeque<LogEntry>()
     private val expireOldLogLines = Runnable { refreshLogView(System.currentTimeMillis()) }
-    /**
-     * Keeps the dashboard window on screen once incall reports projecting.
-     *
-     * Every other path (confirmation callback, auto-project, swipe) is event driven and can miss
-     * its moment - a confirmation that ran while a stale hand-back flag was set, a flag cleared
-     * after the callback, a window hidden by an earlier disconnect. Drawing the driver's content
-     * is not something that should depend on one callback arriving at the right instant, so this
-     * low-frequency check closes those gaps. It never activates anything and never overrides a
-     * deliberate close (userHandedBackProjection).
-     */
-    private val clusterWindowGuard = object : Runnable {
-        override fun run() {
-            try {
-                if (activeAirPlaySession != null && !shuttingDown.get() && !isFinishing &&
-                    !isDestroyed && !userHandedBackProjection &&
-                    InCallClusterBridge.reportsProjecting()
-                ) {
-                    val presentation = clusterPresentation
-                    if (presentation != null && !presentation.isMapVisible()) {
-                        presentation.setMapVisible(true)
-                        lastKnownProjecting = true
-                        applyClusterMode(currentClusterMirrorMode(), "guard", persist = false)
-                        appendLog("Cluster: 投影已就绪，守护逻辑显示仪表窗口（按设置内容）")
-                    }
-                }
-            } finally {
-                mainHandler.postDelayed(this, 700L)
-            }
-        }
-    }
-
     private val refreshTurnOverlay = object : Runnable {
         override fun run() {
             // The periodic refresh must never be able to stop itself: an exception thrown here used
@@ -1337,8 +1306,6 @@ class CarPlayHostActivity : ComponentActivity() {
                 refreshClusterCrop()
             }
         }
-        mainHandler.removeCallbacks(clusterWindowGuard)
-        mainHandler.post(clusterWindowGuard)
         com.shilapi.xcertplay.hud.BydNavigationOutputs.setTurnOverlayListener(clusterTurnOverlayListener)
         // Route state drives "导航时自动切换仪表视图": the transition itself, no polling.
         com.shilapi.xcertplay.hud.BydNavigationOutputs.setNavigationStateListener { navigating ->
@@ -6371,6 +6338,11 @@ class CarPlayHostActivity : ComponentActivity() {
      */
     private fun onClusterProjectionConfirmed() {
         if (shuttingDown.get() || isFinishing || isDestroyed) return
+        // The driver swiped the dashboard off: honour it even though the panel is projecting.
+        if (clusterSwipePosition < 0) {
+            appendLog("Cluster: 用户已关闭仪表窗口（pos=-1），不显示")
+            return
+        }
         lastKnownProjecting = true
         if (userHandedBackProjection) {
             appendLog("Cluster: 投屏已就绪，但用户已归还仪表，保持隐藏（三指可再次打开）")

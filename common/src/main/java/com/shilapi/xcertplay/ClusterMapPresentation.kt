@@ -745,8 +745,6 @@ internal class ClusterMapPresentation(
         }
     }
 
-    /** True while the window is actually drawn (alpha > 0). */
-    fun isMapVisible(): Boolean = (window?.attributes?.alpha ?: 0f) > 0f
 
     /**
      * The window's current frame, in pixels. incall can lay an ext-screen window out as its small
