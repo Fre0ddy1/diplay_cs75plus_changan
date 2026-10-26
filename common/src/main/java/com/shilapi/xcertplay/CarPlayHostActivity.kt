@@ -495,6 +495,8 @@ class CarPlayHostActivity : ComponentActivity() {
     private var userHandedBackProjection = false
     /** Last projecting state incall reported, to tell a hand-back from our own activation ramp. */
     private var lastKnownProjecting = false
+    /** Set by a three-finger swipe: ask the watcher to run its send conditions right now. */
+    @Volatile private var activationRequested = false
     private var initialClusterMirror: Boolean? = null
     /** Last navigation state seen by the auto-switch setting; null = re-evaluate on next tick. */
     private var lastAutoNavState: Boolean? = null
@@ -5927,6 +5929,9 @@ class CarPlayHostActivity : ComponentActivity() {
             userHandedBackProjection = false
             appendLog("Cluster swipe $direction: 用户重新接管仪表，允许显示")
         }
+        // The swipe also asks the watcher to re-run its send conditions immediately. The watcher
+        // stays the only sender - nothing here sends a sequence itself.
+        activationRequested = true
         // Left swipe (right-to-left) is FORWARD: not projected -> whole screen (pos 0) ->
         // navigation stream only (pos 1) -> boundary. Right swipe is BACK: pos 1 -> pos 0 ->
         // off (-1) -> boundary, and does nothing before the first projection.
@@ -6196,13 +6201,17 @@ class CarPlayHostActivity : ComponentActivity() {
                     lastSentAtMs = 0L
                 } else if (autoFlyEnabled) {
                     val displayMode = InCallClusterBridge.reportedDisplayMode()
-                    // Only an explicit small/regular window (code=1 == 1) must block us. -1 means
-                    // incall has not reported yet - that is the normal state before the first
-                    // activation, so blocking on it left the dashboard unreachable for minutes
-                    // (field 2026-10-26 18:46-18:50: code=1=-1, no sequence at all).
-                    val modeReady = displayMode != 1
+                    // Automatic sends require an explicitly reported full-screen panel
+                    // (code=1 == 3): with the dashboard dark or the head unit not in navigation,
+                    // every sequence is answered with an announcement while the panel stays black
+                    // (field 2026-10-26 19:21: five seconds apart, endlessly). A swipe - the driver
+                    // explicitly asking - may also try while incall is still silent (-1), because
+                    // that is the normal state right after power-up; an explicit small window (1)
+                    // is never worth a sequence.
+                    val modeReady = displayMode == 3 || (activationRequested && displayMode != 1)
                     val sinceLast = if (lastSentAtMs == 0L) now - startedAtMs else now - lastSentAtMs
-                    if (sinceLast >= WATCHER_RETRY_INTERVAL_MS) {
+                    if (sinceLast >= WATCHER_RETRY_INTERVAL_MS || activationRequested) {
+                        activationRequested = false
                         if (!sizeReady) {
                             // Do not send and do not advance the clock: wait for a real panel.
                             // Log at most every few seconds so a head unit that never reports a
@@ -6218,7 +6227,7 @@ class CarPlayHostActivity : ComponentActivity() {
                             if (now - lastClusterSizeWaitLogMs >= CLUSTER_SIZE_WAIT_LOG_MS) {
                                 lastClusterSizeWaitLogMs = now
                                 appendLog(
-                                    "Cluster watcher: incall 处于小窗模式（code=1=$displayMode），" +
+                                    "Cluster watcher: incall 未进入全屏导航（code=1=$displayMode），" +
                                         "暂缓激活序列",
                                 )
                             }
