@@ -6,6 +6,21 @@ import org.junit.Test
 
 class StartupFullscreenPolicyTest {
     private val policy = StartupFullscreenPolicy()
+    @Test fun `reconfirmation has no ticket without enabled automatic ownership`() {
+        assertNull(policy.requestConfirmation())
+        policy.start(true,false)
+        assertNull(policy.requestConfirmation())
+        policy.start(false,true)
+        assertNull(policy.requestConfirmation())
+    }
+    @Test fun `warm confirmation ticket cannot survive a new projection owner`() {
+        policy.start(true,true)
+        val old = policy.requestConfirmation()!!
+        policy.start(true,true)
+        val current = policy.requestConfirmation()!!
+        assertFalse(policy.claim(old,true))
+        assertTrue(policy.claim(current,true))
+    }
     @Test fun `idle callbacks cannot switch the cluster`() {
         assertNull(policy.layoutRequested(ProjectionLayout.CARD))
     }

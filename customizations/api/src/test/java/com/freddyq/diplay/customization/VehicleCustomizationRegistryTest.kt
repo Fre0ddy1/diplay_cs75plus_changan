@@ -13,6 +13,31 @@ import org.robolectric.annotation.Config
 class VehicleCustomizationRegistryTest {
     private val registry = VehicleCustomizationRegistry()
     private val app get() = RuntimeEnvironment.getApplication()
+    @Test fun `warm recovery requires an explicit owner`() {
+        val endpoint = object : ProjectionControl { override fun requestLayout(layout: ProjectionLayout) = true }
+        assertFalse(registry.onProjectionResumed(app,endpoint))
+        registry.register(object : VehicleCustomization {
+            override val id = "warm-owner"
+            override fun onProjectionResumed(context: Context, control: ProjectionControl): Boolean {
+                assertSame(app,context)
+                assertSame(endpoint,control)
+                return true
+            }
+        })
+        assertTrue(registry.onProjectionResumed(app,endpoint))
+    }
+    @Test fun `broken warm listener cannot stop later recovery owner`() {
+        val endpoint = object : ProjectionControl { override fun requestLayout(layout: ProjectionLayout) = true }
+        registry.register(object : VehicleCustomization {
+            override val id = "broken-warm"
+            override fun onProjectionResumed(context: Context, control: ProjectionControl): Boolean = error("failure")
+        })
+        registry.register(object : VehicleCustomization {
+            override val id = "healthy-warm"
+            override fun onProjectionResumed(context: Context, control: ProjectionControl) = true
+        })
+        assertTrue(registry.onProjectionResumed(app,endpoint))
+    }
     @Test fun `empty registry retains upstream projection retries`() {
         assertTrue(registry.shouldRetryAutomaticProjection())
         assertTrue(registry.shouldActivateProjectionChannel())

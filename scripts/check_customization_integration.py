@@ -15,11 +15,11 @@ checks={
         'VehicleCustomizations.onNavigationFrame(frame.messageId, frame.payload)',
     ],
     'common/src/main/java/com/shilapi/xcertplay/DiPlaySessionService.kt': ['VehicleCustomizations.onSessionEnded()'],
-    'common/src/main/java/com/shilapi/xcertplay/InCallClusterBridge.kt': ['VehicleCustomizations.onProjectionNavigationState(state)','VehicleCustomizations.onProjectionStarted(ctx, automatic, projectionControl)','VehicleCustomizations.onProjectionLayoutRequested(layout)','VehicleCustomizations.onProjectionReleased()','fun adoptObservedProjection'],
+    'common/src/main/java/com/shilapi/xcertplay/InCallClusterBridge.kt': ['VehicleCustomizations.onProjectionNavigationState(state)','VehicleCustomizations.onProjectionStarted(ctx, automatic, projectionControl)','VehicleCustomizations.onProjectionLayoutRequested(layout)','VehicleCustomizations.onProjectionReleased()','fun adoptObservedProjection','VehicleCustomizations.onProjectionResumed(ctx, scoped)','bound = app.bindService'],
     'common/src/main/java/com/shilapi/xcertplay/DiPlayActivity.kt': ['VehicleCustomizations.settings(this)'],
     'common/src/main/java/com/shilapi/xcertplay/ClusterMapPresentation.kt': ['if (!customCardContentCache)', 'CARDS_DISABLED || !customCardContentCache','CarPlayClusterDisplay.usesCustomTurnCard(AirPlayPersistence.loadClusterContent(context))'],
     'customizations/changan-hud/src/main/java/com/freddyq/diplay/changan/ChanganHudBridge.kt': ['ChanganHudConflictObserver(app)','session.recoverFromExternalReset','conflicts.stop()'],
-    'common/src/main/java/com/shilapi/xcertplay/CarPlayHostActivity.kt': ['VehicleCustomizations.diagnosticListener = routeTraceListener','VehicleCustomizations.onProjectionManualControl()','VehicleCustomizations.shouldActivateProjectionChannel()','InCallClusterBridge.openProjection(this, automatic = true)'],
+    'common/src/main/java/com/shilapi/xcertplay/CarPlayHostActivity.kt': ['VehicleCustomizations.diagnosticListener = routeTraceListener','VehicleCustomizations.onProjectionManualControl()','VehicleCustomizations.shouldActivateProjectionChannel()','InCallClusterBridge.openProjection(this, automatic = true)','InCallClusterBridge.resumeAutomaticProjection(this, autoProjectToken)','InCallClusterBridge.observeCallback(this, presentation)','InCallClusterBridge.detachAutomaticProjection(autoProjectToken)'],
     'common/src/main/java/com/shilapi/xcertplay/AirPlayPersistence.kt': ['fun saveClusterContent', 'overlaySettingsListener?.invoke()'],
 }
 failures=[]

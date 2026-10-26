@@ -12,6 +12,8 @@ interface VehicleCustomization {
     fun onSessionEnded() {}
     fun onProjectionNavigationState(state: Int) {}
     fun onProjectionStarted(context: Context, automatic: Boolean, control: ProjectionControl) {}
+    /** A new window is using a retained channel and requires fresh confirmation. */
+    fun onProjectionResumed(context: Context, control: ProjectionControl): Boolean = false
     fun onProjectionLayoutRequested(layout: ProjectionLayout) {}
     fun onProjectionManualControl() {}
     fun onProjectionReleased() {}
@@ -60,6 +62,11 @@ open class VehicleCustomizationRegistry {
     fun onProjectionNavigationState(state: Int) = dispatch { it.onProjectionNavigationState(state) }
     fun onProjectionStarted(context: Context, automatic: Boolean, control: ProjectionControl) =
         dispatch { it.onProjectionStarted(context.applicationContext, automatic, control) }
+    fun onProjectionResumed(context: Context, control: ProjectionControl): Boolean {
+        var handled = false
+        dispatch { handled = it.onProjectionResumed(context.applicationContext, control) || handled }
+        return handled
+    }
     fun onProjectionLayoutRequested(layout: ProjectionLayout) = dispatch { it.onProjectionLayoutRequested(layout) }
     fun onProjectionManualControl() = dispatch { it.onProjectionManualControl() }
     fun onProjectionReleased() = dispatch { it.onProjectionReleased() }

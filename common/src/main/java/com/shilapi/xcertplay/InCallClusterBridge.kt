@@ -17,6 +17,7 @@ import android.util.Log
 import com.freddyq.diplay.customization.ProjectionControl
 import com.freddyq.diplay.customization.ProjectionLayout
 import com.freddyq.diplay.customization.VehicleCustomizations
+import java.lang.ref.WeakReference
 
 /**
  * InCallClusterBridge
@@ -326,6 +327,15 @@ object InCallClusterBridge {
     @Volatile private var generation = 0
     private val mainHandler = Handler(Looper.getMainLooper())
     private val token = Any()
+    private var observationOwner: WeakReference<Any>? = null
+    private var projectionNeedsReconfirmation = false
+    private var automaticProjectionOwner: Any? = null
+    private val confirmationLock = Any()
+    private var callbackSerial = 0L
+    private var resumeGeneration: Int? = null
+    private var resumeRequestSerial = Long.MAX_VALUE
+    private var resumeFullSeen = false
+    private var resumeOpenSeen = false
     private val projectionControl = object : ProjectionControl {
         override fun requestLayout(layout: ProjectionLayout): Boolean {
             check(Looper.myLooper() == Looper.getMainLooper())
@@ -339,6 +349,95 @@ object InCallClusterBridge {
             setCarProperties()
             return dispatched
         }
+    }
+
+    private data class ConfirmationSample(val serial: Long, val waiting: Boolean, val confirmed: Boolean)
+
+    private fun sampleConfirmation(code: Int, value: Int): ConfirmationSample = synchronized(confirmationLock) {
+        callbackSerial++
+        val waiting = resumeGeneration == generation
+        if (waiting && callbackSerial > resumeRequestSerial) {
+            if (code == 1) resumeFullSeen = value == 3
+            if (code == CALLBACK_CODE_STATE) resumeOpenSeen = value == CALLBACK_PROJECTING
+            if (resumeFullSeen && resumeOpenSeen) {
+                resumeGeneration = null
+                return@synchronized ConfirmationSample(callbackSerial, true, true)
+            }
+        }
+        ConfirmationSample(callbackSerial, waiting, false)
+    }
+
+    /** One restore per phone/session owner; retained values alone cannot confirm a new window. */
+    fun resumeAutomaticProjection(context: Context, owner: Any) {
+        check(Looper.myLooper() == Looper.getMainLooper())
+        if (automaticProjectionOwner === owner) return
+        automaticProjectionOwner = owner
+        if (!reportsProjecting()) return // The bounded channel watcher owns cold activation.
+        contextRef = context.applicationContext
+        val ctx = contextRef ?: return
+        openState = true
+        val needsFresh = projectionNeedsReconfirmation
+        projectionNeedsReconfirmation = false
+        if (needsFresh) {
+            mainHandler.removeCallbacksAndMessages(token)
+            generation++
+        }
+        val gen = generation
+        val scoped = object : ProjectionControl {
+            override fun requestLayout(layout: ProjectionLayout): Boolean {
+                if (gen != generation || automaticProjectionOwner !== owner) return false
+                synchronized(confirmationLock) {
+                    if (resumeGeneration == gen) {
+                        resumeRequestSerial = callbackSerial
+                        resumeFullSeen = false
+                        resumeOpenSeen = false
+                    }
+                }
+                return projectionControl.requestLayout(layout)
+            }
+            override fun invalidateConfirmation() {
+                if (gen != generation || automaticProjectionOwner !== owner) return
+                synchronized(confirmationLock) { resumeGeneration = null }
+                lastCallbackValue.remove(CALLBACK_CODE_STATE)
+                persistProjecting(false)
+                generation++ // Reject queued replies and controls from the expired owner.
+                logSeq(generation, "retained confirmation expired; bounded channel watcher may recover")
+            }
+        }
+        if (needsFresh) {
+            synchronized(confirmationLock) {
+                resumeGeneration = gen
+                resumeRequestSerial = Long.MAX_VALUE
+                resumeFullSeen = false
+                resumeOpenSeen = false
+            }
+            if (VehicleCustomizations.onProjectionResumed(ctx, scoped)) {
+                logSeq(gen, "new window on retained channel; waiting for fresh layout and channel replies")
+                return
+            }
+            synchronized(confirmationLock) { resumeGeneration = null }
+        }
+        VehicleCustomizations.onProjectionStarted(ctx, true, scoped)
+        val layout = when (lastCallbackValue[1]) {
+            1 -> ProjectionLayout.CARD
+            3 -> ProjectionLayout.FULLSCREEN
+            else -> null
+        }
+        if (layout != null) VehicleCustomizations.onProjectionLayoutRequested(layout)
+        logSeq(gen, "reattach retained projection strategy; same window layout=$layout")
+    }
+
+    /** Detach page/phone ownership without closing the retained physical channel. */
+    fun detachAutomaticProjection(owner: Any) {
+        check(Looper.myLooper() == Looper.getMainLooper())
+        if (automaticProjectionOwner !== owner) return
+        automaticProjectionOwner = null
+        synchronized(confirmationLock) {
+            if (resumeGeneration == generation) projectionNeedsReconfirmation = true
+            resumeGeneration = null
+        }
+        generation++
+        mainHandler.removeCallbacksAndMessages(token)
     }
 
     // Real INavigateCallback stub, matching the reference box: the head-unit
@@ -360,6 +459,8 @@ object InCallClusterBridge {
                 1, 2 -> {
                     data.enforceInterface(CALLBACK_TOKEN)
                     val value = data.readInt()
+                    val callbackGeneration = generation
+                    val confirmation = sampleConfirmation(code, value)
                     callbackHeard = true
                     Log.i(TAG, "INavigateCallback code=$code value=$value")
                     // Persist the projecting state so a fresh process can tell a warm projection
@@ -407,9 +508,16 @@ object InCallClusterBridge {
                             3 -> ProjectionLayout.FULLSCREEN
                             else -> null
                         }
-                        val gen = generation
-                        if (layout != null) mainHandler.post {
+                        val gen = callbackGeneration
+                        if (layout != null && !(confirmation.waiting && layout == ProjectionLayout.FULLSCREEN)) mainHandler.post {
                             if (gen == generation && openState) VehicleCustomizations.onProjectionLayoutRequested(layout)
+                        }
+                    }
+                    if (confirmation.confirmed) mainHandler.post {
+                        if (callbackGeneration == generation && openState) {
+                            logSeq(generation, "fresh fullscreen and channel confirmed serial=${confirmation.serial}")
+                            VehicleCustomizations.onProjectionLayoutRequested(ProjectionLayout.FULLSCREEN)
+                            runCatching { projectingListener?.invoke(true) }
                         }
                     }
                     if (previous == null || previous != value) {
@@ -426,7 +534,9 @@ object InCallClusterBridge {
                             // square (measured 2026-10-20: window up at 20:01:52, projection
                             // confirmed at 20:02:39).
                             val nowProjecting = incallReportsProjecting()
-                            runCatching { projectingListener?.invoke(nowProjecting) }
+                            if (!confirmation.confirmed && (!confirmation.waiting || !nowProjecting)) {
+                                runCatching { projectingListener?.invoke(nowProjecting) }
+                            }
                         }
                     }
                     reply?.writeNoException()
@@ -453,10 +563,34 @@ object InCallClusterBridge {
 
         override fun onServiceDisconnected(name: ComponentName?) {
             Log.w(TAG, "service disconnected: $name")
-            binder = null
-            bound = false
-            callbackRegistered = false
+            forgetRemoteConnection()
+            // Android retains this binding and may reconnect it. Do not duplicate bindService.
         }
+
+        override fun onBindingDied(name: ComponentName?) {
+            forgetRemoteConnection()
+            val ctx = contextRef ?: return
+            if (bound) runCatching { ctx.unbindService(this) }
+            bound = false
+            if (observeCallbackRequested) ensureBound(ctx)
+        }
+
+        override fun onNullBinding(name: ComponentName?) {
+            forgetRemoteConnection()
+            val ctx = contextRef ?: return
+            if (bound) runCatching { ctx.unbindService(this) }
+            bound = false // A later observation/open may retry; never spin on a null binding.
+        }
+    }
+
+    private fun forgetRemoteConnection() {
+        binder = null
+        callbackRegistered = false
+        callbackHeard = false
+        lastCallbackValue.clear()
+        synchronized(confirmationLock) { resumeGeneration = null }
+        generation++
+        VehicleCustomizations.onProjectionReleased()
     }
 
     /**
@@ -472,23 +606,27 @@ object InCallClusterBridge {
      * measurement of the one thing that would let the open sequence be skipped when the driver has
      * already brought projection up by hand: does incall report a state before we ask it for one?
      */
-    fun observeCallback(context: Context) {
+    fun observeCallback(context: Context, owner: Any = context) {
         contextRef = context.applicationContext
-        if (observeCallbackRequested) return
+        if (observationOwner?.get() !== owner) {
+            if (openState) projectionNeedsReconfirmation = true
+            observationOwner = WeakReference(owner)
+        }
+        val firstObservation = !observeCallbackRequested
         observeCallbackRequested = true
-        logSeq(
+        if (firstObservation) logSeq(
             generation,
             "observe: persisted state projecting=${persistedProjecting()} " +
                 "released=${persistedReleased()} releasedByUs=${releasedByUs()} " +
                 "heard=${callbackHeard}",
         )
         val existing = binder
-        if (existing != null) {
+        if (existing?.isBinderAlive == true && !callbackRegistered) {
             val ok = runCatching { registerCallback(existing) }.getOrDefault(false)
             logSeq(generation, "observe: registered INavigateCallback before activation -> $ok")
-        } else {
+        } else if (existing?.isBinderAlive != true) {
             logSeq(generation, "observe: binding to watch INavigateCallback before activation")
-            ensureBound(context)
+            ensureBound(context.applicationContext)
         }
     }
 
@@ -759,21 +897,23 @@ object InCallClusterBridge {
     }
 
     private fun ensureBound(ctx: Context) {
-        if (bound && binder != null) return
-        if (bound && binder == null) {
-            // disconnected: unbind and retry once
+        val app = ctx.applicationContext
+        if (bound && binder?.isBinderAlive == true) return
+        if (bound && binder == null) return // Binding is pending or Android is reconnecting it.
+        if (bound) {
             try {
-                ctx.unbindService(connection)
+                app.unbindService(connection)
             } catch (_: IllegalArgumentException) {
             }
             bound = false
+            forgetRemoteConnection()
         }
         if (bound) return
         val intent = Intent(SERVICE_ACTION).setComponent(
             ComponentName(PKG_INCALL, SERVICE_CLASS),
         )
         try {
-            bound = ctx.bindService(intent, connection, Context.BIND_AUTO_CREATE)
+            bound = app.bindService(intent, connection, Context.BIND_AUTO_CREATE)
             Log.i(TAG, "bindService -> $bound")
         } catch (e: RuntimeException) {
             bound = false

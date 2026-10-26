@@ -24,7 +24,12 @@ internal class StartupFullscreenPolicy {
             cancel()
             return null
         }
-        if (pending != null || awaitingConfirmation || attempts > 0) return null
+        return requestConfirmation()
+    }
+
+    /** Reconfirm a retained layout without inventing a small-screen callback. */
+    fun requestConfirmation(): Long? {
+        if (!armed || pending != null || awaitingConfirmation || attempts > 0) return null
         return (++generation).also { pending = it }
     }
 

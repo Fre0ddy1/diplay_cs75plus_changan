@@ -20,6 +20,11 @@ class ChanganProjectionCustomization : VehicleCustomization {
     override fun onSessionEnded() = ChanganProjectionBridge.clear("session-end")
     override fun onProjectionStarted(context: Context, automatic: Boolean, control: ProjectionControl) =
         ChanganProjectionBridge.start(context, automatic, control)
+    override fun onProjectionResumed(context: Context, control: ProjectionControl): Boolean {
+        if (!ChanganProjectionSettings.enabled(context)) return false
+        ChanganProjectionBridge.resume(context, control)
+        return true
+    }
     override fun onProjectionLayoutRequested(layout: ProjectionLayout) = ChanganProjectionBridge.layoutRequested(layout)
     override fun onProjectionManualControl() = ChanganProjectionBridge.clear("manual-control")
     override fun onProjectionReleased() = ChanganProjectionBridge.clear("projection-released")

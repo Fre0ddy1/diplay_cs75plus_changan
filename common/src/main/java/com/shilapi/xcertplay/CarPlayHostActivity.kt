@@ -1430,7 +1430,7 @@ class CarPlayHostActivity : ComponentActivity() {
             // is always present (measured within ~300 ms of startup, including sessions where the
             // open sequence never runs at all), so display topology cannot say whether the head
             // unit is already projecting; incall's own callback is the only channel that can.
-            InCallClusterBridge.observeCallback(this)
+            InCallClusterBridge.observeCallback(this, presentation)
         } catch (error: RuntimeException) {
             Log.w(ClusterMapPresentation.TAG, "cluster presentation failed", error)
             appendLog("Cluster map: presentation failed ${error.javaClass.simpleName}")
@@ -1483,6 +1483,7 @@ class CarPlayHostActivity : ComponentActivity() {
             presentation.setMapVisible(false)
             applyClusterTurnOverlay()
             appendLog("Cluster map: quiet window shown display=${display.displayId}")
+            InCallClusterBridge.observeCallback(this, presentation)
         } catch (error: RuntimeException) {
             appendLog("Cluster map: quiet window failed ${error.javaClass.simpleName}")
         }
@@ -2072,6 +2073,7 @@ class CarPlayHostActivity : ComponentActivity() {
     }
 
     override fun onDestroy() {
+        InCallClusterBridge.detachAutomaticProjection(autoProjectToken)
         if (CarPlayBackgroundSession.logger != null) CarPlayBackgroundSession.logger = null
         InCallClusterBridge.projectingListener = null
         if (clusterDisplayListenerRegistered) {
@@ -4586,6 +4588,9 @@ class CarPlayHostActivity : ComponentActivity() {
         if (clusterPresentation == null) {
             runCatching { ensureClusterPresentation() }
         }
+        if (clusterPresentation != null) {
+            InCallClusterBridge.resumeAutomaticProjection(this, autoProjectToken)
+        }
         clusterPresentation?.setMapVisible(true)
         applyClusterMode(mirror, direction)
     }
@@ -4706,6 +4711,7 @@ class CarPlayHostActivity : ComponentActivity() {
 
             override fun onSessionEnded(session: AirPlaySession) {
                 runOnUiThread {
+                    InCallClusterBridge.detachAutomaticProjection(autoProjectToken)
                     if (activeAirPlaySession === session) activeAirPlaySession = null
                     CarPlayBackgroundSession.active = false
                     // A new session is a new connection: allow auto-project to fire again after
@@ -5857,6 +5863,7 @@ class CarPlayHostActivity : ComponentActivity() {
         }
         clusterSwipePosition = nextPos
         if (direction != "auto") {
+            InCallClusterBridge.detachAutomaticProjection(autoProjectToken)
             com.freddyq.diplay.customization.VehicleCustomizations.onProjectionManualControl()
             // The driver took over: the position machine now belongs to them, and auto-switch
             // waits for the next navigation transition instead of undoing the choice.

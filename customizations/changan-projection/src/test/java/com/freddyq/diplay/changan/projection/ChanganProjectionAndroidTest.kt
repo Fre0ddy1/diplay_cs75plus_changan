@@ -169,4 +169,48 @@ class ChanganProjectionAndroidTest {
         idle(60000)
         assertEquals(1,requested.size)
     }
+
+    @Test fun `warm recovery ignores retained full feedback before its first request`() {
+        assertTrue(module.onProjectionResumed(app,endpoint))
+        module.onProjectionLayoutRequested(ProjectionLayout.FULLSCREEN)
+        idle(1500)
+        assertEquals(listOf(ProjectionLayout.FULLSCREEN),requested)
+        module.onProjectionLayoutRequested(ProjectionLayout.FULLSCREEN)
+        idle(60000)
+        assertEquals(1,requested.size)
+    }
+
+    @Test fun `unconfirmed warm recovery expires only after its bounded request budget`() {
+        var expired = 0
+        module.onProjectionResumed(app,object : ProjectionControl {
+            override fun requestLayout(layout: ProjectionLayout): Boolean { requested += layout; return true }
+            override fun invalidateConfirmation() { expired++ }
+        })
+        idle(60000)
+        assertEquals(3,requested.size)
+        assertEquals(1,expired)
+        assertTrue(module.shouldActivateProjectionChannel())
+        idle(60000)
+        assertEquals(3,requested.size)
+        assertEquals(1,expired)
+    }
+
+    @Test fun `manual takeover cancels warm recovery without expiring the physical channel`() {
+        var expired = false
+        module.onProjectionResumed(app,object : ProjectionControl {
+            override fun requestLayout(layout: ProjectionLayout): Boolean { requested += layout; return true }
+            override fun invalidateConfirmation() { expired = true }
+        })
+        module.onProjectionManualControl()
+        idle(60000)
+        assertTrue(requested.isEmpty())
+        assertFalse(expired)
+    }
+
+    @Test fun `disabled automatic full layout does not claim warm recovery`() {
+        ChanganProjectionSettings.setEnabled(app,false)
+        assertFalse(module.onProjectionResumed(app,endpoint))
+        idle(60000)
+        assertTrue(requested.isEmpty())
+    }
 }
