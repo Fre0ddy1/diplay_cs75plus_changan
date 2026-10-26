@@ -5968,8 +5968,12 @@ class CarPlayHostActivity : ComponentActivity() {
         val channelReady = clusterPresentation != null || watcherChannelOpen ||
             runCatching { InCallClusterBridge.reportsProjecting() }.getOrDefault(false)
         if (!channelReady) {
-            clusterPresentation?.setMapVisible(false)
-            appendLog("Cluster swipe $direction: 投屏通道未开，不显示窗口 (pos=$nextPos)")
+            // A deliberate swipe with no channel: the watcher stays silent when "自动飞屏" is off,
+            // so this is the one path allowed to activate - the driver asked for it.
+            appendLog("Cluster swipe $direction: 通道未开，司机主动激活一次 (pos=$nextPos)")
+            if (clusterPresentation == null) runCatching { ensureClusterPresentation() }
+            applyClusterMode(mirror, direction)
+            InCallClusterBridge.openProjection(this)
             return
         }
         if (clusterPresentation == null) ensureClusterPresentation()
@@ -6180,12 +6184,15 @@ class CarPlayHostActivity : ComponentActivity() {
                 val sizeReady = clusterDisplaySizeReady()
 
                 // 3) The channel is up: the budget starts over, so a channel the driver closes by
-                //    hand later is picked up again from the first (shortest) delay.
+                //    hand later is picked up again from the first (shortest) delay. With "自动飞屏"
+                //    off the watcher must stay silent: its sequence is what the head unit answers
+                //    with "全屏导航已开启" even though the driver asked for no automatic projection.
+                val autoFlyEnabled = AirPlayPersistence.loadAutoFlyScreen(this)
                 val now = SystemClock.elapsedRealtime()
                 if (open) {
                     attempts = 0
                     lastSentAtMs = 0L
-                } else if (attempts < retryDelaysMs.size) {
+                } else if (autoFlyEnabled && attempts < retryDelaysMs.size) {
                     val delay = if (lastSentAtMs == 0L) {
                         retryDelaysMs[0] - (now - startedAtMs)
                     } else {
