@@ -524,6 +524,8 @@ class CarPlayHostActivity : ComponentActivity() {
     @Volatile private var watcherDisplay: android.view.Display? = null
     @Volatile private var watcherWidth = 0
     @Volatile private var watcherHeight = 0
+    /** Last Display.state seen for the dashboard, so a change is logged once, not every period. */
+    @Volatile private var watcherDisplayState = -1
     private var lastClusterSizeWaitLogMs = 0L
     // True once this activity has sent the projection open sequence at all. The disconnect
     // hand-back refuses to run without it: sending the ext-screen release (r0) to a head unit that
@@ -6079,6 +6081,16 @@ class CarPlayHostActivity : ComponentActivity() {
         val size = runCatching { ClusterMapPresentation.sizeOf(display) }.getOrNull() ?: return false
         watcherWidth = size.x
         watcherHeight = size.y
+        // The panel must really be ON. With only the centre screen powered (whole car still off)
+        // the dashboard display keeps reporting 1920x720, so the size test alone passed and the
+        // start-up activation sequence went out to a panel driven by its own MCU - the head unit
+        // answered every connect with "全屏导航已开启" (field 2026-10-26).
+        val state = runCatching { display.state }.getOrDefault(android.view.Display.STATE_UNKNOWN)
+        if (state != watcherDisplayState) {
+            watcherDisplayState = state
+            appendLog("Cluster watcher: 仪表 display state=$state（STATE_ON=${android.view.Display.STATE_ON}）")
+        }
+        if (state != android.view.Display.STATE_ON) return false
         // A mode that disagrees with the real size means the display is still being reconfigured
         // (or is still the pre-activation placeholder); either way the sequence must wait.
         val mode = runCatching { display.mode }.getOrNull()
