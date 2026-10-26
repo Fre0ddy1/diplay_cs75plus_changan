@@ -6209,11 +6209,12 @@ class CarPlayHostActivity : ComponentActivity() {
                                     InCallClusterBridge.openProjection(this)
                                 }
                             }
-                            // One activation is enough: the driver's rule is that once the channel
-                            // has been taken it stays ours for the session, so this thread stops
-                            // here. Later swipes and auto-projection only show the window.
-                            appendLog("Cluster watcher: 已发送一次激活序列，watcher 线程结束（本会话不再重试）")
-                            break
+                            // Stay resident: the driver wants the watcher alive for the whole
+                            // session, retrying every five seconds while the channel is closed.
+                            appendLog(
+                                "Cluster watcher: 已发送激活序列，5 秒后按条件再检查" +
+                                    "（usb=${usbConfigLabel()}）",
+                            )
                         }
                     }
                 }
@@ -6221,6 +6222,12 @@ class CarPlayHostActivity : ComponentActivity() {
             }
         }, "cluster-channel-watcher").apply { isDaemon = true; start() }
     }
+
+    /** `persist.sys.usb.config`, logged so the head unit's U-disk vs adb mode can be identified. */
+    private fun usbConfigLabel(): String = runCatching {
+        val process = ProcessBuilder("getprop", "persist.sys.usb.config").start()
+        process.inputStream.bufferedReader().use { it.readText().trim() }.ifEmpty { "empty" }
+    }.getOrDefault("unknown")
 
     /** Sleeps without letting an interrupt escape the watcher loop. */
     private fun quietSleep(millis: Long) {
