@@ -6211,6 +6211,11 @@ class CarPlayHostActivity : ComponentActivity() {
                                     InCallClusterBridge.openProjection(this)
                                 }
                             }
+                            // One activation is enough: the driver's rule is that once the channel
+                            // has been taken it stays ours for the session, so this thread stops
+                            // here. Later swipes and auto-projection only show the window.
+                            appendLog("Cluster watcher: 已发送一次激活序列，watcher 线程结束（本会话不再重试）")
+                            break
                         }
                     }
                 }
