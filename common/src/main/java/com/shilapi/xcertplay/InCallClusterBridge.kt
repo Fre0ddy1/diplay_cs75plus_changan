@@ -249,6 +249,14 @@ object InCallClusterBridge {
     fun reportsProjecting(): Boolean = incallReportsProjecting() && !releasedByUs()
 
     /**
+     * Last value incall reported for callback code 1: the panel mode its service is in.
+     *
+     * Field observation (2026-10-26): 3 while the head unit is in full-screen navigation, 1 while
+     * it sits in its own small/regular window. -1 means incall has not reported yet.
+     */
+    fun reportedDisplayMode(): Int = lastCallbackValue[1] ?: -1
+
+    /**
      * incall has said anything at all in this process (any callback code). False means the binder
      * has not produced a single word - a dead session (field: adb mode) or a head unit that is
      * simply quiet, which cannot be told apart, so callers must not treat it as "not projecting".

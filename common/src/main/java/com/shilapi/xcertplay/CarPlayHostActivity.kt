@@ -6184,6 +6184,11 @@ class CarPlayHostActivity : ComponentActivity() {
                     }
                     lastSentAtMs = 0L
                 } else if (autoFlyEnabled) {
+                    val displayMode = InCallClusterBridge.reportedDisplayMode()
+                    // Only full-screen navigation (code=1 == 3) can carry our panel; in incall's
+                    // own small/regular window a sequence would project a small box on the right
+                    // (field 2026-10-26, scenario 5).
+                    val fullScreen = displayMode == 3
                     val sinceLast = if (lastSentAtMs == 0L) now - startedAtMs else now - lastSentAtMs
                     if (sinceLast >= WATCHER_RETRY_INTERVAL_MS) {
                         if (!sizeReady) {
@@ -6195,6 +6200,14 @@ class CarPlayHostActivity : ComponentActivity() {
                                 appendLog(
                                     "Cluster watcher: 仪表尺寸未就绪 " +
                                         "${watcherWidth}x${watcherHeight}，暂缓完整激活序列",
+                                )
+                            }
+                        } else if (!fullScreen) {
+                            if (now - lastClusterSizeWaitLogMs >= CLUSTER_SIZE_WAIT_LOG_MS) {
+                                lastClusterSizeWaitLogMs = now
+                                appendLog(
+                                    "Cluster watcher: incall 非全屏模式（code=1=$displayMode），" +
+                                        "暂缓激活序列",
                                 )
                             }
                         } else {
@@ -6223,10 +6236,16 @@ class CarPlayHostActivity : ComponentActivity() {
         }, "cluster-channel-watcher").apply { isDaemon = true; start() }
     }
 
-    /** `persist.sys.usb.config`, logged so the head unit's U-disk vs adb mode can be identified. */
+    /** USB properties, logged so the U-disk vs adb mode (engineering menu) can be identified. */
     private fun usbConfigLabel(): String = runCatching {
-        val process = ProcessBuilder("getprop", "persist.sys.usb.config").start()
-        process.inputStream.bufferedReader().use { it.readText().trim() }.ifEmpty { "empty" }
+        listOf("persist.sys.usb.config", "sys.usb.config", "persist.sys.usb.mode", "ro.usb.mode")
+            .joinToString(",") { name ->
+                val value = runCatching {
+                    ProcessBuilder("getprop", name).start().inputStream.bufferedReader()
+                        .use { it.readText().trim() }
+                }.getOrDefault("?")
+                "$name=${value.ifEmpty { "empty" }}"
+            }
     }.getOrDefault("unknown")
 
     /** Sleeps without letting an interrupt escape the watcher loop. */
