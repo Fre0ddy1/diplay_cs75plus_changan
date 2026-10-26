@@ -33,6 +33,18 @@ controller=(ROOT/'shared/src/main/java/com/shilapi/xcertplay/orchestration/CarPl
 if controller.count('VehicleCustomizations.onSessionEnded()')!=2:
     failures.append('Controller must notify session end and final close exactly once each')
 android='{http://schemas.android.com/apk/res/android}'
+app_manifest=ET.parse(ROOT/'mobile/src/main/AndroidManifest.xml').getroot().find('application')
+if app_manifest is None or app_manifest.get(android+'label')!='@string/cs75plus_app_name':
+    failures.append('Missing CS75PLUS distribution application label')
+branding=ET.parse(ROOT/'mobile/src/main/res/values/strings_cs75plus.xml').getroot().find("string[@name='cs75plus_app_name']")
+if branding is None or branding.text!='diplay-cs75plus' or branding.get('translatable')!='false':
+    failures.append('Missing stable CS75PLUS brand resource')
+for variant_manifest in (ROOT/'mobile/src').glob('*/AndroidManifest.xml'):
+    if variant_manifest.parent.name=='main':
+        continue
+    variant_app=ET.parse(variant_manifest).getroot().find('application')
+    if variant_app is not None and variant_app.get(android+'label') not in (None, '@string/cs75plus_app_name'):
+        failures.append(str(variant_manifest.relative_to(ROOT))+': overrides the CS75PLUS application label')
 manifest=ET.parse(ROOT/'customizations/changan-hud/src/main/AndroidManifest.xml').getroot()
 provider=manifest.find('application/provider')
 if provider is None or provider.get(android+'exported')!='false' or provider.get(android+'name')!='com.freddyq.diplay.changan.ChanganCustomizationInitializer' or provider.get(android+'authorities')!='${applicationId}.customizations.changan':

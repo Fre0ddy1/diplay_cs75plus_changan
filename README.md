@@ -1,180 +1,80 @@
-# diplay-Changan（DiPlay 长安定制版）
+# diplay-cs75plus
 
-在车机（长安 UNI-V 2022 款）上运行 **无线 CarPlay** 的适配版本。
+面向 **2022款第二代长安 CS75PLUS／梧桐 S311_MCA（Android 9）** 的 DiPlay 定制版，将 iPhone CarPlay 导航接入车机主屏、仪表投屏与实体 HUD。
 
-**原作者**：[shihabal3amri/DiPlay](https://github.com/shihabal3amri/DiPlay)（v0.2.11）｜原项目文档站：[https://shihabal3amri.github.io/DiPlay/](https://shihabal3amri.github.io/DiPlay/)
+[下载发行版](https://github.com/Fre0ddy1/diplay_cs75plus_changan/releases/latest) · [当前定制分支](https://github.com/Fre0ddy1/diplay_cs75plus_changan/tree/codex/ca75plus-hud-0.2.22) · [定制模块说明](customizations/README.md) · [验证记录](customizations/VALIDATION.md)
 
-本仓库基于上述原项目二次开发。
+## 本项目增加了什么
 
-> ⚠️ 
->
-> **仅供尝鲜，不对后续 Bug 负责。**
-> 本项目仅在 
->
-> **22 款 UNI-V 尊贵版**
->
-> （飞鱼 OS / Android 9 / 已破解车机）上测试通过。
-> 其他车型可能有用，但请
->
-> **自行尝试**
->
-> ，使用前请确认你的车机支持并接受相应风险。
+- **长安 HUD 导航**：读取 CarPlay 导航数据，通过本车原厂导航接口显示转向、距离和路名；不需要高德助手转发。
+- **导航保持与结束清除**：静止、切换到车机桌面时保持有效 HUD 指引；手机结束导航或 CarPlay 会话结束后清除。
+- **仪表自动全屏与重连恢复**：接收原车仪表反馈后自动切换全屏；针对断连重连、新窗口、旧状态缓存增加有限恢复和回调隔离。
+- **仪表内容选择修复**：可选择“仅地图”“地图和自定义卡片”“Apple 完整导航”；选择非自定义模式时整组 DiPlay 导航卡片隐藏。
+- **保留上游原生导航卡片**：支持上游双路地图／指令卡视频。CarPlay 视频卡、DiPlay 自绘卡和原车仪表转向卡是不同来源，详见[卡片说明](docs/CARPLAY_NATIVE_CARD.md)。
+- **独立定制模块**：HUD、仪表策略和通用接入契约分开维护，便于继续合并上游更新。定制开关始终显示，首次默认开启，保留用户之后的关闭选择。
 
-**系统要求**：APK 支持 Android 7.1+（API 25）；Android 7.1–8.1 支持为新增能力（尚未在实车上验证）。无线支持 Wi-Fi Direct、车机热点或同一局域网 / Existing Wi-Fi。Android 9 的 Wi-Fi Direct 使用依赖固件的旧路径（生成组凭据、频段未经核实）；Android 10+ 会校验协商后的组频段。
+基础 CarPlay 连接、音乐、电话、显示校准和其他通用能力沿用上游。上述实车结论限于本车和测试条件，不表示其他长安车型均已验证。
 
-***
+## 下载与升级
 
-## 本项目实现的功能
+当前发行版：**0.2.22-ca75plus.4（内部版本46）**，应用显示名 **diplay-cs75plus**。
 
-**CarPlay 接收端（基础能力，继承自 DiPlay）**：车机开启热点后，iPhone 通过无线方式建立 CarPlay 会话，实现导航、音乐、电话在车机屏幕上运行。
+1. 从本仓库 [Releases](https://github.com/Fre0ddy1/diplay_cs75plus_changan/releases) 下载 APK，可用随附件提供的 SHA256 校验文件核对。
+2. 已安装本项目同签名测试版的用户可覆盖升级，保留应用数据和 CarPlay 配对；系统包名继续使用 `com.shihab.diplay.hudtest`。
+3. 安装完成后打开 `diplay-cs75plus`，按现有方式连接 iPhone CarPlay。
+4. 在驻车状态下检查手机高德导航、HUD、仪表内容选择及断连重连。
 
-**针对长安 UNI-V（飞鱼 OS）的适配与修复**：
+46版在已实车使用的45版基础上更改应用名称、版本信息和项目说明，沿用相同构建方案与白名单签名。未把新的音频参数或待验证方案纳入此次发行。
 
-### 长安专属改造
+## 本车使用条件与已知限制
 
+- **仪表投屏时关闭 ADB**：本车多轮测试中，ADB开启会干扰仪表投屏；HUD与仪表投屏需分别判断。
+- **保留原厂高德后台**：仪表投屏依赖原厂环境准备。使用手机高德导航时，车机高德保持未导航状态。
+- **关闭原厂自动巡航**：原厂巡航仍可能持续覆盖导航数据，导致HUD反复闪烁；当前补偿不能彻底消除此竞争。关闭自动巡航并退出巡航后已观察到恢复稳定。
+- **自动全屏已有成功样本，仍需长期观察**：45版已观察到重连后自动全屏；较早日志也有长等待和未确认结果，部分轮次ADB状态不完整，不承诺每次即时恢复。
+- **原车转向卡保留**：接入HUD后，速度表上方可能同时显示原车转向卡；本版没有隐藏它。“仅地图”只控制相应视频／自绘内容，不关闭实体HUD或原车卡。
+- **音频设置保持原样**：媒体12、导航10继续沿用；原厂导航和DiPlay导航均已观察到进入导航bus3。音乐输出及主观响度差仍待固定音量条件下补充对照，不据此调整音量曲线。
 
+Android最低版本声明为API25，但本定制功能仅在上述Android9车机验证。其他系统与车型需要单独适配。
 
-* **仪表盘投屏**：新增通用 "仪表盘" 分区入口，支持**整屏镜像**（整个 CarPlay 界面投到仪表）与**导航流**两种模式；非比亚迪车机默认开启；Display 枚举带通用兜底（任意非默认 display），长安车机可直接使用。**画面优先级最高：本项目的所有优化都不允许推迟画面**（曾试过"延迟画面对齐音频"的方案，已撤销）
+## 版本与上游关系
 
-* **无线热点 2.4GHz 放行**：长安热点工作在 2.4GHz，修复原版对频段的强制检查导致的无法启动
+| 代码线 | 用途 |
+| --- | --- |
+| `master` | 保存／同步上游原始历史 |
+| `codex/ca75plus-hud-0.2.22` | 当前发行与后续CS75PLUS定制 |
+| `codex/ca75plus-hud-0.2.21` | 旧版独立维护线 |
 
-* **热点地址 IPv4 优先**：修复长安 Manual 热点场景下 iPhone 无法发现车机 AirPlay 服务的问题（IPv6 link-local 兜底）
+本发行基于 Gitee 长安定制版标签 `v0.2.22-hud-test-20261025`（`c83b33b`），承接本仓库0.2.21维护线的HUD和仪表修复。发行标签指向定制分支的提交，master不合入本次定制改动。
 
-### 手势与仪表盘控制
+Gitee长安定制版原始车型说明保留在[历史长安README](docs/UPSTREAM-CHANGAN-README.md)；公版文档见[原始README](docs/UPSTREAM-README.md)／[中文说明](docs/UPSTREAM-README.zh-CN.md)。UNI-V／飞鱼系统的参考结论不直接当作本车结论。
 
+## 开发与合并上游
 
+定制代码入口：
 
-* **三指左右滑飞屏**：三指左滑 / 右滑在**仅导航 → 整机镜像 → 原车机画面**三态之间流转，切换结果持久保存，不需要原车高德在后台运行。滑动语义为"前进 / 后退"：左滑前进（原车机画面 → 整机镜像 → 仅导航），右滑后退（仅导航 → 整机镜像 → 原车机画面）
+- `customizations/changan-hud/`：本车HUD协议、会话保持及外部覆盖处理。
+- `customizations/changan-projection/`：自动全屏、重连确认和有界恢复。
+- `customizations/api/`：不含厂商编号的通用契约。
+- `shared/.../customization/UpstreamNavigationAdapter.kt`：对上游导航解析的单一适配边界。
+- `mobile/src/main/res/values/strings_cs75plus.xml`：独立应用品牌资源；集成检查防止名称被上游覆盖。
 
-* **三指滑动判定优化**：左 / 右滑支持带轻微下倾的滑动（水平方向主导即可），不再受固定垂直偏移限制
+源码构建需 JDK25、项目所要求的Android SDK与Gradle环境。可先执行：
 
-* **三指下拉打开设置（可能偶尔失败）**：若在设置中将"下拉打开设置"设为三指，可能因车机触摸识别偶尔失败，**多尝试几次或改用四指下拉**
-
-* **仪表盘画面调整（已可用）**：设置中的 "仪表盘画面调整" 支持调整仪表盘投屏区域（方框 rect）——通过滑块调整左上角位置与宽高，投屏画面等比填充到该区域
-
-* **卡片独立缩放**：转向卡 / 到达卡 / 车道卡 / 路名卡 / 歌曲卡各自可调 **60%~160%**，取代原来的"小 / 中 / 大"三档。100% 等于原"中"档，不调整则外观不变；拖动即时生效，无需重连
-
-* **卡片独立位置**：五张卡均可设置水平 / 垂直坐标（相对 1920×720 仪表画布左上角），改完点「应用」立即生效
-
-* **歌曲信息卡**：仪表盘显示当前播放的「歌名 — 歌手」，位置与大小同上可调。**仅导航与整机镜像两种模式下都会显示**（不受"仅导航模式"约束）
-
-* **卡片阴影改浅**：原阴影半径按卡片高度比例计算，在高卡片下方会糊成一大块实心暗色；现改为小固定偏移 + 淡填充，观感更轻盈（**本版视觉变化点**，仅影响卡片投影，不影响数据与布局）
-
-### 音频
-
-* **导航与媒体音量分开调节**：支持分别设置媒体与导航的音频声道——**媒体声道可设置为 12，导航声道可设置为 10**（需车机支持高级音频通道映射，设置中开启"高级音频通道映射"后生效）
-
-
-* **音乐缓冲可选档位**：150 / 300 / **500（默认）** / 1000 / 1500 ms。缓冲越大越抗卡顿、音画偏移越大；越小越同步、但对网络间隙更敏感
-  实测本车网络到达间隙可达 **389~396 ms**，**低于 400 ms 的档位在高速等真实路况下可能偶发断续**，日常建议 500
-
-* **导航 / 语音提示独立缓冲**：播报声道单独使用 400 ms 抖动缓冲，与音乐互不影响，导航说话不再卡顿
-
-* **音量压低自恢复**：手机拍照、通知、Siri 等发声时，CarPlay 会要求车机压低音量；现按协议执行并带 **12 秒自恢复**兜底，压低**只作用于音乐**，不会压低导航提示音与通话
-
-### 车机联动
-
-
-
-* **昼夜模式跟随**：自动跟随车机昼夜主题切换 CarPlay 深色 / 浅色外观
-
-* **画面调节**：CarPlay 画面裁剪 / 缩放调节（CarPlayPicture）
-
-* **Wi-Fi Direct 连接**：支持 Android 9 legacy P2P 组（DIRECT-xx）连接方式
-
-* **现有 Wi-Fi / 同局域网连接**：不创建热点，直接复用车机已连接的现有 Wi-Fi（如路由器 / 随身 Wi-Fi）。设置中切换 "现有 Wi-Fi" 模式并填写外部 Wi-Fi 的 SSID 与 WPA2 密码（开放网络可留空）后，车机与 iPhone 保持同一网络即可建立 CarPlay；要求路由为 WPA2 或 WPA2/WPA3 混合模式并关闭客户端隔离
-
-* **冷启动补投**：若启动 App 时仪表屏尚未就绪，会在屏幕可用后**自动补做投屏**，无需手动滑动
-
-### 连接稳定性修复
-
-
-
-* **主动下发 Wi-Fi 配置（0x5703）**：主循环主动推送 + transport 就绪后重发，解决 iPhone 不请求热点配置导致的卡死
-
-* **Android 9 TCP 半开检测**：原版在 API<29 完全跳过 keepalive 调优（断线后界面永久卡死），本版用 `Os.dup` 实现约 12 秒判死并自动回到连接界面重试
-
-* **断线自动重连**：iPhone 断开后自动退回连接界面并指数退避重试（上限 30s）；尺寸未知时等待屏幕检测后自动拉起
-
-* **重连防过期**：restartGeneration 校验，旧的重连回调不会干扰新会话
-
-
-### 诊断与适配
-
-
-
-* **无文件选择器诊断导出**：长安车机缺少 DocumentsUI，支持保存到应用目录 / 屏幕直接显示诊断全文 / 分享（自动清理，仅保留最新 8 个报告）
-
-* 屏幕诊断快照：连接状态、热点后端、iAP2 命令序列、AirPlay TCP 状态一目了然
-
-### 已知问题与限制
-
-* **歌词显示取决于正在播放的音乐 App**：歌词由音乐 App 自己渲染并随投屏一起显示——**QQ 音乐会把歌词投到仪表上，Apple Music 的播放界面本身不显示歌词，因此也投不出来**。本应用额外显示的是「歌名 — 歌手」文字信息，两者互不冲突
-
-
-* **音画同步需按场景取舍**：默认 500 ms 播放稳定但歌词**略早**；150 / 300 ms 最同步但真实路况下可能**偶发断续**（实测间隙 389~396 ms）
-
-
-* **三指下拉打开设置**偶发失败（车机触摸识别问题），可改用四指下拉
-
-
-## 版本
-
-
-
-* 当前版本：**v0.2.22-hud-test**（versionName `0.2.22-hud-test`，versionCode 37，debug 签名，包名 `com.shihab.diplay.hudtest`）
-
-* Release 页提供编译好的 APK（`dica.apk`），可直接覆盖安装
-
-* 版本跨度较大时，**升级后建议检查「音频 → 音乐缓冲」**：当前默认值为 1000 ms（对 Wi-Fi 抖动最稳）；追求歌词同步可降到 500 / 300 ms。
-
-## 快速开始（用户）
-
-
-
-1. 从 [Releases](https://gitee.com/jiuyueji/diplay_changan/releases) 下载最新 `dica.apk`
-
-2. 安装到车机（车机需允许未知来源安装）
-
-3. 打开 DiPlay，开启车机热点，iPhone 蓝牙配对后进入 CarPlay
-
-> 认证说明：DiPlay 使用本地离线 MFi 认证资产编译（不随源码 / APK 分发）。编译与使用仅供个人尝鲜，请勿用于商业用途。
-
-## 构建（开发者）
-
-环境：Android Studio / JDK 21 / Android SDK 37（compileSdk 37）
-
-
-
-```
-# 1. 准备认证资产（不随仓库分发，自行生成或从原项目获取）
-export DIPLAY_AUTH_ASSETS_DIR=/path/to/diplay-auth-assets   # 内含 offline-mfi/{certificate.p7b, identity.pk8}
-
-# 2. 编译
-./gradlew assembleDebug --no-daemon
-# 产物：mobile/build/outputs/apk/debug/mobile-debug.apk
+```sh
+python3 scripts/check_public_tree.py
+python3 scripts/check_customization_integration.py
+./gradlew :vehicle-customization-api:testDebugUnitTest :changan-hud:testDebugUnitTest :changan-projection:testDebugUnitTest :mobile:assembleDebug :mobile:lintDebug
 ```
 
-本地构建需自行提供 `DIPLAY_AUTH_ASSETS_DIR`（含 `offline-mfi/` 目录）；缺失时仅能构建不带认证身份的源码包。
+普通源码构建不含CarPlay离线认证身份。独立可连接APK需显式提供本地 `DIPLAY_AUTH_ASSETS_DIR`，目录内含所需 `offline-mfi/` 输入，再执行 `:mobile:assembleStandaloneDebug`。发行APK包含运行所需认证数据；原始认证输入、APK签名私钥和车机日志不进入Git或源码包。
 
-## 致谢与协议
+测试应分别记录定向回归、全量基线和实车结果。[验证记录](customizations/VALIDATION.md)保留上游既有失败，不把定向通过写成全量通过。
 
+## 致谢与许可证
 
+- 原始 DiPlay：[shihabal3amri/DiPlay](https://github.com/shihabal3amri/DiPlay)。
+- 长安定制基础：[jiuyueji/diplay_changan](https://gitee.com/jiuyueji/diplay_changan)。
+- 本车CS75PLUS适配：[Fre0ddy1/diplay_cs75plus_changan](https://github.com/Fre0ddy1/diplay_cs75plus_changan)。
 
-* 原作者：[shihabal3amri/DiPlay](https://github.com/shihabal3amri/DiPlay)（GPL-3.0）—— 本项目的全部基础能力均源自该开源项目
-
-* 仪表盘 Display 枚举兜底思路参考 AMap Companion
-
-* 本仓库遵循 **GPL-3.0**（见 [LICENSE](LICENSE)）
-
-* 仅供个人尝鲜与研究，禁止用于商业量产
-
-
-
-***
-
-> 本项目由 
->
-> **豆包 AI（Doubao）**
->
->  辅助生成与维护。
+源代码沿用 **GPL-3.0**，见 [LICENSE](LICENSE)。保留上游作者、历史与许可证。

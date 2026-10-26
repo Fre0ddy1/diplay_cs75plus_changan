@@ -20,8 +20,8 @@ android {
         applicationId = "com.shihab.diplay.hudtest"
         minSdk = 25
         targetSdk = 37
-        versionCode = 45
-        versionName = "0.2.22-ca75plus.3"
+        versionCode = 46
+        versionName = "0.2.22-ca75plus.4"
 
     }
 
@@ -42,7 +42,8 @@ android {
 
     buildTypes {
         debug {
-            versionNameSuffix = "-hud-test"
+            // Distribution keeps the same unminified build path validated on the car.
+            // Branding/version metadata changes do not introduce a new runtime variant.
         }
         release {
             optimization {
