@@ -6267,17 +6267,30 @@ class CarPlayHostActivity : ComponentActivity() {
      */
     private fun onClusterProjectionWithdrawn() {
         if (shuttingDown.get() || isFinishing || isDestroyed) return
-        val wasProjecting = lastKnownProjecting
+        // "Was projecting" is not only incall's last report: a window that is on screen and not
+        // hidden proves the panel was ours even if the confirmation callback never arrived.
+        val wasProjecting = lastKnownProjecting || (clusterPresentation != null && !clusterWindowHidden)
         lastKnownProjecting = false
         if (!wasProjecting) return
+        // Suspend the auto-activation IMMEDIATELY: the watcher samples every 500 ms, so waiting
+        // for the confirmation window let it send a sequence first and re-open the dashboard once
+        // (field 2026-10-26: "偶尔还是会复投一次"). The confirmation below only undoes the flag
+        // when the drop was really part of an activation ramp.
+        userHandedBackProjection = true
         mainHandler.removeCallbacks(projectionWithdrawConfirmation)
         mainHandler.postDelayed(projectionWithdrawConfirmation, PROJECTION_WITHDRAW_CONFIRM_MS)
     }
 
     private val projectionWithdrawConfirmation = Runnable {
         if (shuttingDown.get() || isFinishing || isDestroyed) return@Runnable
-        if (InCallClusterBridge.reportsProjecting()) return@Runnable
-        userHandedBackProjection = true
+        if (InCallClusterBridge.reportsProjecting()) {
+            // The panel came back by itself: this was the 0 inside our own activation ramp, not
+            // the driver closing it. Undo the hand-back.
+            userHandedBackProjection = false
+            lastKnownProjecting = true
+            appendLog("Cluster: 投影状态自行恢复，撤销归还判定")
+            return@Runnable
+        }
         clusterPresentation?.setMapVisible(false)
         clusterSwipePosition = -1
         clusterPositionFromAuto = false
