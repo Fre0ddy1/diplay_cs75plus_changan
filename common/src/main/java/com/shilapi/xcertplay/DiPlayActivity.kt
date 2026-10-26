@@ -553,6 +553,23 @@ class DiPlayActivity : ComponentActivity() {
                 addView(button(getString(R.string.vpn_root_grant), false) { runVpnRootGrant() }, matchButton(10, 60))
                 addView(button(getString(R.string.show_diagnostics_on_screen), false) { showDiagnosticsOnScreen() }, matchButton(10, 60))
                 addView(button(getString(R.string.clear_logs), false) { clearDiagnosticLogs() }, matchButton(10, 60))
+                // 播报定位用：把激活序列拆成可累加的档位，路测时逐档切。
+                choice(
+                    this,
+                    getString(R.string.cluster_probe_title),
+                    listOf(
+                        getString(R.string.cluster_probe_off),
+                        getString(R.string.cluster_probe_step_1),
+                        getString(R.string.cluster_probe_step_2),
+                        getString(R.string.cluster_probe_step_3),
+                        getString(R.string.cluster_probe_step_4),
+                    ),
+                    AirPlayPersistence.loadClusterProbeStep(this@DiPlayActivity),
+                ) { AirPlayPersistence.saveClusterProbeStep(this@DiPlayActivity, it) }
+                addView(
+                    label(getString(R.string.cluster_probe_hint), 13, MUTED)
+                        .apply { setPadding(0, dp(4), 0, dp(10)) },
+                )
             }
             toggle(
                 card,

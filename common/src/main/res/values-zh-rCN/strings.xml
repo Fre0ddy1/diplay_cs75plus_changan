@@ -374,6 +374,13 @@
     <string name="instrument_cluster_entire_interface">整个 CarPlay 界面（镜像同步）</string>
     <string name="instrument_cluster_navigation_stream">导航仪表流（仅导航画面）</string>
     <string name="cluster_content_title">仅导航模式下仪表盘画面来源</string>
+    <string name="cluster_probe_title">仪表激活探测</string>
+    <string name="cluster_probe_hint">把激活序列拆成可累加的几档，用来定位车机是从哪一步开始播“全屏导航已开启”。关闭即走正常完整序列。只在排查时使用，低档位下仪表可能投不出来。</string>
+    <string name="cluster_probe_off">关闭 · 完整序列</string>
+    <string name="cluster_probe_step_1">1 · 仅 F0 + 模式 + 属性</string>
+    <string name="cluster_probe_step_2">2 · 再加 tx2 确认</string>
+    <string name="cluster_probe_step_3">3 · 再加源切换梯</string>
+    <string name="cluster_probe_step_4">4 · 再加状态梯</string>
     <string name="cluster_content_custom">地图 + 自绘卡片（位置可调）</string>
     <string name="cluster_content_flycard">Apple 完整导航</string>
     <string name="cluster_content_hint">各来源都是手机推过来的画面；切换会自动重连，因为地址在建窗口时就定死了。</string>

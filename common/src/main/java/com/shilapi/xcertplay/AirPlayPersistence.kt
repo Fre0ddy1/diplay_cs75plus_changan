@@ -661,6 +661,22 @@ object AirPlayPersistence {
     }
 
     /**
+     * 仪表激活探测档位（0=关闭，走完整序列）。
+     *
+     * 用来定位"全屏导航已开启"那一声到底由哪一步引起：把完整序列拆成可累加的四档，
+     * 逐档路测，看仪表从哪一档开始能投、从哪一档开始播报。定位到之后按最小必要档固化，
+     * 这一项随之删除。
+     */
+    private const val KEY_CLUSTER_PROBE_STEP = "cluster_probe_step"
+
+    fun loadClusterProbeStep(context: Context): Int =
+        context.getSharedPreferences(PREFS, Context.MODE_PRIVATE).getInt(KEY_CLUSTER_PROBE_STEP, 0)
+
+    fun saveClusterProbeStep(context: Context, step: Int) {
+        context.getSharedPreferences(PREFS, Context.MODE_PRIVATE).edit().putInt(KEY_CLUSTER_PROBE_STEP, step).apply()
+    }
+
+    /**
      * Left-edge source crop for the whole-screen mirror on the dashboard (fixed pixels of the
      * stream width, set once by the driver). The CarPlay home dock / left rail occupies the
      * left of the console picture; cropping it off the mirrored dashboard makes the mirror

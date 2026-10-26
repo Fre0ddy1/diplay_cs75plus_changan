@@ -519,6 +519,13 @@ object InCallClusterBridge {
             runSilentOpen()
             return
         }
+        // 播报定位档位（设置页开发者选项里切）。0 = 关闭，走原来的完整序列。
+        val probeStep = AirPlayPersistence.loadClusterProbeStep(ctx)
+        if (probeStep in 1..4) {
+            logSeq(generation, "probe: step=$probeStep（${probeLabel(probeStep)}）")
+            runProbeOpen(probeStep)
+            return
+        }
         // No report from incall in this process yet. Only the force-kill warm case - we never
         // handed the ext-screen back - may try the silent half first: there the ext-screen is
         // (probably) still ours and a re-assert is all that is needed. After our OWN r0 the
@@ -675,6 +682,80 @@ object InCallClusterBridge {
                 setCarProperties()
             }, token, SystemClock.uptimeMillis() + at)
         }
+    }
+
+    /**
+     * 播报定位用的分档激活，只在 [AirPlayPersistence.loadClusterProbeStep] 返回 1..4 时走这里。
+     *
+     * 完整序列由四块能独立观察的东西拼成，按累加顺序切档，唯一目的是路测时回答两个问题：
+     * 仪表从哪一档开始能投，和哪一档开始播报。
+     *
+     *   step 1  F0 + C0 + Z          静默那半，从未被观察到播报
+     *   step 2  1 + tx2[1]           源切换确认
+     *   step 3  1 + 9/12/40 源梯     源切换请求
+     *   step 4  1 + 10019 状态梯     投影模式状态机
+     *
+     * 每档都带 hold 循环（F0 + C0(3) + Z），因为发完就撒手时仪表往往还没来得及映射，
+     * 那样测出来的"投不上"会误导判断。定位到之后按最小必要档固化，这项设置随之删除。
+     */
+    private fun runProbeOpen(step: Int) {
+        val b = binder
+        val gen = generation
+        logSeq(gen, "probe open: step=$step ${probeLabel(step)}")
+        clearScreenOpen()
+        setCarProperties()
+        setMode(1)
+        setMode(3)
+        if (!silentHoldScheduled) {
+            silentHoldScheduled = true
+            for (at in HOLD_RETRY_DELAYS) {
+                mainHandler.postAtTime({
+                    if (gen != generation) return@postAtTime
+                    if (!alive()) return@postAtTime
+                    clearScreenOpen()
+                    setMode(3)
+                    setCarProperties()
+                }, token, SystemClock.uptimeMillis() + at)
+            }
+        }
+        if (step >= 2 && b != null) {
+            mainHandler.postAtTime({
+                if (gen != generation) return@postAtTime
+                if (!alive()) return@postAtTime
+                val ok = txWrite(b, 2, intArrayOf(1))
+                logSeq(gen, "probe tx2[1] -> $ok")
+            }, token, SystemClock.uptimeMillis() + 90L)
+        }
+        if (step >= 3) {
+            sendSourceEnter()
+            for ((i, d) in SOURCE_SWITCH_DELAYS.withIndex()) {
+                mainHandler.postAtTime({
+                    if (gen != generation) return@postAtTime
+                    broadcastSource(if (i == 0) 12 else 40)
+                }, token, SystemClock.uptimeMillis() + d.toLong())
+            }
+        }
+        if (step >= 4) {
+            var t = 0L
+            for (s in STATE_LADDER) {
+                val at = t
+                val state = s
+                mainHandler.postAtTime({
+                    if (gen != generation) return@postAtTime
+                    broadcastSource(state)
+                    if (state == -1) broadcastStatusOpen()
+                }, token, SystemClock.uptimeMillis() + at)
+                t += 90L
+            }
+        }
+    }
+
+    private fun probeLabel(step: Int): String = when (step) {
+        1 -> "F0+C0+Z"
+        2 -> "F0+C0+Z+tx2"
+        3 -> "F0+C0+Z+9/12/40"
+        4 -> "F0+C0+Z+10019 状态梯"
+        else -> "完整序列"
     }
 
     /**
