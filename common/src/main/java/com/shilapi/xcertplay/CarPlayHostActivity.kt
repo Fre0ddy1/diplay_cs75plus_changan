@@ -495,8 +495,23 @@ class CarPlayHostActivity : ComponentActivity() {
     private var userHandedBackProjection = false
     /** Last projecting state incall reported, to tell a hand-back from our own activation ramp. */
     private var lastKnownProjecting = false
+    /**
+     * The dashboard mode in use before the wheel's close-projection parked the position machine on
+     * -1; null when the current -1 did not come from a hand-back. -1 is a dead end for a right
+     * swipe, so after a hand-back both directions must reopen this mode instead of one of them
+     * silently doing nothing (field 2026-10-27 00:23 / 00:26: the wheel closed the panel, a right
+     * swipe logged "用户重新接管" and then never reopened anything).
+     */
+    private var clusterMirrorBeforeHandback: Boolean? = null
     /** Set by a three-finger swipe: ask the watcher to run its send conditions right now. */
     @Volatile private var activationRequested = false
+    /** Last time we sent a sequence because the driver asked (swipe), for the mode-1 bypass rate. */
+    @Volatile private var lastManualActivationAtMs = 0L
+    /**
+     * Last time the full open sequence went out. incall reports a stray 0 while our own sequence
+     * climbs, so a 3 -> 0 inside this window must not be read as the wheel closing the panel.
+     */
+    @Volatile private var lastOpenSequenceAtMs = 0L
     /** One cold-start attempt per connection, independent of what incall has reported so far. */
     @Volatile private var coldStartAttempted = false
     @Volatile private var sessionStartedAtElapsedMs = 0L
@@ -4789,6 +4804,7 @@ class CarPlayHostActivity : ComponentActivity() {
                     autoProjectLadderActive = false
                     clusterSwipePosition = -1
                     clusterPositionFromAuto = false
+                    clusterMirrorBeforeHandback = null
                     clusterActivationAttempted = false
                     // A released ext-screen must not survive a reconnect: the next open re-runs
                     // the full sequence anyway, and a stale flag would only force it again.
@@ -5356,6 +5372,7 @@ class CarPlayHostActivity : ComponentActivity() {
         // 10-08). The swipe position and activation flags are still reset below.
         clusterSwipePosition = -1
         clusterPositionFromAuto = false
+        clusterMirrorBeforeHandback = null
         clusterActivationAttempted = false
         clusterExtScreenReleased = false
         autoProjectTriggered = false
@@ -5940,10 +5957,18 @@ class CarPlayHostActivity : ComponentActivity() {
         // The swipe also asks the watcher to re-run its send conditions immediately. The watcher
         // stays the only sender - nothing here sends a sequence itself.
         activationRequested = true
+        // A hand-back parked the position machine on -1, where a right swipe is the end of the
+        // machine and does nothing at all. There the driver's swipe means "give me the dashboard
+        // back", so both directions reopen the mode that was in use before the wheel closed it.
+        val handbackMirror = clusterMirrorBeforeHandback
+        val reopeningFromHandback = clusterSwipePosition <= -1 && handbackMirror != null
+        if (reopeningFromHandback) clusterMirrorBeforeHandback = null
         // Left swipe (right-to-left) is FORWARD: not projected -> whole screen (pos 0) ->
         // navigation stream only (pos 1) -> boundary. Right swipe is BACK: pos 1 -> pos 0 ->
         // off (-1) -> boundary, and does nothing before the first projection.
-        val nextPos = when (direction) {
+        val nextPos = if (reopeningFromHandback) {
+            if (handbackMirror == true) 0 else 1
+        } else when (direction) {
             "left" -> when {
                 clusterSwipePosition <= -1 -> 0
                 clusterSwipePosition >= 1 -> return
@@ -5953,6 +5978,12 @@ class CarPlayHostActivity : ComponentActivity() {
                 clusterSwipePosition <= -1 -> return
                 else -> clusterSwipePosition - 1
             }
+        }
+        if (reopeningFromHandback) {
+            appendLog(
+                "Cluster swipe $direction: 方向盘归还后重新打开仪表 " +
+                    "pos=$nextPos (${if (handbackMirror == true) "整机镜像" else "导航流"})",
+            )
         }
         clusterSwipePosition = nextPos
         if (direction != "auto") {
@@ -5977,6 +6008,8 @@ class CarPlayHostActivity : ComponentActivity() {
             // activation, no teardown. The channel and the window live for the whole session, so
             // the next swipe only has to show it again.
             clusterPresentation?.setMapVisible(false)
+            // The driver closed it themselves: -1 is a real end stop again, not a hand-back.
+            clusterMirrorBeforeHandback = null
             appendLog("Cluster swipe $direction: 隐藏仪表盘投屏窗口 (pos=-1)")
             return
         }
@@ -5987,15 +6020,20 @@ class CarPlayHostActivity : ComponentActivity() {
         // seen at all depends on one thing: the projection channel the start-up watcher sampled.
         // No path below may send the activation sequence - that is what announced on every swipe.
         // The wheel's close-projection only hands the panel back; it does not close the channel.
-        // A window that already exists is therefore proof enough to show it again - requiring a
-        // fresh "projecting" report here is what made the swipe appear dead after a hand-back.
-        val channelReady = clusterPresentation != null || watcherChannelOpen ||
+        // A window that merely EXISTS is not proof of an open channel: it is built at start-up and
+        // sits hidden, so after the wheel closed the panel this test passed, applyClusterMode was
+        // called on a channel nobody projected, shouldShowClusterWindow() said no, and the swipe
+        // died silently while the watcher refused to activate (field 2026-10-27 00:25: swipe after
+        // swipe, nothing on the panel, "incall 未进入全屏导航" every five seconds). Only incall's
+        // own report counts; activationRequested above already asked the watcher to reopen.
+        val channelReady = watcherChannelOpen ||
             runCatching { InCallClusterBridge.reportsProjecting() }.getOrDefault(false)
         if (!channelReady) {
-            // Activation belongs to the start-up watcher alone. A swipe only shows or hides the
-            // window; with no channel there is nothing to show.
             clusterPresentation?.setMapVisible(false)
-            appendLog("Cluster swipe $direction: 投屏通道未开，不显示窗口 (pos=$nextPos)")
+            appendLog(
+                "Cluster swipe $direction: 投屏通道未开，已请求重新激活 " +
+                    "(pos=$nextPos handedBack=$userHandedBackProjection)",
+            )
             return
         }
         if (clusterPresentation == null) ensureClusterPresentation()
@@ -6226,16 +6264,31 @@ class CarPlayHostActivity : ComponentActivity() {
                     // the channel is still closed - both are checked around this gate.
                     val coldStartAttempt = !coldStartAttempted &&
                         now - sessionStartedAtElapsedMs >= 1_000L
+                    // A swipe is the driver telling us to take the panel now. incall reports
+                    // code=1=1 whenever it sits on its own small page - which is exactly the state
+                    // the wheel's close-projection leaves it in - so demanding 3 here locked the
+                    // driver out for good (field 2026-10-27 00:25: swipe after swipe, the panel
+                    // only came back when the wheel itself reported 3 at 00:26:04). The bypass
+                    // applies only to a requested send and is rate-limited, so the unattended
+                    // five-second cadence still never announces on its own.
+                    val manualSinceMs = if (lastManualActivationAtMs == 0L) {
+                        Long.MAX_VALUE
+                    } else {
+                        now - lastManualActivationAtMs
+                    }
+                    val manualBypass = activationRequested &&
+                        manualSinceMs >= MANUAL_ACTIVATION_MIN_INTERVAL_MS
                     val modeReady = displayMode == 3 ||
                         (activationRequested && displayMode != 1) ||
+                        manualBypass ||
                         coldStartAttempt
                     val sinceLast = if (lastSentAtMs == 0L) now - startedAtMs else now - lastSentAtMs
                     if (sinceLast >= WATCHER_RETRY_INTERVAL_MS || activationRequested) {
-                        activationRequested = false
                         if (!sizeReady) {
                             // Do not send and do not advance the clock: wait for a real panel.
                             // Log at most every few seconds so a head unit that never reports a
-                            // sane size cannot flood the report.
+                            // sane size cannot flood the report. The request itself is kept: the
+                            // next period (or the next swipe) tries again.
                             if (now - lastClusterSizeWaitLogMs >= CLUSTER_SIZE_WAIT_LOG_MS) {
                                 lastClusterSizeWaitLogMs = now
                                 appendLog(
@@ -6248,11 +6301,18 @@ class CarPlayHostActivity : ComponentActivity() {
                                 lastClusterSizeWaitLogMs = now
                                 appendLog(
                                     "Cluster watcher: incall 未进入全屏导航（code=1=$displayMode），" +
-                                        "暂缓激活序列",
+                                        "暂缓自动激活；三指会强制投一次",
                                 )
                             }
                         } else {
+                            // Clear the request only when a sequence really goes out, so a swipe
+                            // that lands while the gate is closed is retried instead of dropped
+                            // (the previous code consumed it before the decision, which is how a
+                            // swipe could ask for the panel and change nothing at all).
+                            activationRequested = false
                             if (coldStartAttempt) coldStartAttempted = true
+                            if (manualBypass) lastManualActivationAtMs = now
+                            lastOpenSequenceAtMs = now
                             lastSentAtMs = now
                             clusterPrewarmAtMs = now
                             appendLog(
@@ -6340,8 +6400,28 @@ class CarPlayHostActivity : ComponentActivity() {
         if (shuttingDown.get() || isFinishing || isDestroyed) return
         // The driver swiped the dashboard off: honour it even though the panel is projecting.
         if (clusterSwipePosition < 0) {
-            appendLog("Cluster: 用户已关闭仪表窗口（pos=-1），不显示")
-            return
+            // The wheel closed it and is now opening it again: that is the same request a swipe
+            // makes, so restore the mode it was showing instead of refusing forever because the
+            // position machine is parked on -1 (field 2026-10-27 00:24-00:25: after a hand-back
+            // even the wheel could not bring the CarPlay picture back). A 3 that is still inside
+            // our own sequence ramp proves nothing - the flag stays for a later real open.
+            val handbackMirror = clusterMirrorBeforeHandback
+            val sinceSequenceMs = if (lastOpenSequenceAtMs == 0L) {
+                Long.MAX_VALUE
+            } else {
+                SystemClock.elapsedRealtime() - lastOpenSequenceAtMs
+            }
+            if (handbackMirror == null || sinceSequenceMs <= OWN_SEQUENCE_RAMP_MS) {
+                appendLog("Cluster: 用户已关闭仪表窗口（pos=-1），不显示")
+                return
+            }
+            clusterMirrorBeforeHandback = null
+            clusterSwipePosition = if (handbackMirror) 0 else 1
+            userHandedBackProjection = false
+            appendLog(
+                "Cluster: 方向盘重新开启投屏，恢复仪表窗口 " +
+                    "pos=$clusterSwipePosition (${if (handbackMirror) "整机镜像" else "导航流"})",
+            )
         }
         lastKnownProjecting = true
         if (userHandedBackProjection) {
@@ -6384,7 +6464,17 @@ class CarPlayHostActivity : ComponentActivity() {
         // (field 2026-10-26 22:20:07, "车机收回仪表" right after a sequence).
         val wasProjecting = lastKnownProjecting
         lastKnownProjecting = false
-        if (!wasProjecting) return
+        // incall answers our own state ladder with a stray 0 while it maps the panel, so a 0
+        // inside that ramp proves nothing. Outside it a 0 IS the wheel's close-projection even
+        // when we never saw a confirmed 3 first: on 2026-10-27 00:22:43 the driver closed the
+        // panel and the watcher re-opened it 13 ms later only because lastKnownProjecting was
+        // still false and this returned here (the "close sometimes does not work" report).
+        val sinceSequenceMs = if (lastOpenSequenceAtMs == 0L) {
+            Long.MAX_VALUE
+        } else {
+            SystemClock.elapsedRealtime() - lastOpenSequenceAtMs
+        }
+        if (!wasProjecting && sinceSequenceMs <= OWN_SEQUENCE_RAMP_MS) return
         // Suspend the auto-activation IMMEDIATELY: the watcher samples every 500 ms, so waiting
         // for the confirmation window let it send a sequence first and re-open the dashboard once
         // (field 2026-10-26: "偶尔还是会复投一次"). The confirmation below only undoes the flag
@@ -6407,6 +6497,9 @@ class CarPlayHostActivity : ComponentActivity() {
             return@Runnable
         }
         clusterPresentation?.setMapVisible(false)
+        // Remember what the panel was showing, so a swipe can bring back the same mode: -1 is a
+        // dead end for a right swipe, which made a hand-back reopen nothing at all.
+        clusterMirrorBeforeHandback = currentClusterMirrorMode()
         clusterSwipePosition = -1
         clusterPositionFromAuto = false
         appendLog("Cluster: 车机收回仪表（方向盘关闭投屏），停止自动激活；三指或重连可再次打开")
@@ -6821,6 +6914,18 @@ class CarPlayHostActivity : ComponentActivity() {
         const val NAV_STATE_CONFIRM_MS = 500L
         /** Grace before a "not projecting" report is treated as the driver handing the panel back. */
         const val PROJECTION_WITHDRAW_CONFIRM_MS = 600L
+        /**
+         * Minimum spacing between two driver-requested activation sequences. A swipe may force a
+         * sequence even while incall reports its own small page (code=1=1), which is the state the
+         * wheel leaves it in; this keeps a nervous pair of swipes from announcing twice.
+         */
+        const val MANUAL_ACTIVATION_MIN_INTERVAL_MS = 1_500L
+        /**
+         * How long after our own sequence a "not projecting" report is still ours. incall answers
+         * the state ladder with a stray 0 while the panel is being mapped, so only a 0 outside this
+         * window can be the wheel closing the panel.
+         */
+        const val OWN_SEQUENCE_RAMP_MS = 3_000L
         /**
          * A real dashboard panel is at least this large and landscape. Before activation incall
          * can present a small preview box on the ext-screen; that must never be mistaken for the
