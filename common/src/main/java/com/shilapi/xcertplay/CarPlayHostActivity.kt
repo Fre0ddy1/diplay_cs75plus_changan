@@ -497,6 +497,9 @@ class CarPlayHostActivity : ComponentActivity() {
     private var lastKnownProjecting = false
     /** Set by a three-finger swipe: ask the watcher to run its send conditions right now. */
     @Volatile private var activationRequested = false
+    /** One cold-start attempt per connection, independent of what incall has reported so far. */
+    @Volatile private var coldStartAttempted = false
+    @Volatile private var sessionStartedAtElapsedMs = 0L
     private var initialClusterMirror: Boolean? = null
     /** Last navigation state seen by the auto-switch setting; null = re-evaluate on next tick. */
     private var lastAutoNavState: Boolean? = null
@@ -4749,6 +4752,10 @@ class CarPlayHostActivity : ComponentActivity() {
                     // no longer applies.
                     userHandedBackProjection = false
                     lastKnownProjecting = false
+                    // New connection: the cold-start attempt becomes available again, and its
+                    // three-second clock starts here.
+                    coldStartAttempted = false
+                    sessionStartedAtElapsedMs = android.os.SystemClock.elapsedRealtime()
                     watchMediaAudioRoute()
                     maybeAutoProjectOnConnect()
                     // A connection made while navigation is already running has no transition to
@@ -6208,7 +6215,15 @@ class CarPlayHostActivity : ComponentActivity() {
                     // explicitly asking - may also try while incall is still silent (-1), because
                     // that is the normal state right after power-up; an explicit small window (1)
                     // is never worth a sequence.
-                    val modeReady = displayMode == 3 || (activationRequested && displayMode != 1)
+                    // A cold start has no mode report yet (incall stays silent until something
+                    // takes the panel), so without this one attempt auto-projection could never
+                    // start without a swipe. Exactly one, and only when the panel size is sane and
+                    // the channel is still closed - both are checked around this gate.
+                    val coldStartAttempt = !coldStartAttempted &&
+                        now - sessionStartedAtElapsedMs >= 3_000L
+                    val modeReady = displayMode == 3 ||
+                        (activationRequested && displayMode != 1) ||
+                        coldStartAttempt
                     val sinceLast = if (lastSentAtMs == 0L) now - startedAtMs else now - lastSentAtMs
                     if (sinceLast >= WATCHER_RETRY_INTERVAL_MS || activationRequested) {
                         activationRequested = false
@@ -6232,6 +6247,7 @@ class CarPlayHostActivity : ComponentActivity() {
                                 )
                             }
                         } else {
+                            if (coldStartAttempt) coldStartAttempted = true
                             lastSentAtMs = now
                             clusterPrewarmAtMs = now
                             appendLog(
