@@ -490,6 +490,8 @@ class CarPlayHostActivity : ComponentActivity() {
     private var initialClusterMirror: Boolean? = null
     /** Last navigation state seen by the auto-switch setting; null = re-evaluate on next tick. */
     private var lastAutoNavState: Boolean? = null
+    /** Last route state reported by iAP2, waiting for the confirmation window. */
+    private var pendingNavigationState: Boolean? = null
     /** A dashboard mode is waiting for the projection channel/display to become available. */
     private var autoNavModePending = false
     /** The driver chose a dashboard mode by hand; auto-switch waits for the next nav transition. */
@@ -588,7 +590,6 @@ class CarPlayHostActivity : ComponentActivity() {
             // to skip the postDelayed below, which killed the loop permanently and silently.
             try {
                 com.shilapi.xcertplay.hud.BydNavigationOutputs.refreshTurnOverlay()
-                maybeAutoSwitchClusterForNavigation()
             } catch (error: Throwable) {
                 appendLog("Overlay refresh failed: ${error.javaClass.simpleName}: ${error.message}")
             } finally {
@@ -1287,6 +1288,10 @@ class CarPlayHostActivity : ComponentActivity() {
             }
         }
         com.shilapi.xcertplay.hud.BydNavigationOutputs.setTurnOverlayListener(clusterTurnOverlayListener)
+        // Route state drives "导航时自动切换仪表视图": the transition itself, no polling.
+        com.shilapi.xcertplay.hud.BydNavigationOutputs.setNavigationStateListener { navigating ->
+            mainHandler.post { onNavigationStateEvent(navigating) }
+        }
         com.shilapi.xcertplay.hud.BydNavigationOutputs.setSongListener(clusterSongListener)
         com.shilapi.xcertplay.hud.BydNavigationOutputs.routeTraceListener = routeTraceListener
         mainHandler.removeCallbacks(refreshTurnOverlay)
@@ -4703,6 +4708,15 @@ class CarPlayHostActivity : ComponentActivity() {
                     appendLog("AirPlay session active")
                     watchMediaAudioRoute()
                     maybeAutoProjectOnConnect()
+                    // A connection made while navigation is already running has no transition to
+                    // react to: seed the auto-switch once so it still lands on nav-only.
+                    mainHandler.postDelayed({
+                        if (!shuttingDown.get() && activeAirPlaySession != null &&
+                            com.shilapi.xcertplay.hud.BydNavigationOutputs.navigationActive()
+                        ) {
+                            onNavigationStateEvent(true)
+                        }
+                    }, 1_500L)
                 }
             }
 
@@ -5752,12 +5766,37 @@ class CarPlayHostActivity : ComponentActivity() {
     /**
      * "导航时自动切换仪表视图": one automatic three-finger equivalent per navigation transition.
      *
-     * Runs from the one-second overlay tick. It only acts on a state change (or when the channel
-     * that was closed becomes ready), so a manual swipe during navigation is not undone on the
-     * next tick. The mode it applies is in-memory; applyClusterMode(persist=false) keeps the
-     * driver's saved dashboard display choice untouched.
+     * Driven by the iAP2 0x5201 route state (BydNavigationOutputs.setNavigationStateListener), not
+     * by a one-second poll: the transition itself is the event. A short confirmation window guards
+     * against the start/end flip-flop the field shows (t=0x01/0x03 inside two seconds), and a real
+     * transition hands control back to the auto-switch, so a manual swipe during navigation is
+     * never undone until the next transition.
+     *
+     * The mode it applies is in-memory; applyClusterMode(persist=false) keeps the driver's saved
+     * dashboard display choice untouched.
      */
-    private fun maybeAutoSwitchClusterForNavigation() {
+    private fun onNavigationStateEvent(navigating: Boolean) {
+        if (shuttingDown.get() || isFinishing || isDestroyed || handshakeResetInProgress) return
+        pendingNavigationState = navigating
+        mainHandler.removeCallbacks(navStateConfirmation)
+        mainHandler.postDelayed(navStateConfirmation, NAV_STATE_CONFIRM_MS)
+    }
+
+    private val navStateConfirmation = Runnable {
+        val navigating = pendingNavigationState ?: return@Runnable
+        if (shuttingDown.get() || isFinishing || isDestroyed || handshakeResetInProgress || menuOpen) {
+            return@Runnable
+        }
+        // The route state is noisy around a transition: only act when it is still the same value
+        // after the confirmation window.
+        if (com.shilapi.xcertplay.hud.BydNavigationOutputs.navigationActive() != navigating) {
+            appendLog("Nav auto: 确认窗口内状态又变了，忽略这次切换 navigating=$navigating")
+            return@Runnable
+        }
+        applyAutoNavState(navigating)
+    }
+
+    private fun applyAutoNavState(navigating: Boolean) {
         if (!AirPlayPersistence.loadClusterAutoNavMode(this)) {
             if (clusterPositionFromAuto) {
                 // The auto-switch left the position machine at 0 or 1. At 1 a left swipe is the
@@ -5768,21 +5807,16 @@ class CarPlayHostActivity : ComponentActivity() {
                 clusterSwipePosition = if (clusterSwipePosition == 1) -1 else 0
                 clusterPositionFromAuto = false
             }
-            lastAutoNavState = null
             autoNavModePending = false
             manualClusterOverride = false
-            return
-        }
-        if (shuttingDown.get() || isFinishing || isDestroyed || menuOpen || handshakeResetInProgress) return
-        if (activeAirPlaySession == null) {
             lastAutoNavState = null
             return
         }
-        val navigating = com.shilapi.xcertplay.hud.BydNavigationOutputs.navigationActive()
-        val changed = lastAutoNavState != navigating
+        if (activeAirPlaySession == null) return
+        // A real transition starts a new automatic cycle: the driver's manual choice from the
+        // previous navigation no longer applies.
+        manualClusterOverride = false
         lastAutoNavState = navigating
-        if (changed) manualClusterOverride = false
-        if (!changed && (manualClusterOverride || !autoNavModePending)) return
         val channelOpen = watcherChannelOpen ||
             runCatching { InCallClusterBridge.reportsProjecting() }.getOrDefault(false)
         if (!channelOpen) {
@@ -5793,12 +5827,10 @@ class CarPlayHostActivity : ComponentActivity() {
             clusterPositionFromAuto = true
             if (clusterPresentation == null) runCatching { ensureClusterPresentation() }
             clusterPresentation?.setMode(!navigating)
-            if (changed) {
-                appendLog(
-                    "Nav auto: 投屏通道未开，预置${if (navigating) "仅导航" else "整机镜像"}，" +
-                        "通道就绪后显示",
-                )
-            }
+            appendLog(
+                "Nav auto: 投屏通道未开，预置${if (navigating) "仅导航" else "整机镜像"}，" +
+                    "通道就绪后显示",
+            )
             return
         }
         autoNavModePending = false
@@ -6574,6 +6606,8 @@ class CarPlayHostActivity : ComponentActivity() {
         const val PREWARM_SETTLE_MS = 1_500L
         /** How often the start-up watcher samples the projection channel. */
         const val WATCHER_PERIOD_MS = 500L
+        /** Route-state confirmation window: 0x5201 flips start/end within a second in the field. */
+        const val NAV_STATE_CONFIRM_MS = 500L
         /**
          * A real dashboard panel is at least this large and landscape. Before activation incall
          * can present a small preview box on the ext-screen; that must never be mistaken for the

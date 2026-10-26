@@ -24,6 +24,9 @@ object BydNavigationOutputs {
     private val overlayLock = Any()
     private var publishedLane: BydLaneGuidance? = null
     private var publishedOverlay: ClusterTurnGuidance? = null
+    /** Last route state handed to [navigationStateListener]; guarded by overlayLock. */
+    private var publishedNavigating = false
+    private var navigationStateListener: ((Boolean) -> Unit)? = null
     private val overlayRoute = BydHudRouteState(
         staleRouteNs = 120_000_000_000L,
         emptyListHideNs = 8_000_000_000L,
@@ -166,7 +169,36 @@ object BydNavigationOutputs {
 
     private fun updateOverlay(frame: Iap2Frame) {
         val change = synchronized(overlayLock) { overlayRoute.accept(frame.messageId, frame.payload) }
-        if (change != BydHudRouteChange.NONE) refreshTurnOverlay()
+        if (change != BydHudRouteChange.NONE) {
+            refreshTurnOverlay()
+            // The route state (0x5201) is what "导航时自动切换仪表视图" reacts to. The transition
+            // is the event: no polling, no one-second tick.
+            notifyNavigationStateIfChanged()
+        }
+    }
+
+    /**
+     * Fires [navigationStateListener] when [navigationActive] flips.
+     *
+     * Called from the iAP2 thread right after a 0x5201/0x5202 frame was accepted, so the listener
+     * must hand the value to its own thread.
+     */
+    private fun notifyNavigationStateIfChanged() {
+        val now = navigationActive()
+        val changed = synchronized(overlayLock) {
+            if (now == publishedNavigating) {
+                false
+            } else {
+                publishedNavigating = now
+                true
+            }
+        }
+        if (changed) navigationStateListener?.invoke(now)
+    }
+
+    /** Route-state listener for the dashboard auto-switch. Called from the iAP2 thread. */
+    fun setNavigationStateListener(listener: ((Boolean) -> Unit)?) {
+        navigationStateListener = listener
     }
 
     /** Called every second while the presentation owner lives, even without incoming frames. */
