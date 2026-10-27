@@ -6009,19 +6009,17 @@ class CarPlayHostActivity : ComponentActivity() {
             }
         }
         if (nextPos == -1) {
-            // 归还必须把 ext-screen 真的还给车机（r0）。只隐藏窗口时 incall 仍投着这张空窗口，
-            // 它自己的仪表画面只能挤在一个预览框里（field 2026-10-27 19:2x：三指右滑"归还"
-            // 之后左边留着一块 400x400 的原车高德地图）。
+            // 这里不能发 r0：会话还活着时 r0 会让 incall 重新切一次源，实测必播
+            // "全屏导航已开启"，而且它也没把仪表还回去（field 2026-10-27 19:32：整机镜像再
+            // 往右滑，响一声、画面不动）。断开连接走的是另一条路径（会话已经结束），那条 r0
+            // 不播报，保留。
+            //
+            // 这里只隐藏窗口，靠 incall 在窗口不可见时自己退回原车界面。
             clusterPresentation?.setMapVisible(false)
-            runCatching { InCallClusterBridge.releaseExternalScreen(this) }
-            // r0 之后通道就是关的，watcher 会立刻重新投屏；归还期间必须停发，否则刚还回去
-            // 就又被自己抢回来。下一次三指会在 swipeClusterMode 开头清掉这个标志。
+            // 通道还开着，watcher 本来就不会重发；这个标志是让方向盘重新开启时能恢复显示。
             userHandedBackProjection = true
-            // The driver closed it themselves: -1 is a real end stop again, not a hand-back.
-            // 但仍记下刚才那一路：方向盘重新开启（incall 报 projecting）时用它恢复，否则
-            // onClusterProjectionConfirmed 会因为 mirrorBeforeHandback 为空而拒绝显示。
             clusterMirrorBeforeHandback = mirrorBeforeClose
-            appendLog("Cluster swipe $direction: 归还仪表（r0 已发，pos=-1）")
+            appendLog("Cluster swipe $direction: 隐藏仪表窗口（pos=-1，不发 r0）")
             return
         }
         // pos 0 = whole-screen mirror, pos 1 = navigation stream only.
