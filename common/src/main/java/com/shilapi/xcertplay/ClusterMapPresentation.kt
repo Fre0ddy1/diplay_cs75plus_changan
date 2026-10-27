@@ -497,6 +497,30 @@ internal class ClusterMapPresentation(
     }
 
     /**
+     * 诊断：把导航流（111）当前这一帧存成 PNG。
+     *
+     * 日志只有帧率和码率，给不出画面内容——而"仪表上那行提示到底是不是 111 画的"只能看画面
+     * 才知道，前面的码率推断已经错过三次。缩到一半再存，一张约 200-400 KB，失败返回 null。
+     */
+    fun captureNavFrame(directory: java.io.File): java.io.File? {
+        val view = navTextureView ?: return null
+        if (!view.isAvailable) return null
+        val width = view.width
+        val height = view.height
+        if (width <= 0 || height <= 0) return null
+        val bitmap = runCatching { view.getBitmap(width / 2, height / 2) }.getOrNull() ?: return null
+        val file = java.io.File(directory, "nav-frame-${System.currentTimeMillis()}.png")
+        val saved = runCatching {
+            java.io.FileOutputStream(file).use {
+                bitmap.compress(android.graphics.Bitmap.CompressFormat.PNG, 100, it)
+            }
+            file
+        }.getOrNull()
+        bitmap.recycle()
+        return saved?.takeIf { it.length() > 0 }
+    }
+
+    /**
      * The instruction-card stream came up or went away (FLY_CARD only).
      *
      * The card window is not a fixed part of the dashboard: it exists while the phone is really

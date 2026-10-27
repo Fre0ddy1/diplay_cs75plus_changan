@@ -6101,6 +6101,7 @@ class CarPlayHostActivity : ComponentActivity() {
                     "Cluster swipe $direction: 已切换为导航流" +
                         "（111 已激活，活动流=$activeScreenStreamTypes）",
                 )
+                scheduleNavFrameCapture()
             }
         }
         Toast.makeText(
@@ -6128,6 +6129,27 @@ class CarPlayHostActivity : ComponentActivity() {
                 appendLog("Cluster crop skipped: 窗口不存在 (mirror=$mirror)")
             }
         }
+    }
+
+    /**
+     * 诊断：切到仅导航后抓一张 111 的画面，存成 PNG。
+     *
+     * 日志里只有帧率和码率，看不出画面内容——"仪表上那行提示到底是不是 111 画的"这个问题，
+     * 已经因为拿码率反推内容错了三次。1.5 秒后再抓，让 iPhone 把这一帧画完。
+     */
+    private fun scheduleNavFrameCapture() {
+        mainHandler.postDelayed({
+            if (shuttingDown.get() || isFinishing || isDestroyed) return@postDelayed
+            val directory = java.io.File(filesDir, "logs").apply { mkdirs() }
+            val file = clusterPresentation?.captureNavFrame(directory)
+            appendLog(
+                if (file != null) {
+                    "Diagnostics: 111 画面已存 ${file.name}（${file.length() / 1024} KB）"
+                } else {
+                    "Diagnostics: 111 画面抓取失败（视图不可用或为空）"
+                },
+            )
+        }, 1_500L)
     }
 
     // Best-effort cold-start activation of the dashboard projection via the Chang'an
