@@ -6461,11 +6461,13 @@ class CarPlayHostActivity : ComponentActivity() {
     }
 
     private fun appendLog(message: String) {
+        if (!com.freddyq.diplay.customization.VehicleCustomizations.shouldRecordDiagnostic(message)) return
         val safe = DiagnosticRedactor.redact(message) ?: return
         sessionLog?.append(formattedLogLine(safe, System.currentTimeMillis()))
     }
 
     private fun appendFileLog(message: String) {
+        if (!com.freddyq.diplay.customization.VehicleCustomizations.shouldRecordDiagnostic(message)) return
         sessionLog?.append(formattedLogLine(message, System.currentTimeMillis()))
     }
 

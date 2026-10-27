@@ -39,6 +39,10 @@ checks['common/src/main/java/com/shilapi/xcertplay/InCallClusterBridge.kt'] += [
 checks['common/src/main/java/com/shilapi/xcertplay/CarPlayHostActivity.kt'] += ['CarPlay audio resource:', 'mediaFocusManagedExternally = true', 'CarPlay音频输出已声明=true']
 checks['settings.gradle.kts'] += ['include(":changan-audio")']
 checks['common/build.gradle.kts'] += ['implementation(project(":changan-audio"))']
+checks['settings.gradle.kts'] += ['include(":compact-logging")', 'customizations/compact-logging']
+checks['common/build.gradle.kts'] += ['implementation(project(":compact-logging"))']
+checks['common/src/main/java/com/shilapi/xcertplay/SessionLogFile.kt'] = ['DiagnosticPolicy', 'fileLimit', 'archiveNames', 'policy.keep(line)']
+checks['common/src/main/java/com/shilapi/xcertplay/AsyncDiagnosticLog.kt'] = ['shouldRecordDiagnostic(message)']
 failures=[]
 for name,needles in checks.items():
     path=ROOT/name
@@ -74,6 +78,9 @@ audio_manifest=ET.parse(ROOT/'customizations/changan-audio/src/main/AndroidManif
 audio_provider=audio_manifest.find('application/provider')
 if audio_provider is None or audio_provider.get(android+'exported')!='false' or audio_provider.get(android+'name')!='com.freddyq.diplay.changan.audio.ChanganAudioInitializer' or audio_provider.get(android+'authorities')!='${applicationId}.customizations.changan-audio':
     failures.append('Missing private Changan audio initializer provider')
+compact_provider=ET.parse(ROOT/'customizations/compact-logging/src/main/AndroidManifest.xml').getroot().find('application/provider')
+if compact_provider is None or compact_provider.get(android+'exported')!='false' or compact_provider.get(android+'name')!='com.freddyq.diplay.diagnostics.CompactLogInitializer' or compact_provider.get(android+'authorities')!='${applicationId}.customizations.compact-logging':
+    failures.append('Missing private compact logging initializer provider')
 for module in ['shared','common']:
     for path in (ROOT/module/'src/main').rglob('*.kt'):
         if 'ChanganHudBridge' in path.read_text(encoding='utf-8'):

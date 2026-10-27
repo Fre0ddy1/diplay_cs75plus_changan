@@ -32,6 +32,7 @@ dependencies {
     implementation(project(":changan-hud"))
     implementation(project(":changan-projection"))
     implementation(project(":changan-audio"))
+    implementation(project(":compact-logging"))
     implementation(platform(libs.androidx.compose.bom))
     implementation(libs.androidx.activity.compose)
     implementation(libs.androidx.compose.material3)

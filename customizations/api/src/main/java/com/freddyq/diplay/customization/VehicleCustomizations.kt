@@ -7,6 +7,7 @@ import java.util.concurrent.CopyOnWriteArrayList
 /** Extension points contain no vehicle-specific protocol or UI implementation. */
 interface VehicleCustomization {
     val id: String
+    val diagnosticPolicy: DiagnosticPolicy? get() = null
     fun mediaKeyRoute(context: Context): MediaKeyRoute? = null
     fun onSessionStarted(context: Context) {}
     fun onNavigationFrame(messageId: Int, payload: ByteArray) {}
@@ -53,6 +54,16 @@ open class VehicleCustomizationRegistry {
     }
 
     fun onSessionStarted(context: Context) = dispatch { it.onSessionStarted(context.applicationContext) }
+
+    fun diagnosticPolicy(): DiagnosticPolicy? {
+        for (extension in extensions) {
+            runCatching { extension.diagnosticPolicy }.getOrNull()?.let { return it }
+        }
+        return null
+    }
+
+    fun shouldRecordDiagnostic(message: String): Boolean =
+        diagnosticPolicy()?.let { runCatching { it.keep(message) }.getOrDefault(true) } ?: true
 
     fun mediaKeyRoute(context: Context): MediaKeyRoute? {
         for (extension in extensions) {

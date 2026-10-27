@@ -1,0 +1,7 @@
+<manifest xmlns:android="http://schemas.android.com/apk/res/android">
+    <application>
+        <provider android:name="com.freddyq.diplay.diagnostics.CompactLogInitializer"
+            android:authorities="${applicationId}.customizations.compact-logging"
+            android:exported="false" android:initOrder="110" />
+    </application>
+</manifest>

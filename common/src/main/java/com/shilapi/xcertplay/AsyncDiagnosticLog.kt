@@ -11,6 +11,7 @@ internal object AsyncDiagnosticLog {
 
     fun append(target: SessionLogFile?, message: String, nowMillis: Long = System.currentTimeMillis()) {
         if (target == null) return
+        if (!com.freddyq.diplay.customization.VehicleCustomizations.shouldRecordDiagnostic(message)) return
         val safe = DiagnosticRedactor.redact(message) ?: return
         val timestamp = SimpleDateFormat("HH:mm:ss.SSS", Locale.US).format(Date(nowMillis))
         runCatching { writer.enqueue(Entry(target, "$timestamp  $safe")) }

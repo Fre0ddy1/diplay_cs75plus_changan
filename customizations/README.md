@@ -8,6 +8,7 @@
 | `changan-hud/` | 标准高德广播到interactive的HUD输出、会话保持、投屏握手静默、外部覆盖补偿 |
 | `changan-projection/` | 等待实际小屏反馈后有限切全屏、取消与确认策略 |
 | `changan-audio/` | 独立媒体键策略与设置，默认CarPlay，关闭后明确交给外部控制；不重写音道 |
+| `compact-logging/` | 发行日志筛选、文件/历史/写入队列预算；独立于车辆协议与音频行为 |
 | `shared/.../customization/UpstreamNavigationAdapter.kt` | 复用上游解析器、图标映射、串行队列的单一边界 |
 
 依赖：`shared → api`，`changan-hud → shared + api`，`changan-projection → api`，`changan-audio → api`，`common → 定制模块 + shared`。模块私有provider负责注册，设置通过通用描述展示，首次默认开启、始终可见，不按车型隐藏；保存的关闭状态保留。初始化本身不发导航指令。
@@ -37,3 +38,5 @@ HUD保留版本39的导航会话保持修复。巡航冲突方案是外部清零
 发行应用名为`diplay-cs75plus`。品牌资源和上游合并保护见[发行维护](../docs/CS75PLUS_DISTRIBUTION.md)，不将显示名称混入车辆协议模块。
 
 48候选增加独立音频策略模块，删除47的混合补发方案；帧后来源接管与资源/音流/焦点处理见[48实现说明](../docs/CS75PLUS-48-音频与内容接管.md)。新音频偏好不继承旧蓝牙优先值，但保留旧值供回退；后续用户明确关闭新策略会被保存。
+
+50发行加入`compact-logging`，通过通用`DiagnosticPolicy`接入：常规会话单文件256 KiB、两份历史、队列128行；仅清理应用私有目录已知旧日志槽位。上游未注册策略时保持原筛选与历史数量。视频计数继续更新以供冻结检测，仅压缩诊断输出。文件容量按UTF-8字节在批次中分段轮转，避免一次批写越界。

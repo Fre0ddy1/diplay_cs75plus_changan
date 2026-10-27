@@ -357,6 +357,7 @@ internal object CarPlayMediaKeys {
     fun fromWindow(index: Int) = send(index, "window", fromWheel = true)
 
     private fun report(message: String) {
+        if (!com.freddyq.diplay.customization.VehicleCustomizations.shouldRecordDiagnostic(message)) return
         Log.i(TAG, message)
         com.freddyq.diplay.customization.VehicleCustomizations.diagnostic("CarPlayAudio", message)
     }

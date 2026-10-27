@@ -2283,16 +2283,20 @@ private class AudioRenderer(
             "partialWrites=$partialWritesThisWindow " +
             "playbackRate=${clockTrim?.rate ?: (currentTrack?.sampleRate ?: format.sampleRate)} " +
             "decoderDroppedTotal=$inputDropped outputBuffersTotal=$outputBuffers rebuffers=$rebufferCount ended=$force"
-        Log.i(STATS_TAG, line)
-        report(line)
+        if (com.freddyq.diplay.customization.VehicleCustomizations.shouldRecordDiagnostic(line)) {
+            Log.i(STATS_TAG, line)
+            report(line)
+        }
         if (format.codec != AudioCodecKind.LPCM) {
             // Keep this separate: the exported diagnostic recorder caps each line at 700 characters.
             val decoderLine = "Audio: decoder stats audioType=${format.audioType} codec=${format.codec} " +
                 "inputQueuedTotal=$inputQueued inputDroppedTotal=$inputDropped " +
                 "shortOpusPacketsTotal=$shortOpusPackets decoderUnavailablePacketsTotal=$decoderUnavailablePackets " +
                 "outputBuffersTotal=$outputBuffers ended=$force"
-            Log.i(STATS_TAG, decoderLine)
-            runCatching { report(decoderLine) }
+            if (com.freddyq.diplay.customization.VehicleCustomizations.shouldRecordDiagnostic(decoderLine)) {
+                Log.i(STATS_TAG, decoderLine)
+                runCatching { report(decoderLine) }
+            }
         }
         statsLastUnderruns = underruns
         maxWriteMs = 0L

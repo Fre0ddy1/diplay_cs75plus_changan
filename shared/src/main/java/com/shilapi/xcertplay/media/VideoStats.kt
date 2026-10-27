@@ -63,7 +63,7 @@ internal class VideoStats(
             touchAvgMs, maxTouchLatencyNs / 1_000_000, touchSamples, TouchLatencyProbe.maxSendNs / 1_000_000,
         )
         TouchLatencyProbe.maxSendNs = 0
-        Log.i(TAG, line)
+        if (com.freddyq.diplay.customization.VehicleCustomizations.shouldRecordDiagnostic(line)) Log.i(TAG, line)
         windowStartNs = now
         received = 0; rendered = 0; recoveries = 0; bytes = 0; maxArrivalGapNs = 0
         touchSamples = 0; touchLatencySumNs = 0; maxTouchLatencyNs = 0
