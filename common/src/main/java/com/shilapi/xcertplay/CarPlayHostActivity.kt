@@ -6195,6 +6195,10 @@ class CarPlayHostActivity : ComponentActivity() {
     private fun startClusterChannelWatcher() {
         if (watcherThread != null || DiLink51ClusterLayout.supported()) return
         if (shuttingDown.get() || isFinishing || isDestroyed) return
+        // 静默那半（F0 + C0 + Z + hold）不播报，所以它不需要"incall 已进全屏导航"这种前置条件：
+        // 只要面板尺寸正常、通道还没开，每 5 秒重试一次都是安全的。完整序列（设置里手动开的）
+        // 才需要下面的门槛，否则会在车机没上电时每 5 秒喊一次。
+        val silentMode = !AirPlayPersistence.loadClusterFullSequence(this)
         watcherThread = Thread({
             val startedAtMs = SystemClock.elapsedRealtime()
             // The cold-start clock starts with the watcher (app start), not with the session: the
@@ -6278,7 +6282,8 @@ class CarPlayHostActivity : ComponentActivity() {
                     }
                     val manualBypass = activationRequested &&
                         manualSinceMs >= MANUAL_ACTIVATION_MIN_INTERVAL_MS
-                    val modeReady = displayMode == 3 ||
+                    val modeReady = silentMode ||
+                        displayMode == 3 ||
                         (activationRequested && displayMode != 1) ||
                         manualBypass ||
                         coldStartAttempt

@@ -308,15 +308,6 @@ object InCallClusterBridge {
         editor.apply()
     }
 
-    /**
-     * True when this process has not heard from incall yet but the persisted state says the
-     * projection is still warm because we never handed the ext-screen back: incall was routing the
-     * cluster to us when we last knew (value 3 - a force-kill or crash during an active
-     * projection). The full sequence's source switch would announce for nothing in that case, so
-     * the silent half goes first. Deliberately NOT true after our own r0: there the ext-screen is
-     * the head unit's again and the silent half has been measured not to take it back.
-     */
-    private fun warmStart(): Boolean = persistedProjecting()
     private var openState = false      // f5349k (open in progress / active)
     private var broadcastHalfSent = false
     /**
@@ -534,30 +525,14 @@ object InCallClusterBridge {
         if (AirPlayPersistence.loadClusterFullSequence(ctx)) {
             logSeq(generation, "open: full sequence selected in settings (the announcing path)")
         } else {
+            // 唯一不播报的路径，所以无论进程是冷的、热的、还是接着上次的，都只发它。
+            //
+            // 这里原有一个"热启动先静默，4 秒没确认再补发完整序列"的兜底。它就是未上电时替我们
+            // 喊"全屏导航已开启"的那一发：车机没上电、incall 永远确认不了，4 秒后兜底必然触发。
+            // 静默本身不播报，重试它没有任何代价 - watcher 每 5 秒会再来一次，所以兜底删掉。
             silentOpenOnly = true
             logSeq(generation, "open: silent half only (F0 + C0 + Z), no source switch, no announcement")
             runSilentOpen()
-            return
-        }
-        // No report from incall in this process yet. Only the force-kill warm case - we never
-        // handed the ext-screen back - may try the silent half first: there the ext-screen is
-        // (probably) still ours and a re-assert is all that is needed. After our OWN r0 the
-        // ext-screen belongs to the head unit, and the silent half has been measured NOT to take
-        // it back (field 2026-10-18: the dashboard stayed on the head unit's own screen until the
-        // driver re-enabled the projection channel by hand), so that case must fall through to the
-        // full sequence. A proactive report (value 0, like a head unit that dropped the projection
-        // while we were dead) outranks the persisted state and lands in the branch above, so only a
-        // truly unheard-from process gets here.
-        if (!lastCallbackValue.containsKey(CALLBACK_CODE_STATE) && warmStart() && !releasedByUs()) {
-            silentOpenOnly = true
-            logSeq(
-                generation,
-                "open: fresh process, persisted state projecting=${persistedProjecting()} " +
-                    "released=${persistedReleased()}; silent half first, full sequence in " +
-                    "${SILENT_CONFIRM_MS}ms unless incall confirms",
-            )
-            runSilentOpen()
-            armSilentOpenFallback()
             return
         }
         if (binder != null) {
@@ -665,12 +640,10 @@ object InCallClusterBridge {
      * while the code still sends it - so no path here had actually been verified silent. This one is
      * built from the broadcasts alone, which are the parts the box itself repeats many times.
      *
-     * Used in two cases: when incall reports it is already projecting (no source to switch), and
-     * on a fresh process whose persisted state says the projection is still warm - a force-kill or
-     * crash mid-projection, i.e. we never handed the ext-screen back. In the second case the
-     * attempt is bounded by [armSilentOpenFallback]; the worst case of a
-     * silent half that does not take is a cluster that keeps showing the head unit's own screen,
-     * which the fallback (or the driver's swipe, which always sends the full sequence) recovers.
+     * 这就是现在的默认路径（见 openProjection）：上电后一发就投，没上电时一声不响。
+     *
+     * 不再有"4 秒没确认就补发完整序列"的兜底：车机没上电时那个兜底必然触发，而它就是播报本身。
+     * 静默不播报，重试没有代价，watcher 每 5 秒会再来一次。
      *
      * Deliberately NOT used after our own r0 hand-back: field-measured (2026-10-18, previous-2
      * 13:26:23) the silent half never re-grabs the ext-screen once r0 gave it away - only the full
@@ -695,34 +668,6 @@ object InCallClusterBridge {
                 setCarProperties()
             }, token, SystemClock.uptimeMillis() + at)
         }
-    }
-
-    /**
-     * Bounded fallback for the fresh-process silent open: if incall has not confirmed it is
-     * projecting within [SILENT_CONFIRM_MS], the silent half did not take - the head unit may have
-     * dropped the projection while our process was dead, or the warm session is gone - so the full
-     * open sequence runs after all. The announcement that costs is the same one a cold open makes;
-     * the alternative, never falling back, risks a dashboard stuck on the head unit's own screen.
-     *
-     * Only the persisted-state path arms this. When incall itself reported value 3 the silent half
-     * is certainly correct and needs no fallback.
-     */
-    private fun armSilentOpenFallback() {
-        val gen = generation
-        mainHandler.postAtTime({
-            if (gen != generation || !openState) return@postAtTime
-            if (incallReportsProjecting()) {
-                logSeq(gen, "silent open confirmed by incall (projecting); no full sequence needed")
-                return@postAtTime
-            }
-            logSeq(gen, "silent open not confirmed within ${SILENT_CONFIRM_MS}ms; running the full open sequence")
-            // The silent path marked the broadcast half as sent and consumed the source-enter;
-            // clear both so the fallback is a complete open, not a binder-only half.
-            silentOpenOnly = false
-            broadcastHalfSent = false
-            sourceEnterSent = false
-            runFullOpenSequence()
-        }, token, SystemClock.uptimeMillis() + SILENT_CONFIRM_MS)
     }
 
     private fun runBroadcastHalf() {
