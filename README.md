@@ -11,10 +11,18 @@
 - **仪表自动全屏**：适配原车仪表投屏、自动全屏、视频就绪后的画面接管和断连重连恢复。
 - **仪表内容选择**：支持仅地图、地图与自定义卡片、Apple完整导航，保留CarPlay视频自带的转向和音乐卡片。
 - **CarPlay媒体控制**：音乐经CarPlay播放，播放/暂停和方向盘切歌使用CarPlay控制，统一处理应用内部重复按键入口。
+- **方向盘切歌去重**：合并应用内重复媒体按键，避免一次按键切换两首；本车实测上一首、下一首的单次按键均只切换一首。
 - **导航与音乐独立配置**：媒体和导航音道可分别设置，导航播报期间支持压低音乐音量，播报后恢复。
 - **微信语音后恢复音乐**：优化音频焦点处理，本车已实测微信语音播放结束后音乐自动恢复。
 - **精简日志**：保留连接、HUD、仪表接管、音频状态变化及错误事件；常规会话日志单份不超过256 KiB，保留两份历史，写入队列最多128行。
 - **模块化定制**：HUD、仪表策略、音频控制和日志策略独立维护，便于继续合并上游更新。
+
+## Apple官方文档参考
+
+CarPlay音频、媒体按键及音频资源状态处理参照Apple官方公开文档设计与实现：
+
+- [Developing CarPlay Systems, Part 1](https://developer.apple.com/videos/play/wwdc2016/722/)：车端媒体按键接入CarPlay播放、暂停及上一首/下一首控制。
+- [Developing CarPlay Systems, Part 2](https://developer.apple.com/videos/play/wwdc2016/723/)：音频通道、音量及资源状态管理。
 
 ## 上游功能
 
@@ -59,3 +67,5 @@ python3 scripts/check_customization_integration.py
 - CS75PLUS适配：[Fre0ddy1/diplay_cs75plus_changan](https://github.com/Fre0ddy1/diplay_cs75plus_changan)／[freddy_q/diplay_cs75plus_changan](https://gitee.com/freddy_q/diplay_cs75plus_changan)。
 
 源代码沿用[GPL-3.0](LICENSE)，保留上游历史、作者署名与许可证。
+
+文档由Codex（GPT-6.1 Sol）编写。
