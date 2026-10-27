@@ -9,6 +9,10 @@ interface VehicleCustomization {
     val id: String
     val diagnosticPolicy: DiagnosticPolicy? get() = null
     fun mediaKeyRoute(context: Context): MediaKeyRoute? = null
+    fun onWirelessAudioHandoff(context: Context, connection: WirelessAudioConnection) {}
+    fun onWirelessAudioEnded(owner: Any) {}
+    /** Return true only when taking responsibility for completing this explicit user request. */
+    fun prepareMediaPlayback(context: Context, completed: (Boolean) -> Unit): Boolean = false
     fun onSessionStarted(context: Context) {}
     fun onNavigationFrame(messageId: Int, payload: ByteArray) {}
     fun onSessionEnded() {}
@@ -54,6 +58,20 @@ open class VehicleCustomizationRegistry {
     }
 
     fun onSessionStarted(context: Context) = dispatch { it.onSessionStarted(context.applicationContext) }
+
+    fun onWirelessAudioHandoff(context: Context, connection: WirelessAudioConnection) =
+        dispatch { it.onWirelessAudioHandoff(context.applicationContext, connection) }
+    fun onWirelessAudioEnded(owner: Any) = dispatch { it.onWirelessAudioEnded(owner) }
+    fun prepareMediaPlayback(context: Context, completed: (Boolean) -> Unit): Boolean {
+        for (extension in extensions) {
+            try {
+                if (extension.prepareMediaPlayback(context.applicationContext, completed)) return true
+            } catch (error: Exception) {
+                Log.w(TAG, "${extension.id} media preparation failed", error)
+            }
+        }
+        return false
+    }
 
     fun diagnosticPolicy(): DiagnosticPolicy? {
         for (extension in extensions) {

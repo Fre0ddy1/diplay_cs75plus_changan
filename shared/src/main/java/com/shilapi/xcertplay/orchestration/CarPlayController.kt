@@ -252,8 +252,14 @@ class CarPlayController(
     private val wirelessHandoffRequested = AtomicBoolean(false)
     private val wirelessTunnelReady = AtomicBoolean(false)
     private val wirelessActiveReported = AtomicBoolean(false)
+    private val wirelessBootstrapReleased = AtomicBoolean(false)
     private val wirelessGeneration = AtomicInteger(0)
     private val wirelessConnectionProof = WirelessConnectionProof<AirPlaySession>()
+    @Volatile private var wirelessBluetoothTargetAddress: String? = null
+    private val wirelessAudioHandoff = WirelessAudioHandoffGate(
+        ready = { VehicleCustomizations.onWirelessAudioHandoff(appContext, it) },
+        ended = { VehicleCustomizations.onWirelessAudioEnded(it) },
+    )
 
     private var permissionCloseable: Closeable? = null
     private var attachCloseable: Closeable? = null
@@ -287,6 +293,12 @@ class CarPlayController(
                 }
             }
             activeSession = session
+            if (config.transport == CarPlayTransport.WIRELESS) {
+                wirelessBluetoothTargetAddress?.let { address ->
+                    wirelessAudioHandoff.session(session, address,
+                        wirelessBootstrapReleased.get())
+                }
+            }
             wiredStartWatchdog?.sessionActive()
             debugLog(
                 "AirPlay session active controller=${session.controllerId ?: "unknown"} " +
@@ -297,6 +309,7 @@ class CarPlayController(
 
         override fun onSessionEnded(session: AirPlaySession) {
             if (activeSession === session) {
+                wirelessAudioHandoff.close(session)
                 activeSession = null
                 VehicleCustomizations.onSessionEnded()
                 BydNavigationOutputs.endNow()
@@ -353,6 +366,10 @@ class CarPlayController(
             debugLog(
                 "AirPlay command type=$type params=${params.keys.sorted().joinToString(",")}",
             )
+            if (config.transport == CarPlayTransport.WIRELESS && !closed &&
+                activeSession === session && isBluetoothHandoffCommand(type)) {
+                wirelessAudioHandoff.requested(session)
+            }
             if (
                 config.transport == CarPlayTransport.WIRELESS &&
                 !closed &&
@@ -492,12 +509,15 @@ class CarPlayController(
         if (closed) return false
         val session = activeSession ?: return false
         return try {
-            touchExecutor.execute { session.sendMedia(index) }
+            touchExecutor.execute { if (activeSession === session) session.sendMedia(index) }
             true
         } catch (_: Exception) {
             false
         }
     }
+
+    /** Identity only: an asynchronous media recovery must not cross a phone-session boundary. */
+    fun mediaSessionIdentity(): Any? = activeSession
 
     /**
      * Presses and releases a telephony HID usage on the phone, e.g. the Hook Switch that answers
@@ -523,6 +543,7 @@ class CarPlayController(
         wiredStartWatchdog?.terminate()
         wiredStartTimer.shutdownNow()
         val teardownStarted = System.nanoTime()
+        wirelessAudioHandoff.close()
         connectionDiagnostic("teardown begin transport=${config.transport}")
         videoGate?.close()
         VehicleCustomizations.onSessionEnded()
@@ -1148,6 +1169,7 @@ class CarPlayController(
                 ?: throw IOException(BluetoothRadioCheck.NO_ADAPTER)
             if (!adapter.isEnabled) throw IOException(BluetoothRadioCheck.RADIO_OFF)
             val device = selectWirelessBluetoothDevice(adapter)
+            wirelessBluetoothTargetAddress = device.address
             val hostBluetoothMac = accessoryBluetoothMac(adapter)
             debugLog(
                 "wireless selected Bluetooth target name=${device.name ?: "unknown"} " +
@@ -1354,6 +1376,7 @@ class CarPlayController(
 
     private fun startWirelessTunnelControl(stream: BlockingDuplexByteStream): Boolean {
         if (closed || config.transport != CarPlayTransport.WIRELESS) return false
+        val tunnelOwner = activeSession ?: return false
         val identification = wirelessRuntimeIdentification ?: return false
         val endpoint = wirelessAirPlayEndpoint ?: return false
         val mfi = mfiSession?.client ?: return false
@@ -1389,7 +1412,7 @@ class CarPlayController(
                         locationProvider = locationProvider,
                         vehicleStatusProvider = vehicleStatusProvider,
                         onReady = {
-                            onWirelessTunnelReady(generation)
+                            onWirelessTunnelReady(generation, tunnelOwner)
                         },
                         onIncoming = ::onRouteFrame,
                         onProgress = { message -> debugLog("iAP tunnel $message") },
@@ -1460,15 +1483,17 @@ class CarPlayController(
                 sessionListener.onVideoPlaybackUiRequested(session)
         }
 
-    private fun onWirelessTunnelReady(generation: Int) {
+    private fun onWirelessTunnelReady(generation: Int, owner: AirPlaySession) {
         if (
             closed ||
             phase != Phase.WIRELESS ||
+            activeSession !== owner ||
             generation != wirelessGeneration.get()
         ) {
             return
         }
         wirelessTunnelReady.set(true)
+        wirelessAudioHandoff.tunnelReady(owner)
         wirelessConnectionProof.authenticated(generation)
         debugLog(
             "wireless iAP2 tunnel ready; " +
@@ -1492,6 +1517,9 @@ class CarPlayController(
                 }
                 debugLog("wireless handoff ready; closing Bluetooth bootstrap transport")
                 closeBluetoothBootstrapTransport()
+                if (closed || generation != wirelessGeneration.get()) return@Thread
+                wirelessBootstrapReleased.set(true)
+                activeSession?.let { wirelessAudioHandoff.bootstrapReleased(it) }
                 onStatus(CarPlayStatus.WirelessActive)
             },
             "xcertplay-wireless-handoff",
@@ -2234,6 +2262,9 @@ class CarPlayController(
     }
 
     private fun closeWirelessStack(service: CarPlayVpnService? = vpnService) {
+        wirelessAudioHandoff.close()
+        wirelessBootstrapReleased.set(false)
+        wirelessBluetoothTargetAddress = null
         val diagnostics = wirelessDiagnostics
         wirelessDiagnostics = null
         diagnostics?.close()

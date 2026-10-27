@@ -43,6 +43,14 @@ checks['settings.gradle.kts'] += ['include(":compact-logging")', 'customizations
 checks['common/build.gradle.kts'] += ['implementation(project(":compact-logging"))']
 checks['common/src/main/java/com/shilapi/xcertplay/SessionLogFile.kt'] = ['DiagnosticPolicy', 'fileLimit', 'archiveNames', 'policy.keep(line)']
 checks['common/src/main/java/com/shilapi/xcertplay/AsyncDiagnosticLog.kt'] = ['shouldRecordDiagnostic(message)']
+checks['shared/src/main/java/com/shilapi/xcertplay/orchestration/CarPlayController.kt'] += [
+    'VehicleCustomizations.onWirelessAudioHandoff(appContext, it)',
+    'VehicleCustomizations.onWirelessAudioEnded(it)',
+    'wirelessAudioHandoff.tunnelReady(owner)', 'wirelessAudioHandoff.close(session)',
+]
+checks['common/src/main/java/com/shilapi/xcertplay/CarPlayMediaKeys.kt'] += [
+    'VehicleCustomizations.prepareMediaPlayback(context, complete)', 'releaseRecoveryFocusLocked()',
+]
 failures=[]
 for name,needles in checks.items():
     path=ROOT/name
