@@ -1,0 +1,5 @@
+<resources>
+    <string name="audio_customization_title">CS75PLUS media controls</string>
+    <string name="audio_carplay_controls">CarPlay media controls (recommended)</string>
+    <string name="audio_carplay_description">Send play, pause and track changes through CarPlay. Music stays on CarPlay and guidance keeps its separate audio settings. Turn off only for original Bluetooth control testing; it may change the phone output. Changes apply to the next key press.</string>
+</resources>

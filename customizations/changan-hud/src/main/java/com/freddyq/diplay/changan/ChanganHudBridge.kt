@@ -27,17 +27,19 @@ object ChanganHudBridge {
         @Volatile var projection = ChanganHudProjection()
         private var frameCount = 0
         private var lastIcon: Int? = null
+        private var lastRoad: String? = null
         val session = ChanganHudSession(projection = { projection }) { packet ->
             try {
                 app.sendBroadcast(packet.toIntent())
                 if (packet is ChanganHudPacket.State) {
                     diagnostic("state=${packet.value} uid=${Process.myUid()} frames=$frameCount target=${ChanganHudProfile.RECEIVER_PACKAGE}")
-                    if (packet.value == 8) { frameCount = 0; lastIcon = null }
+                    if (packet.value == 8) { frameCount = 0; lastIcon = null; lastRoad = null }
                 } else if (packet is ChanganHudPacket.Guidance) {
                     frameCount++
-                    if (lastIcon != packet.frame.icon) {
-                        diagnostic("guidance icon=${packet.frame.icon} meters=${packet.frame.distanceMeters}")
+                    if (lastIcon != packet.frame.icon || lastRoad != packet.frame.road) {
+                        diagnostic("guidance icon=${packet.frame.icon} meters=${packet.frame.distanceMeters} roadBytes=${packet.frame.road.toByteArray(Charsets.UTF_8).size} road=${packet.frame.road}")
                         lastIcon = packet.frame.icon
+                        lastRoad = packet.frame.road
                     }
                     Log.d(TAG, "guidance icon=${packet.frame.icon} meters=${packet.frame.distanceMeters}")
                 }

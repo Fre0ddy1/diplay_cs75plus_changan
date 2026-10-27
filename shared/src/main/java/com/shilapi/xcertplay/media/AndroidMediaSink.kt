@@ -44,6 +44,7 @@ internal class AudioFocusCoordinator(
     // Read per duck so the slider takes effect on the next prompt, not the next connection.
     private val duckPercent: () -> Int = { DEFAULT_DUCK_PERCENT },
     private val report: (String) -> Unit = {},
+    private val mediaFocusManagedExternally: Boolean = false,
 ) {
     private data class Entry(val channel: AudioChannel, val attributes: AudioAttributes)
 
@@ -64,6 +65,17 @@ internal class AudioFocusCoordinator(
     private var timedDucking = false
     /** Set for as long as a navigation prompt is playing; we observe this exactly. */
     private var guidanceDucking = false
+    private var mediaResourceAllowed = true
+
+    /** Only media is governed by mainAudio; navigation/alternate audio remains mixable. */
+    @Synchronized
+    fun setMediaResourceAllowed(allowed: Boolean) {
+        if (mediaResourceAllowed == allowed) return
+        mediaResourceAllowed = allowed
+        if (enabled) refreshRequest()
+        applyDuckVolume()
+        report("Audio: mainAudio mediaAllowed=$allowed")
+    }
     // Our own duck is only ever meant to bridge a short prompt, so it undoes itself. The head unit
     // does not always send AUDIOFOCUS_GAIN when the interrupting audio ends, and without this the
     // music stayed at 20 % for the rest of the drive - field report: "it turned the media volume
@@ -122,20 +134,21 @@ internal class AudioFocusCoordinator(
      * call. The call keeps its own GAIN_TRANSIENT request; media simply stays held underneath it.
      */
     private fun refreshRequest() {
-        val primary = active.values.maxByOrNull { it.channel.focusPriority() }
+        val eligible = active.values.filter { it.channel != AudioChannel.MEDIA || (mediaResourceAllowed && !mediaFocusManagedExternally) }
+        val primary = eligible.maxByOrNull { it.channel.focusPriority() }
         if (primary == null) {
             manager?.let { request?.abandon(it) }
             request = null
             requestedChannel = null
             return
         }
-        val callActive = active.values.any { it.channel == AudioChannel.PHONE }
+        val callActive = eligible.any { it.channel == AudioChannel.PHONE }
         if (request != null && (requestedChannel == primary.channel || (callActive && requestedChannel == AudioChannel.MEDIA))) {
             return
         }
         // Never abandon a MEDIA request to install a call request: the call gets its own, and the
         // media one keeps holding its place so the head unit has nothing to re-evaluate.
-        val replacingMedia = requestedChannel == AudioChannel.MEDIA && primary.channel != AudioChannel.MEDIA
+        val replacingMedia = mediaResourceAllowed && requestedChannel == AudioChannel.MEDIA && primary.channel != AudioChannel.MEDIA
         if (!replacingMedia) {
             manager?.let { request?.abandon(it) }
         }
@@ -189,10 +202,10 @@ internal class AudioFocusCoordinator(
             volumeHandler.removeCallbacks(unduckRunnable)
             timedDucking = false
             guidanceDucking = false
-            appliedVolume = FULL_VOLUME
+            appliedVolume = if (mediaResourceAllowed) FULL_VOLUME else 0f
             runCatching { report("Audio: music level forced to full ($reason)") }
             active.entries.filter { it.value.channel == AudioChannel.MEDIA }
-                .forEach { (track, _) -> runCatching { track.setStereoVolume(FULL_VOLUME, FULL_VOLUME) } }
+                .forEach { (track, _) -> runCatching { track.setStereoVolume(appliedVolume, appliedVolume) } }
         }
     }
 
@@ -237,7 +250,7 @@ internal class AudioFocusCoordinator(
     }
 
     private fun applyDuckVolume() {
-        val target = if (guidanceDucking || timedDucking) duckVolume() else FULL_VOLUME
+        val target = if (!mediaResourceAllowed) 0f else if (guidanceDucking || timedDucking) duckVolume() else FULL_VOLUME
         runCatching { report("Audio: duck guidance=$guidanceDucking timed=$timedDucking target=$target") }
         setVolume(target)
     }
@@ -293,6 +306,7 @@ class AndroidMediaSink(
     private val onNavigationGuidanceChanged: (Boolean) -> Unit = {},
     /** Music level (percent) while a prompt plays or the phone asks us to duck. */
     private val navDuckPercent: () -> Int = { AudioFocusCoordinator.DEFAULT_DUCK_PERCENT },
+    mediaFocusManagedExternally: Boolean = false,
 ) : MediaSink {
     private val appContext = context?.applicationContext
     private val audioManager = appContext?.getSystemService(AudioManager::class.java)
@@ -301,6 +315,7 @@ class AndroidMediaSink(
         audioFocusEnabled,
         navDuckPercent,
         onAudioDiagnostic,
+        mediaFocusManagedExternally,
     )
     private val screenStateLock = Any()
     private val activeScreenTypes = mutableSetOf<Int>()
@@ -902,6 +917,8 @@ class AndroidMediaSink(
         // useless (field 2026-10-21: "the guidance got very low, silent and unadjustable").
         mediaRenderers().forEach { runCatching { it.duckAudioFor(durationMs) } }
     }
+
+    fun setMediaResourceAllowed(allowed: Boolean) = audioFocusCoordinator.setMediaResourceAllowed(allowed)
 
     fun unduckMedia() {
         mediaRenderers().forEach { runCatching { it.unduckAudio() } }

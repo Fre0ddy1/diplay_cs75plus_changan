@@ -7,6 +7,7 @@ import java.util.concurrent.CopyOnWriteArrayList
 /** Extension points contain no vehicle-specific protocol or UI implementation. */
 interface VehicleCustomization {
     val id: String
+    fun mediaKeyRoute(context: Context): MediaKeyRoute? = null
     fun onSessionStarted(context: Context) {}
     fun onNavigationFrame(messageId: Int, payload: ByteArray) {}
     fun onSessionEnded() {}
@@ -52,6 +53,17 @@ open class VehicleCustomizationRegistry {
     }
 
     fun onSessionStarted(context: Context) = dispatch { it.onSessionStarted(context.applicationContext) }
+
+    fun mediaKeyRoute(context: Context): MediaKeyRoute? {
+        for (extension in extensions) {
+            try {
+                extension.mediaKeyRoute(context.applicationContext)?.let { return it }
+            } catch (error: Exception) {
+                Log.w(TAG, "${extension.id} media-key policy failed", error)
+            }
+        }
+        return null
+    }
 
     fun onNavigationFrame(messageId: Int, payload: ByteArray) {
         if (messageId !in NAVIGATION_MESSAGES) return

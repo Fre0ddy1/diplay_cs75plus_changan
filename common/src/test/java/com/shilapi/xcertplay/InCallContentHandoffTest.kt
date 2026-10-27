@@ -55,7 +55,7 @@ class InCallContentHandoffTest {
             "callbackRegistered","callbackHeard","generation","observationOwner",
             "projectionNeedsReconfirmation","automaticProjectionOwner","callbackSerial","resumeGeneration",
             "resumeRequestSerial","resumeFullSeen","resumeOpenSeen","projectingListener",
-            "silentOpenOnly","broadcastHalfSent","sourceEnterSent","silentHoldScheduled","contentHandoffWindow")) {
+            "silentOpenOnly","broadcastHalfSent","sourceEnterSent","silentHoldScheduled","contentHandoffWindow","contentReadyWindow")) {
             saved[name]=ReflectionHelpers.getStaticField<Any?>(InCallClusterBridge::class.java,name)
         }
         oldCallbacks=callbacks.toMap()
@@ -78,6 +78,7 @@ class InCallContentHandoffTest {
         field("resumeGeneration",null)
         field("resumeRequestSerial",Long.MAX_VALUE)
         field("contentHandoffWindow",null)
+        field("contentReadyWindow",null)
         callbacks.clear()
     }
     @After fun restore() {
@@ -159,5 +160,23 @@ class InCallContentHandoffTest {
         idle(10000)
         assertTrue(reused)
         assertEquals(0,sourceAcknowledgements())
+    }
+    @Test fun morningPreVideoHandshakeDoesNotSuppressCurrentContentTakeover() {
+        val window=Any()
+        InCallClusterBridge.observeCallback(app,window)
+        InCallClusterBridge.openProjection(app,automatic=true)
+        idle(100); reply(1,3); reply(2,3); idle(10000)
+        assertEquals(1,sourceAcknowledgements())
+        frameReady(window); idle(1600)
+        assertEquals("pre-video source handshake is not current video ownership",2,sourceAcknowledgements())
+    }
+    @Test fun expiredOwnerCannotClearCurrentWindowReadiness() {
+        val currentOwner=Any()
+        val window=Any()
+        field("automaticProjectionOwner",currentOwner)
+        field("contentReadyWindow",java.lang.ref.WeakReference(window))
+        InCallClusterBridge.detachAutomaticProjection(Any())
+        val readiness=ReflectionHelpers.getStaticField<java.lang.ref.WeakReference<Any>>(InCallClusterBridge::class.java,"contentReadyWindow")
+        assertSame(window,readiness.get())
     }
 }

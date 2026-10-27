@@ -702,7 +702,7 @@ class DiPlayActivity : ComponentActivity() {
             // Audio always stays on CarPlay; the switch only decides who answers the wheel's
             // media keys. With it on, this app swallows them so the car's Bluetooth (AVRCP)
             // controls the phone once instead of the press being handled twice.
-            toggle(card, getString(R.string.media_audio_via_bluetooth),
+            if (com.freddyq.diplay.customization.VehicleCustomizations.mediaKeyRoute(this) == null) toggle(card, getString(R.string.media_audio_via_bluetooth),
                 getString(R.string.media_audio_via_bluetooth_description),
                 AirPlayPersistence.loadMediaViaCarBluetooth(this)) {
                 AirPlayPersistence.saveMediaViaCarBluetooth(this, it)

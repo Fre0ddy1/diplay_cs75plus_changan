@@ -1,0 +1,5 @@
+<resources>
+    <string name="audio_customization_title">CS75PLUS媒体控制</string>
+    <string name="audio_carplay_controls">CarPlay媒体控制（推荐）</string>
+    <string name="audio_carplay_description">通过CarPlay处理播放、暂停和切歌，音乐保持由CarPlay播放，导航音道配置不变。关闭仅供原车蓝牙兼容测试，可能切换手机音频输出。更改从下一次按键生效。</string>
+</resources>

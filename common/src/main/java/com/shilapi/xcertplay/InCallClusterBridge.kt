@@ -332,6 +332,7 @@ object InCallClusterBridge {
     private var automaticProjectionOwner: Any? = null
     // Local protocol dispatch for this exact window; global incall state has no source identity.
     private var contentHandoffWindow: WeakReference<Any>? = null
+    private var contentReadyWindow: WeakReference<Any>? = null
     private val confirmationLock = Any()
     private var callbackSerial = 0L
     private var resumeGeneration: Int? = null
@@ -433,6 +434,7 @@ object InCallClusterBridge {
     fun detachAutomaticProjection(owner: Any) {
         check(Looper.myLooper() == Looper.getMainLooper())
         if (automaticProjectionOwner !== owner) return
+        contentReadyWindow = null
         automaticProjectionOwner = null
         synchronized(confirmationLock) {
             if (resumeGeneration == generation) projectionNeedsReconfirmation = true
@@ -587,6 +589,7 @@ object InCallClusterBridge {
 
     private fun forgetRemoteConnection() {
         contentHandoffWindow = null
+        contentReadyWindow = null
         binder = null
         callbackRegistered = false
         callbackHeard = false
@@ -674,6 +677,7 @@ object InCallClusterBridge {
             onDispatched(false)
             return
         }
+        contentReadyWindow = WeakReference(window)
         if (contentHandoffWindow?.get() === window && reportsProjecting()) {
             onDispatched(true) // Same live window and an actual earlier source handshake.
             return
@@ -699,6 +703,7 @@ object InCallClusterBridge {
     }
 
     fun forgetContentWindow(window: Any) {
+        if (contentReadyWindow?.get() === window) contentReadyWindow = null
         if (contentHandoffWindow?.get() === window) contentHandoffWindow = null
         if (observationOwner?.get() === window) {
             observationOwner = null
@@ -830,6 +835,7 @@ object InCallClusterBridge {
      */
     fun releaseExternalScreen(context: Context) {
         contentHandoffWindow = null
+        contentReadyWindow = null
         contextRef = context.applicationContext
         VehicleCustomizations.onProjectionReleased()
         logSeq(generation, "releaseExternalScreen: r0 ext-screen hand-back (no binder teardown)")
@@ -1013,6 +1019,8 @@ object InCallClusterBridge {
         val b = binder ?: return
         val gen = generation
         val windowAtDispatch = observationOwner?.get()
+        // Capture readiness before the sequence, not when its delayed acknowledgement arrives.
+        val contentWasReady = windowAtDispatch != null && contentReadyWindow?.get() === windowAtDispatch
         logSeq(gen, "G0: register + F0 + 9 + n0(F0) + C0(1) + C0(3) + Z + tx2 + hold")
         registerCallback(b)
         clearScreenOpen()
@@ -1031,9 +1039,10 @@ object InCallClusterBridge {
             if (gen != generation) return@postAtTime
             if (!alive()) return@postAtTime
             val ok = txWrite(b, 2, intArrayOf(1))
-            if (ok && windowAtDispatch != null && observationOwner?.get() === windowAtDispatch) {
+            if (ok && contentWasReady && windowAtDispatch != null && observationOwner?.get() === windowAtDispatch) {
                 contentHandoffWindow = WeakReference(windowAtDispatch)
             }
+            if (ok && !contentWasReady) logSeq(gen, "source handshake preceded current video readiness; content not confirmed")
             onDispatched?.invoke(ok)
             logSeq(gen, "tx2[1] -> $ok")
         }, token, SystemClock.uptimeMillis() + 90L)

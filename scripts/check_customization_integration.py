@@ -27,14 +27,18 @@ checks['common/src/main/java/com/shilapi/xcertplay/InCallClusterBridge.kt'] += [
 ]
 checks['common/src/main/java/com/shilapi/xcertplay/CarPlayHostActivity.kt'] += [
     'VehicleCustomizations.onProjectionContentReady(', 'window?.hasContentFrame',
-    'CarPlayMediaKeys.fromWindow', 'CarPlayMediaKeys.onPhoneSessionEnded()',
+    'CarPlayMediaKeys::fromWindow', 'CarPlayMediaKeys.onPhoneSessionEnded()',
 ]
 checks['common/src/main/java/com/shilapi/xcertplay/CarPlayMediaKeys.kt'] = [
-    'wheelRouter.route(', 'wheelRouter.observe(update)', 'wheelRouter.cancel()',
+    'wheelRouter.route(', 'onMainAudioOwner(', 'onPhoneSessionStarted()', 'wheelRouter.cancel()',
 ]
 checks['customizations/changan-projection/src/main/java/com/freddyq/diplay/changan/projection/ChanganProjectionCustomization.kt'] = [
     'ContentHandoffRecovery', 'onProjectionContentReady', 'contentRecovery.invalidate()',
 ]
+checks['common/src/main/java/com/shilapi/xcertplay/InCallClusterBridge.kt'] += ['contentWasReady', 'contentReadyWindow']
+checks['common/src/main/java/com/shilapi/xcertplay/CarPlayHostActivity.kt'] += ['CarPlay audio resource:', 'mediaFocusManagedExternally = true', 'CarPlay音频输出已声明=true']
+checks['settings.gradle.kts'] += ['include(":changan-audio")']
+checks['common/build.gradle.kts'] += ['implementation(project(":changan-audio"))']
 failures=[]
 for name,needles in checks.items():
     path=ROOT/name
@@ -66,6 +70,10 @@ projection_manifest=ET.parse(ROOT/'customizations/changan-projection/src/main/An
 projection_provider=projection_manifest.find('application/provider')
 if projection_provider is None or projection_provider.get(android+'exported')!='false' or projection_provider.get(android+'name')!='com.freddyq.diplay.changan.projection.ChanganProjectionInitializer' or projection_provider.get(android+'authorities')!='${applicationId}.customizations.changan-projection':
     failures.append('Missing private Changan projection initializer provider')
+audio_manifest=ET.parse(ROOT/'customizations/changan-audio/src/main/AndroidManifest.xml').getroot()
+audio_provider=audio_manifest.find('application/provider')
+if audio_provider is None or audio_provider.get(android+'exported')!='false' or audio_provider.get(android+'name')!='com.freddyq.diplay.changan.audio.ChanganAudioInitializer' or audio_provider.get(android+'authorities')!='${applicationId}.customizations.changan-audio':
+    failures.append('Missing private Changan audio initializer provider')
 for module in ['shared','common']:
     for path in (ROOT/module/'src/main').rglob('*.kt'):
         if 'ChanganHudBridge' in path.read_text(encoding='utf-8'):

@@ -1935,34 +1935,12 @@ class CarPlayHostActivity : ComponentActivity() {
             return true
         }
 
-        // Consume the Android delivery and arbitrate it with external playback feedback.
-        // Audio stays on CarPlay in both modes; voice keys were handled above.
-        if (activeAirPlaySession != null &&
-            CarPlayVideo.activity == null &&
-            isWheelMediaKey(event.keyCode) &&
-            AirPlayPersistence.loadMediaViaCarBluetooth(this)
-        ) {
+        // Explicit CarPlay controls use one destination. Do not let pause/play fall through to
+        // native Bluetooth while next/previous go through CarPlay.
+        if (activeAirPlaySession != null && CarPlayVideo.activity == null &&
+            !inCarPlayCall() && isWheelMediaKey(event.keyCode)) {
             if (event.action == KeyEvent.ACTION_DOWN && event.repeatCount == 0) {
                 CarPlayMediaButton.forKeyCode(event.keyCode)?.let(CarPlayMediaKeys::fromWindow)
-            }
-            return true
-        }
-
-        // Steering-wheel next/previous, claimed by the CarPlay screen itself. The head unit
-        // gives these keys to whichever window is in front, so claiming them here is what
-        // makes the wheel change tracks without the wheel-key/accessibility service.
-        val mediaPress = CarPlayMediaButton.forCarPlayWindow(
-            event.keyCode,
-            sessionActive = activeAirPlaySession != null,
-            inCall = inCarPlayCall(),
-        )
-        if ((event.action == KeyEvent.ACTION_DOWN || event.action == KeyEvent.ACTION_UP) && mediaPress != null) {
-            // A media button is a tap, and the head unit sends each tap as an instant down/up
-            // pair: send once, on the press. The release is swallowed rather than passed on,
-            // or the car's own player would receive an unpaired key.
-            if (event.action == KeyEvent.ACTION_DOWN && event.repeatCount == 0) {
-                CarPlayMediaKeys.fromWindow(mediaPress)
-                appendLog("Media: wheel key ${event.keyCode} -> shared media-key router $mediaPress")
             }
             return true
         }
@@ -4339,6 +4317,7 @@ class CarPlayHostActivity : ComponentActivity() {
             preferSoftwareHevcDecoder = hevcSoftwareDecoderEnabled,
             advancedAudioChannelMapping = advancedAudioChannelMapping,
             audioFocusEnabled = AirPlayPersistence.loadAudioFocusEnabled(this),
+            mediaFocusManagedExternally = true,
             mediaChannel = AirPlayPersistence.loadMediaAudioChannel(this),
             navigationChannel = AirPlayPersistence.loadNavigationAudioChannel(this),
             navDuckPercent = { AirPlayPersistence.loadNavDuckPercent(this) },
@@ -4358,7 +4337,12 @@ class CarPlayHostActivity : ComponentActivity() {
                     diagnosticLog?.append(formattedLogLine(message, System.currentTimeMillis()))
                 }
             },
-            onMediaAudioChanged = CarPlayMediaKeys::onMediaAudioChanged,
+            onMediaAudioChanged = { active -> runOnUiThread {
+                if (controllerGeneration == restartGeneration && activeAirPlaySession != null) {
+                    appendLog("CarPlay media stream active=$active; metadata is not output-route confirmation")
+                    CarPlayMediaKeys.onMediaAudioChanged(active)
+                }
+            } },
             onNavigationGuidanceChanged = ::onNavigationGuidanceChanged,
         )
     }
@@ -4426,9 +4410,8 @@ class CarPlayHostActivity : ComponentActivity() {
         val enabled = AirPlayPersistence.loadMediaViaCarBluetooth(this)
         appendLog(
             "媒体路由: 方向盘媒体键交给车机蓝牙=$enabled " +
-                "CarPlay不宣告音频=$enabled",
+                "CarPlay音频输出已声明=true（按键路由与音频声明独立）",
         )
-        if (!enabled) return
         val am = getSystemService(AudioManager::class.java) ?: return
         for (delay in listOf(0L, 2_000L, 6_000L)) {
             mainHandler.postDelayed({
@@ -4654,6 +4637,8 @@ class CarPlayHostActivity : ComponentActivity() {
     private fun createSessionListener(controllerGeneration: Int): AirPlaySessionListener =
         object : AirPlaySessionListener {
             private val diagnosticLog = sessionLog
+            private val audioResources = com.shilapi.xcertplay.airplay.CarPlayAudioResources()
+            private var resourceSession: AirPlaySession? = null
 
             /**
              * The phone's own audio-interruption commands. iOS sends these when one of its sounds
@@ -4665,6 +4650,14 @@ class CarPlayHostActivity : ComponentActivity() {
              */
             override fun onCommand(session: AirPlaySession, type: String, params: Map<String, Any?>) {
                 when (type) {
+                    "modesChanged" -> runOnUiThread {
+                        if (controllerGeneration != restartGeneration || resourceSession !== session || activeAirPlaySession !== session) return@runOnUiThread
+                        if (audioResources.update(params)) {
+                            sink?.setMediaResourceAllowed(audioResources.mediaOutputAllowed)
+                            CarPlayMediaKeys.onMainAudioOwner(audioResources.owner)
+                            appendLog("CarPlay audio resource: owner=${audioResources.owner} entity=${audioResources.entity} permanent=${audioResources.permanentEntity} revision=${audioResources.revision}; phone output route unverified")
+                        }
+                    }
                     "duckAudio" -> {
                         val durationMs = (params["durationMs"] as? Number)?.toLong() ?: 2_000L
                         appendLog("CarPlay audio: duckAudio durationMs=$durationMs")
@@ -4684,6 +4677,10 @@ class CarPlayHostActivity : ComponentActivity() {
                     }
                     mainHandler.removeCallbacks(airPlayStallHint)
                     activeAirPlaySession = session
+                    resourceSession = session
+                    audioResources.reset()
+                    sink?.setMediaResourceAllowed(true)
+                    CarPlayMediaKeys.onPhoneSessionStarted()
                     CarPlayBackgroundSession.active = true
                     // A new session is NOT proof that the dashboard picture is back: iAP2 comes up
                     // seconds before any video flows, and a reconnect that never delivers frames
@@ -4705,10 +4702,13 @@ class CarPlayHostActivity : ComponentActivity() {
 
             override fun onSessionEnded(session: AirPlaySession) {
                 runOnUiThread {
+                    if (controllerGeneration != restartGeneration || (activeAirPlaySession != null && activeAirPlaySession !== session)) return@runOnUiThread
                     InCallClusterBridge.detachAutomaticProjection(autoProjectToken)
                     clusterPresentation?.resetContentFrame()
                     if (activeAirPlaySession === session) {
                         CarPlayMediaKeys.onPhoneSessionEnded()
+                        resourceSession = null
+                        audioResources.reset()
                         activeAirPlaySession = null
                     }
                     CarPlayBackgroundSession.active = false

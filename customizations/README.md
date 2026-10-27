@@ -7,9 +7,10 @@
 | `api/` | 会话、导航、设置、诊断、投屏生命周期及控制的通用契约，不含车厂编号 |
 | `changan-hud/` | 标准高德广播到interactive的HUD输出、会话保持、投屏握手静默、外部覆盖补偿 |
 | `changan-projection/` | 等待实际小屏反馈后有限切全屏、取消与确认策略 |
+| `changan-audio/` | 独立媒体键策略与设置，默认CarPlay，关闭后明确交给外部控制；不重写音道 |
 | `shared/.../customization/UpstreamNavigationAdapter.kt` | 复用上游解析器、图标映射、串行队列的单一边界 |
 
-依赖：`shared → api`，`changan-hud → shared + api`，`changan-projection → api`，`common → 定制模块 + shared`。模块私有provider负责注册，设置通过通用描述展示，首次默认开启、始终可见，不按车型隐藏；保存的关闭状态保留。初始化本身不发导航指令。
+依赖：`shared → api`，`changan-hud → shared + api`，`changan-projection → api`，`changan-audio → api`，`common → 定制模块 + shared`。模块私有provider负责注册，设置通过通用描述展示，首次默认开启、始终可见，不按车型隐藏；保存的关闭状态保留。初始化本身不发导航指令。
 
 ## 新版接入
 
@@ -26,7 +27,7 @@
 ```sh
 python3 scripts/check_public_tree.py
 python3 scripts/check_customization_integration.py
-./gradlew :vehicle-customization-api:testDebugUnitTest :changan-hud:testDebugUnitTest :changan-projection:testDebugUnitTest :mobile:assembleDebug :mobile:lintDebug
+./gradlew :vehicle-customization-api:testDebugUnitTest :changan-hud:testDebugUnitTest :changan-projection:testDebugUnitTest :changan-audio:testDebugUnitTest :mobile:assembleDebug :mobile:lintDebug
 ```
 
 结构检查不能替代运行测试。新版须与精确c83原始基线逐项比较，不能沿用旧版24项失败的数字；完整结果见`VALIDATION.md`。合并上游若变更解析/生命周期，优先调整边界和通用入口，不能覆盖整个新版Activity来消除冲突。
@@ -34,3 +35,5 @@ python3 scripts/check_customization_integration.py
 HUD保留版本39的导航会话保持修复。巡航冲突方案是外部清零后的受限补偿，不能拦截原厂广播，也不保证物理HUD绝不闪烁。45版已在S311观察到HUD、内容选择、双流内容显示及关闭ADB后的自动全屏成功样本；重连长期稳定性仍需观察，详见验证记录。
 
 发行应用名为`diplay-cs75plus`。品牌资源和上游合并保护见[发行维护](../docs/CS75PLUS_DISTRIBUTION.md)，不将显示名称混入车辆协议模块。
+
+48候选增加独立音频策略模块，删除47的混合补发方案；帧后来源接管与资源/音流/焦点处理见[48实现说明](../docs/CS75PLUS-48-音频与内容接管.md)。新音频偏好不继承旧蓝牙优先值，但保留旧值供回退；后续用户明确关闭新策略会被保存。

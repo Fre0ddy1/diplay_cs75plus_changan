@@ -19,7 +19,7 @@
 
 当前发行版：**0.2.22-ca75plus.4（内部版本46）**，应用显示名 **diplay-cs75plus**。
 
-支线新增 **47版修复候选（0.2.22-ca75plus.5）**：首次仪表内容接管、媒体焦点及方向盘按键去重，详见[修复说明与实车验收边界](docs/CS75PLUS-47-修复说明.md)。47尚未实车验收，发行页的46版保持不变。
+支线新增 **48版修复候选（0.2.22-ca75plus.6）**：根据早间日志补强视频帧后的仪表来源接管；默认使用CarPlay媒体控制，删除47实验性的蓝牙反馈补发，区分实际音流、资源归属与Android焦点，并增加HUD长路名诊断。详见[实现与实车验收边界](docs/CS75PLUS-48-音频与内容接管.md)。48尚未实车验收，发行页的46版保持不变；[47说明](docs/CS75PLUS-47-修复说明.md)保留为历史记录。
 
 1. 从本仓库 [Releases](https://github.com/Fre0ddy1/diplay_cs75plus_changan/releases) 下载 APK，可用随附件提供的 SHA256 校验文件核对。
 2. 已安装本项目同签名测试版的用户可覆盖升级，保留应用数据和 CarPlay 配对；系统包名继续使用 `com.shihab.diplay.hudtest`。
@@ -57,6 +57,7 @@ Gitee长安定制版原始车型说明保留在[历史长安README](docs/UPSTREA
 
 - `customizations/changan-hud/`：本车HUD协议、会话保持及外部覆盖处理。
 - `customizations/changan-projection/`：自动全屏、重连确认和有界恢复。
+- `customizations/changan-audio/`：CarPlay媒体键策略与独立设置；不改用户音道配置。
 - `customizations/api/`：不含厂商编号的通用契约。
 - `shared/.../customization/UpstreamNavigationAdapter.kt`：对上游导航解析的单一适配边界。
 - `mobile/src/main/res/values/strings_cs75plus.xml`：独立应用品牌资源；集成检查防止名称被上游覆盖。
@@ -66,7 +67,7 @@ Gitee长安定制版原始车型说明保留在[历史长安README](docs/UPSTREA
 ```sh
 python3 scripts/check_public_tree.py
 python3 scripts/check_customization_integration.py
-./gradlew :vehicle-customization-api:testDebugUnitTest :changan-hud:testDebugUnitTest :changan-projection:testDebugUnitTest :mobile:assembleDebug :mobile:lintDebug
+./gradlew :vehicle-customization-api:testDebugUnitTest :changan-hud:testDebugUnitTest :changan-projection:testDebugUnitTest :changan-audio:testDebugUnitTest :mobile:assembleDebug :mobile:lintDebug
 ```
 
 普通源码构建不含CarPlay离线认证身份。独立可连接APK需显式提供本地 `DIPLAY_AUTH_ASSETS_DIR`，目录内含所需 `offline-mfi/` 输入，再执行 `:mobile:assembleStandaloneDebug`。发行APK包含运行所需认证数据；原始认证输入、APK签名私钥和车机日志不进入Git或源码包。

@@ -212,13 +212,16 @@ object AirPlayPersistence {
     /**
      * Steering-wheel media keys belong to the head unit's own Bluetooth instead of CarPlay.
      *
-     * Default on: prefer an external AVRCP response, with a bounded CarPlay fallback if no
-     * playback change arrives. Both modes retain the CarPlay media session/audio focus.
-     * Off: send through CarPlay immediately. This preference never changes audio channels.
+     * Legacy external-key preference, unless an installed customization selects the route.
+     * External mode does not schedule a CarPlay fallback. This preference never changes channels.
      */
-    fun loadMediaViaCarBluetooth(context: Context): Boolean =
-        context.getSharedPreferences(PREFS, Context.MODE_PRIVATE)
+    fun loadMediaViaCarBluetooth(context: Context): Boolean {
+        com.freddyq.diplay.customization.VehicleCustomizations.mediaKeyRoute(context)?.let {
+            return it == com.freddyq.diplay.customization.MediaKeyRoute.EXTERNAL
+        }
+        return context.getSharedPreferences(PREFS, Context.MODE_PRIVATE)
             .getBoolean(KEY_MEDIA_AUDIO_VIA_BLUETOOTH, true)
+    }
 
     fun saveMediaViaCarBluetooth(context: Context, enabled: Boolean) {
         // commit(), not apply(): the driver usually flips this right before switching the head unit

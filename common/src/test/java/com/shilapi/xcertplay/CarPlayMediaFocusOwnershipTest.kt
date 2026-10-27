@@ -60,21 +60,65 @@ class CarPlayMediaFocusOwnershipTest {
         assertNotNull(ReflectionHelpers.getField<Any?>(CarPlayMediaKeys, "session"))
     }
 
-    @Test fun externalTrackResponseRestoresLostCarPlayFocusWithoutSecondKey() {
+    @Test fun metadataDoesNotReclaimFocusWhenCarPlayStreamIsAbsent() {
         CarPlayMediaKeys.attach(app, controller)
         CarPlayMediaKeys.onMediaAudioChanged(true)
         shadowOf(Looper.getMainLooper()).idle()
-        val router = ReflectionHelpers.getField<WheelMediaKeyRouter>(CarPlayMediaKeys, "wheelRouter")
-        router.observe(CarPlayNowPlaying(title = "A"))
-        var duplicateKeys = 0
-        router.route(CarPlayMediaButton.NEXT, true) { duplicateKeys++ }
+        CarPlayMediaKeys.onMediaAudioChanged(false)
+        shadowOf(Looper.getMainLooper()).idle()
         ReflectionHelpers.setField(CarPlayMediaKeys, "focusHeld", false)
         ReflectionHelpers.callInstanceMethod<Unit>(CarPlayMediaKeys, "onNowPlayingChanged",
             ReflectionHelpers.ClassParameter.from(CarPlayController::class.java, controller),
-            ReflectionHelpers.ClassParameter.from(CarPlayNowPlaying::class.java, CarPlayNowPlaying(title = "B")))
+            ReflectionHelpers.ClassParameter.from(CarPlayNowPlaying::class.java, CarPlayNowPlaying(title = "B", playing = true)))
         shadowOf(Looper.getMainLooper()).idleFor(2, java.util.concurrent.TimeUnit.SECONDS)
+        assertFalse(ReflectionHelpers.getField<Boolean>(CarPlayMediaKeys, "focusHeld"))
+    }
+    @Test fun accessoryOwnershipReleasesFocusUntilPhoneOwnsActiveMediaAgain() {
+        CarPlayMediaKeys.attach(app, controller)
+        CarPlayMediaKeys.onMediaAudioChanged(true)
+        shadowOf(Looper.getMainLooper()).idle()
+        CarPlayMediaKeys.onMainAudioOwner(com.shilapi.xcertplay.airplay.CarPlayAudioOwner.ACCESSORY)
+        assertFalse(ReflectionHelpers.getField<Boolean>(CarPlayMediaKeys, "focusHeld"))
+        CarPlayMediaKeys.onMainAudioOwner(com.shilapi.xcertplay.airplay.CarPlayAudioOwner.PHONE)
         assertTrue(ReflectionHelpers.getField<Boolean>(CarPlayMediaKeys, "focusHeld"))
-        assertEquals(0, duplicateKeys)
+    }
+    @Test fun connectedPausedSessionAnswersKeysWithoutClaimingMediaAudio() {
+        CarPlayMediaKeys.attach(app, controller)
+        CarPlayMediaKeys.onPhoneSessionStarted()
+        assertNotNull(ReflectionHelpers.getField<Any?>(CarPlayMediaKeys, "session"))
+        assertFalse(ReflectionHelpers.getField<Boolean>(CarPlayMediaKeys, "focusHeld"))
+    }
+
+    @Test fun queuedStreamStartCannotReviveAnEndedPhoneSession() {
+        CarPlayMediaKeys.attach(app, controller)
+        CarPlayMediaKeys.onMediaAudioChanged(true)
+        CarPlayMediaKeys.onPhoneSessionEnded()
+        shadowOf(Looper.getMainLooper()).idle()
+        assertNull(ReflectionHelpers.getField<Any?>(CarPlayMediaKeys, "session"))
+        assertFalse(ReflectionHelpers.getField<Boolean>(CarPlayMediaKeys, "mediaAudioActive"))
+    }
+
+    @Test fun delayedFocusGainCannotOverrideAccessoryOwnership() {
+        CarPlayMediaKeys.attach(app, controller)
+        CarPlayMediaKeys.onMediaAudioChanged(true)
+        shadowOf(Looper.getMainLooper()).idle()
+        val request = ReflectionHelpers.getField<android.media.AudioFocusRequest>(CarPlayMediaKeys, "focusRequest")
+        CarPlayMediaKeys.onMainAudioOwner(com.shilapi.xcertplay.airplay.CarPlayAudioOwner.ACCESSORY)
+        ReflectionHelpers.callInstanceMethod<AudioManager.OnAudioFocusChangeListener>(request, "getOnAudioFocusChangeListener")
+            .onAudioFocusChange(AudioManager.AUDIOFOCUS_GAIN)
+        assertFalse(ReflectionHelpers.getField<Boolean>(CarPlayMediaKeys, "focusHeld"))
+    }
+
+    @Test fun oldFocusCallbackCannotChangeANewPhoneSession() {
+        CarPlayMediaKeys.attach(app, controller)
+        CarPlayMediaKeys.onMediaAudioChanged(true)
+        shadowOf(Looper.getMainLooper()).idle()
+        val previous = ReflectionHelpers.getField<android.media.AudioFocusRequest>(CarPlayMediaKeys, "focusRequest")
+        CarPlayMediaKeys.onPhoneSessionEnded()
+        CarPlayMediaKeys.onPhoneSessionStarted()
+        ReflectionHelpers.callInstanceMethod<AudioManager.OnAudioFocusChangeListener>(previous, "getOnAudioFocusChangeListener")
+            .onAudioFocusChange(AudioManager.AUDIOFOCUS_GAIN)
+        assertFalse(ReflectionHelpers.getField<Boolean>(CarPlayMediaKeys, "focusHeld"))
     }
 
     @Test fun playbackFeedbackDoesNotReclaimFocusDuringAnOngoingCall() {
