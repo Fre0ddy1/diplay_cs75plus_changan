@@ -55,6 +55,7 @@ internal object CarPlayMediaKeys {
     private var mediaAudioActive = false
     private var nowPlaying = CarPlayNowPlaying()
     private var elapsedUpdatedAt = 0L
+    private val wheelRouter = WheelMediaKeyRouter { Log.i(TAG, it) }
     private var artwork: Bitmap? = null
     private var artworkListener: ((Bitmap?) -> Unit)? = null
     private val artworkCache = LinkedHashMap<Int, Bitmap?>()
@@ -88,11 +89,20 @@ internal object CarPlayMediaKeys {
         mainHandler.post { synchronized(this) { updateLocked(active) } }
     }
 
+    /** A wireless controller may survive its phone session; release its audio source meanwhile. */
+    @Synchronized
+    fun onPhoneSessionEnded() {
+        releaseLocked()
+        if (controller != null) artworkOwner = artworkQueue.newSession()
+    }
+
     /** The iPhone started or stopped playing; may run on any thread. */
     private fun onIphonePlaying(expected: CarPlayController, playing: Boolean) {
-        if (playing) mainHandler.post {
+        mainHandler.post {
             synchronized(this) {
-                if (controller === expected) regainFocusLocked(onIphonePlaybackResume = true)
+                if (controller !== expected) return@synchronized
+                val answeredKey = wheelRouter.observe(nowPlaying.copy(playing = playing))
+                if (playing || answeredKey) regainFocusLocked(onIphonePlaybackResume = true)
             }
         }
     }
@@ -111,6 +121,7 @@ internal object CarPlayMediaKeys {
                 if (nowPlaying.elapsedMillis != update.elapsedMillis) elapsedUpdatedAt = SystemClock.elapsedRealtime()
                 val metadataChanged = metadataChanged(nowPlaying, update) || artwork !== previousArtwork
                 nowPlaying = update
+                if (wheelRouter.observe(update)) regainFocusLocked(onIphonePlaybackResume = true)
                 // The iPhone repeats NowPlayingUpdate about twice a second for the position alone.
                 // Republishing the metadata each time sent a copy of the artwork through system_server
                 // to every media listener, and on a DiLink 5.0 Tang that exhausted memory within
@@ -169,6 +180,7 @@ internal object CarPlayMediaKeys {
         if (transientFocusInterrupted && !onIphonePlaybackResume) return
         if (focusHeld && !transientFocusInterrupted) return
         val audio = appContext?.getSystemService(AudioManager::class.java) ?: return
+        if (audio.mode != AudioManager.MODE_NORMAL) return
         focusHeld = audio.requestAudioFocus(request) == AudioManager.AUDIOFOCUS_REQUEST_GRANTED
         if (focusHeld) transientFocusInterrupted = false
         Log.i(TAG, "audio focus regained=$focusHeld")
@@ -183,17 +195,9 @@ internal object CarPlayMediaKeys {
     }
 
     private fun start(context: Context) {
-        // Wheel media keys belong to the head unit: no media session and no audio focus here, so
-        // the car's own controls keep the keys. Music still plays - the sink renders the iPhone's
-        // media stream either way (measured 2026-10-18: the phone never moves media to A2DP while
-        // the accessory advertises audio, so "no CarPlay music" is not reachable from the
-        // accessory side). Taking AUDIOFOCUS_GAIN is what used to pull the media route away from
-        // Bluetooth *and* make the car's own controls useless, which is the state this switch
-        // avoids.
-        if (AirPlayPersistence.loadMediaViaCarBluetooth(context)) {
-            Log.i(TAG, "media keys idle: wheel keys stay with the head unit (no session, no focus)")
-            return
-        }
+        // Audio always comes from CarPlay. Keep its source/session/focus alive independently of
+        // the wheel-key switch; otherwise AVRCP may select Bluetooth while CarPlay still renders.
+        // Hardware duplication is suppressed at send(), never by abandoning the audio source.
         val audio = context.getSystemService(AudioManager::class.java)
         val request = AudioFocusRequest.Builder(AudioManager.AUDIOFOCUS_GAIN)
             .setAudioAttributes(
@@ -234,6 +238,7 @@ internal object CarPlayMediaKeys {
     }
 
     private fun releaseLocked() {
+        wheelRouter.cancel()
         artworkOwner = null
         artworkQueue.clear()
         session?.let {
@@ -279,27 +284,18 @@ internal object CarPlayMediaKeys {
             Log.i(TAG, "media key $source -> car video player $index")
             return
         }
-        // Only hardware keys, i.e. the steering wheel, are dropped. A skip or a play/pause from a
-        // media controller is the head unit's own on-screen control and must keep working.
-        // Track change and play/pause share the Bluetooth-media switch (driver request
-        // 2026-10-18): a CarPlay screen that answers the wheel makes the car's own audio controls
-        // useless. Hardware maps every play/pause key (MEDIA_PLAY, MEDIA_PAUSE, PLAY_PAUSE,
-        // HEADSETHOOK) to the toggle, so PLAY_PAUSE is the only index the wheel produces here;
-        // PLAY and PAUSE only ever arrive from a controller, i.e. with fromWheel = false.
-        // With the switch on there is normally no session at all (start() returns early); this
-        // check is the safety net for a switch flipped while the session was already alive.
-        if (fromWheel &&
-            (index == CarPlayMediaButton.NEXT ||
-                index == CarPlayMediaButton.PREVIOUS ||
-                index == CarPlayMediaButton.PLAY_PAUSE) &&
-            appContext?.let { AirPlayPersistence.loadMediaViaCarBluetooth(it) } == true
-        ) {
-            Log.i(TAG, "media key $source -> blocked (media belongs to the car Bluetooth)")
-            return
+        // Window and MediaSession deliveries share one gate. The preference selects key
+        // arbitration only; both modes keep the same audio session and channel configuration.
+        if (appContext?.getSystemService(AudioManager::class.java)?.mode != AudioManager.MODE_NORMAL) return
+        synchronized(this) { regainFocusLocked(onIphonePlaybackResume = true) }
+        wheelRouter.route(index, appContext?.let { AirPlayPersistence.loadMediaViaCarBluetooth(it) } == true) sendCarPlay@{
+            if (appContext?.getSystemService(AudioManager::class.java)?.mode != AudioManager.MODE_NORMAL || CarPlayVideo.activity != null) return@sendCarPlay
+            val sent = synchronized(this) { controller }?.sendMediaButton(index) ?: false
+            Log.i(TAG, "media key $source wheel=$fromWheel -> CarPlay $index sent=$sent")
         }
-        val sent = synchronized(this) { controller }?.sendMediaButton(index) ?: false
-        Log.i(TAG, "media key $source -> CarPlay $index sent=$sent")
     }
+
+    fun fromWindow(index: Int) = send(index, "window", fromWheel = true)
 
     private val callback = CarPlayMediaCallback(::send)
 

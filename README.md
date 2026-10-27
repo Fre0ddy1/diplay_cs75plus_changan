@@ -19,6 +19,8 @@
 
 当前发行版：**0.2.22-ca75plus.4（内部版本46）**，应用显示名 **diplay-cs75plus**。
 
+支线新增 **47版修复候选（0.2.22-ca75plus.5）**：首次仪表内容接管、媒体焦点及方向盘按键去重，详见[修复说明与实车验收边界](docs/CS75PLUS-47-修复说明.md)。47尚未实车验收，发行页的46版保持不变。
+
 1. 从本仓库 [Releases](https://github.com/Fre0ddy1/diplay_cs75plus_changan/releases) 下载 APK，可用随附件提供的 SHA256 校验文件核对。
 2. 已安装本项目同签名测试版的用户可覆盖升级，保留应用数据和 CarPlay 配对；系统包名继续使用 `com.shihab.diplay.hudtest`。
 3. 安装完成后打开 `diplay-cs75plus`，按现有方式连接 iPhone CarPlay。

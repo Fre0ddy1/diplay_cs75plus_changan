@@ -61,6 +61,13 @@ internal class ClusterMapPresentation(
      */
     private val flyCard: Boolean = false,
 ) : Presentation(context, display) {
+    var hasContentFrame: Boolean = false
+        private set
+    fun resetContentFrame() { hasContentFrame = false }
+
+    private fun contentFrame(mirror: Boolean) {
+        if (mirror == desiredMirror) hasContentFrame = true
+    }
     private var waitingLabel: TextView? = null
     /**
      * The turn/instruction card. Nav-only mode only (A1): the whole-screen mirror must stay the
@@ -273,8 +280,9 @@ internal class ClusterMapPresentation(
                     mirrorOutputSurface = Surface(texture).also(onMirrorSurface)
                 }
                 override fun onSurfaceTextureSizeChanged(texture: SurfaceTexture, width: Int, height: Int) = transform()
-                override fun onSurfaceTextureUpdated(texture: SurfaceTexture) = Unit
+                override fun onSurfaceTextureUpdated(texture: SurfaceTexture) = contentFrame(true)
                 override fun onSurfaceTextureDestroyed(texture: SurfaceTexture): Boolean {
+                    resetContentFrame()
                     onMirrorSurface(null)
                     mirrorOutputSurface?.release()
                     mirrorOutputSurface = null
@@ -307,9 +315,10 @@ internal class ClusterMapPresentation(
 
                 override fun onSurfaceTextureSizeChanged(texture: SurfaceTexture, width: Int, height: Int) = refreshCrop()
 
-                override fun onSurfaceTextureUpdated(texture: SurfaceTexture) = Unit
+                override fun onSurfaceTextureUpdated(texture: SurfaceTexture) = contentFrame(true)
 
                 override fun onSurfaceTextureDestroyed(texture: SurfaceTexture): Boolean {
+                    resetContentFrame()
                     Log.i(TAG, "cluster mirror surface destroyed")
                     mirrorOutputSurface?.release()
                     mirrorOutputSurface = null
@@ -340,9 +349,10 @@ internal class ClusterMapPresentation(
 
                 override fun onSurfaceTextureSizeChanged(texture: SurfaceTexture, width: Int, height: Int) = Unit
 
-                override fun onSurfaceTextureUpdated(texture: SurfaceTexture) = Unit
+                override fun onSurfaceTextureUpdated(texture: SurfaceTexture) = contentFrame(false)
 
                 override fun onSurfaceTextureDestroyed(texture: SurfaceTexture): Boolean {
+                    resetContentFrame()
                     Log.i(TAG, "cluster nav surface destroyed")
                     navOutputSurface?.release()
                     navOutputSurface = null
@@ -474,6 +484,7 @@ internal class ClusterMapPresentation(
         // nav-only while the TextureViews are still null, and the surface callback below must
         // re-apply this mode rather than the saved setting (which the auto-switch intentionally
         // does not update).
+        if (desiredMirror != mirror) resetContentFrame()
         desiredMirror = mirror
         mirrorMode = mirror
         // The cards follow the mode, not the TextureViews: both surfaces are created

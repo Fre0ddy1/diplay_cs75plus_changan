@@ -15,6 +15,8 @@ interface VehicleCustomization {
     /** A new window is using a retained channel and requires fresh confirmation. */
     fun onProjectionResumed(context: Context, control: ProjectionControl): Boolean = false
     fun onProjectionLayoutRequested(layout: ProjectionLayout) {}
+    fun onProjectionContentReady(context: Context, window: Any, control: ProjectionContentControl) {}
+    fun onProjectionContentLost(window: Any) {}
     fun onProjectionManualControl() {}
     fun onProjectionReleased() {}
     fun shouldRetryAutomaticProjection(): Boolean = true
@@ -68,6 +70,9 @@ open class VehicleCustomizationRegistry {
         return handled
     }
     fun onProjectionLayoutRequested(layout: ProjectionLayout) = dispatch { it.onProjectionLayoutRequested(layout) }
+    fun onProjectionContentReady(context: Context, window: Any, control: ProjectionContentControl) =
+        dispatch { it.onProjectionContentReady(context.applicationContext, window, control) }
+    fun onProjectionContentLost(window: Any) = dispatch { it.onProjectionContentLost(window) }
     fun onProjectionManualControl() = dispatch { it.onProjectionManualControl() }
     fun onProjectionReleased() = dispatch { it.onProjectionReleased() }
     fun shouldRetryAutomaticProjection(): Boolean = extensions.all { extension ->

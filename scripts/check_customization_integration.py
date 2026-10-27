@@ -22,6 +22,19 @@ checks={
     'common/src/main/java/com/shilapi/xcertplay/CarPlayHostActivity.kt': ['VehicleCustomizations.diagnosticListener = routeTraceListener','VehicleCustomizations.onProjectionManualControl()','VehicleCustomizations.shouldActivateProjectionChannel()','InCallClusterBridge.openProjection(this, automatic = true)','InCallClusterBridge.resumeAutomaticProjection(this, autoProjectToken)','InCallClusterBridge.observeCallback(this, presentation)','InCallClusterBridge.detachAutomaticProjection(autoProjectToken)'],
     'common/src/main/java/com/shilapi/xcertplay/AirPlayPersistence.kt': ['fun saveClusterContent', 'overlaySettingsListener?.invoke()'],
 }
+checks['common/src/main/java/com/shilapi/xcertplay/InCallClusterBridge.kt'] += [
+    'fun requestContentHandoff', 'contentHandoffWindow', 'fun contentEndpointReady',
+]
+checks['common/src/main/java/com/shilapi/xcertplay/CarPlayHostActivity.kt'] += [
+    'VehicleCustomizations.onProjectionContentReady(', 'window?.hasContentFrame',
+    'CarPlayMediaKeys.fromWindow', 'CarPlayMediaKeys.onPhoneSessionEnded()',
+]
+checks['common/src/main/java/com/shilapi/xcertplay/CarPlayMediaKeys.kt'] = [
+    'wheelRouter.route(', 'wheelRouter.observe(update)', 'wheelRouter.cancel()',
+]
+checks['customizations/changan-projection/src/main/java/com/freddyq/diplay/changan/projection/ChanganProjectionCustomization.kt'] = [
+    'ContentHandoffRecovery', 'onProjectionContentReady', 'contentRecovery.invalidate()',
+]
 failures=[]
 for name,needles in checks.items():
     path=ROOT/name

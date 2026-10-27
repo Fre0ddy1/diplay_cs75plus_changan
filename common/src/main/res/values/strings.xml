@@ -634,8 +634,8 @@
     <string name="nav_duck_percent_title">Music level during navigation prompts</string>
     <string name="nav_duck_percent_value">%1$d%%</string>
     <string name="nav_duck_percent_hint">Music drops to this level while a prompt plays and comes back when it ends. Calls are never lowered; changes apply from the next prompt.</string>
-    <string name="media_audio_via_bluetooth">Wheel media keys via car Bluetooth</string>
-    <string name="media_audio_via_bluetooth_description">Music always plays over CarPlay. When on, play/pause and track keys from the wheel are not forwarded to CarPlay and are left to the car Bluetooth (AVRCP) to control the phone, so one press is not answered twice. During a guidance prompt the volume keys still adjust guidance volume here. Reconnect to apply.</string>
+    <string name="media_audio_via_bluetooth">Deduplicate wheel keys (Bluetooth first)</string>
+    <string name="media_audio_via_bluetooth_description">CarPlay retains media audio focus and separate guidance settings. When on, wait up to one second for external playback feedback before sending one CarPlay key. When off, send through CarPlay immediately. Both modes coalesce duplicate Android key deliveries. Slow Bluetooth feedback still needs vehicle testing.</string>
     <string name="settings_group_frequent">Frequent</string>
     <string name="settings_group_connect">Connection</string>
     <string name="settings_group_display">Picture</string>

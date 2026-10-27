@@ -212,13 +212,9 @@ object AirPlayPersistence {
     /**
      * Steering-wheel media keys belong to the head unit's own Bluetooth instead of CarPlay.
      *
-     * Default on: no media focus is taken and the wheel's media keys are not claimed by the
-     * CarPlay window, so the head unit's own controls handle them. Music still plays through
-     * CarPlay - measured 2026-10-18, the iPhone never moves media to A2DP while the accessory
-     * advertises audio.
-     *
-     * Off: DiPlay's media session holds the media focus and the wheel keys reach the iPhone
-     * through CarPlay.
+     * Default on: prefer an external AVRCP response, with a bounded CarPlay fallback if no
+     * playback change arrives. Both modes retain the CarPlay media session/audio focus.
+     * Off: send through CarPlay immediately. This preference never changes audio channels.
      */
     fun loadMediaViaCarBluetooth(context: Context): Boolean =
         context.getSharedPreferences(PREFS, Context.MODE_PRIVATE)

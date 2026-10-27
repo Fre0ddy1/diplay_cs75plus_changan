@@ -330,6 +330,8 @@ object InCallClusterBridge {
     private var observationOwner: WeakReference<Any>? = null
     private var projectionNeedsReconfirmation = false
     private var automaticProjectionOwner: Any? = null
+    // Local protocol dispatch for this exact window; global incall state has no source identity.
+    private var contentHandoffWindow: WeakReference<Any>? = null
     private val confirmationLock = Any()
     private var callbackSerial = 0L
     private var resumeGeneration: Int? = null
@@ -584,6 +586,7 @@ object InCallClusterBridge {
     }
 
     private fun forgetRemoteConnection() {
+        contentHandoffWindow = null
         binder = null
         callbackRegistered = false
         callbackHeard = false
@@ -658,7 +661,52 @@ object InCallClusterBridge {
             else -> null
         }
         if (layout != null) VehicleCustomizations.onProjectionLayoutRequested(layout)
-        logSeq(generation, "adopt observed channel; no activation sequence; layout=$layout")
+        logSeq(generation, "adopt global channel layout=$layout; content handoff remains independent")
+    }
+
+    /** Called only after the current window has a local CarPlay frame. */
+    fun contentEndpointReady(window: Any): Boolean =
+        binder?.isBinderAlive == true && observationOwner?.get() === window && !releasedByUs()
+
+    fun requestContentHandoff(context: Context, window: Any, onDispatched: (Boolean) -> Unit) {
+        check(Looper.myLooper() == Looper.getMainLooper())
+        if (observationOwner?.get() !== window || releasedByUs()) {
+            onDispatched(false)
+            return
+        }
+        if (contentHandoffWindow?.get() === window && reportsProjecting()) {
+            onDispatched(true) // Same live window and an actual earlier source handshake.
+            return
+        }
+        contextRef = context.applicationContext
+        if (binder?.isBinderAlive != true) {
+            ensureBound(context.applicationContext)
+            onDispatched(false)
+            return
+        }
+        // A layout request/status, even a fresh pair, cannot skip this source sequence.
+        mainHandler.removeCallbacksAndMessages(token)
+        generation++
+        synchronized(confirmationLock) { resumeGeneration = null }
+        openState = true
+        silentOpenOnly = false
+        broadcastHalfSent = false
+        sourceEnterSent = false
+        silentHoldScheduled = false
+        VehicleCustomizations.onProjectionStarted(context.applicationContext, true, projectionControl)
+        logSeq(generation, "current video window ready; dispatch actual content source handoff")
+        runFullOpenSequence(keepFullscreen = lastCallbackValue[1] == 3, onDispatched = onDispatched)
+    }
+
+    fun forgetContentWindow(window: Any) {
+        if (contentHandoffWindow?.get() === window) contentHandoffWindow = null
+        if (observationOwner?.get() === window) {
+            observationOwner = null
+            generation++
+            mainHandler.removeCallbacksAndMessages(token)
+            synchronized(confirmationLock) { resumeGeneration = null }
+        }
+        VehicleCustomizations.onProjectionContentLost(window)
     }
 
     /**
@@ -781,6 +829,7 @@ object InCallClusterBridge {
      * back with the normal open sequence.
      */
     fun releaseExternalScreen(context: Context) {
+        contentHandoffWindow = null
         contextRef = context.applicationContext
         VehicleCustomizations.onProjectionReleased()
         logSeq(generation, "releaseExternalScreen: r0 ext-screen hand-back (no binder teardown)")
@@ -809,14 +858,14 @@ object InCallClusterBridge {
         broadcastStatusTo(PKG_INCALL, 0, 1)
     }
 
-    private fun runFullOpenSequence() {
+    private fun runFullOpenSequence(keepFullscreen: Boolean = false, onDispatched: ((Boolean) -> Unit)? = null) {
         // We are taking the ext-screen back from the head unit, so the released belief ends here:
         // from now on a value-3 report is a projection to us again, and the r0 answer window
         // closes with it.
         r0SentAtUptimeMs = 0L
         setReleasedByUs(false)
         runBroadcastHalf()
-        runOpenLocked()
+        runOpenLocked(keepFullscreen, onDispatched)
     }
 
     /**
@@ -960,9 +1009,10 @@ object InCallClusterBridge {
 
     // ---- the G0 binder half (InstrumentBridge.G0) ----
 
-    private fun runOpenLocked() {
+    private fun runOpenLocked(keepFullscreen: Boolean = false, onDispatched: ((Boolean) -> Unit)? = null) {
         val b = binder ?: return
         val gen = generation
+        val windowAtDispatch = observationOwner?.get()
         logSeq(gen, "G0: register + F0 + 9 + n0(F0) + C0(1) + C0(3) + Z + tx2 + hold")
         registerCallback(b)
         clearScreenOpen()
@@ -973,7 +1023,7 @@ object InCallClusterBridge {
             if (!alive()) return@repeatAt
             clearScreenOpen()
         }
-        setMode(1)
+        if (!keepFullscreen) setMode(1)
         setMode(3)
         setCarProperties()
         // f0/g0: 90 ms later tx2[1] (dashboard source switch confirmation).
@@ -981,6 +1031,10 @@ object InCallClusterBridge {
             if (gen != generation) return@postAtTime
             if (!alive()) return@postAtTime
             val ok = txWrite(b, 2, intArrayOf(1))
+            if (ok && windowAtDispatch != null && observationOwner?.get() === windowAtDispatch) {
+                contentHandoffWindow = WeakReference(windowAtDispatch)
+            }
+            onDispatched?.invoke(ok)
             logSeq(gen, "tx2[1] -> $ok")
         }, token, SystemClock.uptimeMillis() + 90L)
         // H0 hold loop: F0 + C0(3) + Z at f5336w points.

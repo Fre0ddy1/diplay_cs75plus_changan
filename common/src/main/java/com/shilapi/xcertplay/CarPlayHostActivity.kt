@@ -1385,6 +1385,7 @@ class CarPlayHostActivity : ComponentActivity() {
         )
         // The system dismisses a presentation when its display goes away; allow a new one on resume.
         presentation.setOnDismissListener {
+            InCallClusterBridge.forgetContentWindow(presentation)
             if (clusterPresentation === presentation) {
                 clusterPresentation = null
                 com.shilapi.xcertplay.hud.BydNavigationOutputs.setClusterMapShown(false)
@@ -1463,6 +1464,7 @@ class CarPlayHostActivity : ComponentActivity() {
             flyCard = CarPlayClusterDisplay.isFlyCard(AirPlayPersistence.loadClusterContent(this)),
         )
         presentation.setOnDismissListener {
+            InCallClusterBridge.forgetContentWindow(presentation)
             if (clusterPresentation === presentation) {
                 clusterPresentation = null
                 com.shilapi.xcertplay.hud.BydNavigationOutputs.setClusterMapShown(false)
@@ -1692,6 +1694,7 @@ class CarPlayHostActivity : ComponentActivity() {
         clusterWindowHidden = false
         mainHandler.removeCallbacks(releaseDashboardAfterLongLoss)
         val presentations = (clusterLayers.values + listOfNotNull(clusterPresentation)).distinct()
+        presentations.forEach { com.freddyq.diplay.customization.VehicleCustomizations.onProjectionContentLost(it) }
         clusterLayers.clear()
         clusterPresentation = null
         clusterSurface?.let {
@@ -1932,24 +1935,15 @@ class CarPlayHostActivity : ComponentActivity() {
             return true
         }
 
-        // Media belongs to the head unit's Bluetooth, so the CarPlay window must not claim the
-        // wheel's media keys. This must depend ONLY on the switch: music is rendered inside
-        // CarPlay, so AudioManager.isBluetoothA2dpOn is normally false even though the head unit's
-        // own media app receives the wheel key. The old A2DP check therefore let the key through
-        // to both the car and the iPhone, skipping two tracks per press (field 2026-10-24).
-        // Consuming it here keeps it away from CarPlay; the head unit's own key routing still
-        // delivers it to its media app. Voice keys are handled above and stay live - Siri must
-        // still open.
+        // Consume the Android delivery and arbitrate it with external playback feedback.
+        // Audio stays on CarPlay in both modes; voice keys were handled above.
         if (activeAirPlaySession != null &&
             CarPlayVideo.activity == null &&
             isWheelMediaKey(event.keyCode) &&
             AirPlayPersistence.loadMediaViaCarBluetooth(this)
         ) {
             if (event.action == KeyEvent.ACTION_DOWN && event.repeatCount == 0) {
-                appendLog(
-                    "Media: wheel key ${KeyEvent.keyCodeToString(event.keyCode)} blocked " +
-                        "(media belongs to the car Bluetooth)",
-                )
+                CarPlayMediaButton.forKeyCode(event.keyCode)?.let(CarPlayMediaKeys::fromWindow)
             }
             return true
         }
@@ -1967,8 +1961,8 @@ class CarPlayHostActivity : ComponentActivity() {
             // pair: send once, on the press. The release is swallowed rather than passed on,
             // or the car's own player would receive an unpaired key.
             if (event.action == KeyEvent.ACTION_DOWN && event.repeatCount == 0) {
-                val sent = controller?.sendMediaButton(mediaPress) == true
-                appendLog("Media: wheel key ${event.keyCode} -> CarPlay $mediaPress sent=$sent")
+                CarPlayMediaKeys.fromWindow(mediaPress)
+                appendLog("Media: wheel key ${event.keyCode} -> shared media-key router $mediaPress")
             }
             return true
         }
@@ -4712,7 +4706,11 @@ class CarPlayHostActivity : ComponentActivity() {
             override fun onSessionEnded(session: AirPlaySession) {
                 runOnUiThread {
                     InCallClusterBridge.detachAutomaticProjection(autoProjectToken)
-                    if (activeAirPlaySession === session) activeAirPlaySession = null
+                    clusterPresentation?.resetContentFrame()
+                    if (activeAirPlaySession === session) {
+                        CarPlayMediaKeys.onPhoneSessionEnded()
+                        activeAirPlaySession = null
+                    }
                     CarPlayBackgroundSession.active = false
                     // A new session is a new connection: allow auto-project to fire again after
                     // any reconnect. restartCarPlay() also resets these, but some reconnect paths
@@ -6068,6 +6066,24 @@ class CarPlayHostActivity : ComponentActivity() {
                 // 1) Sample the channel. Read-only: incall's own report, nothing goes out here.
                 val open = runCatching { InCallClusterBridge.reportsProjecting() }.getOrDefault(false)
                 watcherChannelOpen = open
+                // Local video readiness and source handoff are independent of global LVDS state.
+                mainHandler.post {
+                    val window = clusterPresentation
+                    if (activeAirPlaySession != null && window?.hasContentFrame == true &&
+                        AirPlayPersistence.loadAutoFlyScreen(this) && !clusterProjectionAbandoned &&
+                        InCallClusterBridge.contentEndpointReady(window) &&
+                        !shuttingDown.get() && !isFinishing && !isDestroyed) {
+                        com.freddyq.diplay.customization.VehicleCustomizations.onProjectionContentReady(
+                            this, window,
+                            com.freddyq.diplay.customization.ProjectionContentControl { result ->
+                                if (activeAirPlaySession != null && clusterPresentation === window && window.hasContentFrame &&
+                                    AirPlayPersistence.loadAutoFlyScreen(this) && !clusterProjectionAbandoned) {
+                                    InCallClusterBridge.requestContentHandoff(this, window, result)
+                                } else result(false)
+                            },
+                        )
+                    }
+                }
                 if (open && !channelWasOpen) mainHandler.post {
                     if (!shuttingDown.get() && !isFinishing && !isDestroyed) {
                         InCallClusterBridge.adoptObservedProjection(this)

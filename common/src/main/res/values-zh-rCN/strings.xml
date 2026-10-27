@@ -613,8 +613,8 @@
     <string name="nav_duck_percent_title">导航播报时音乐音量</string>
     <string name="nav_duck_percent_value">%1$d%%</string>
     <string name="nav_duck_percent_hint">播报期间音乐降到该比例，播报结束自动恢复；通话音频不受影响。改动在下一次播报即生效。</string>
-    <string name="media_audio_via_bluetooth">方向盘媒体键交给车机蓝牙</string>
-    <string name="media_audio_via_bluetooth_description">音乐始终走 CarPlay。开启后，方向盘上的播放/暂停与切歌不再转发给 CarPlay，只由车机蓝牙（AVRCP）控制手机，避免一次按键被响应两次。导航播报时音量键仍由 DiPlay 调导航音量。需断开重连生效。</string>
+    <string name="media_audio_via_bluetooth">方向盘按键去重（蓝牙优先）</string>
+    <string name="media_audio_via_bluetooth_description">音乐保持由 CarPlay 播放，导航播报音道不变。开启后优先等待蓝牙切歌或播放状态变化，1秒内无变化则由 CarPlay 响应；关闭后直接通过 CarPlay 控制。两种模式都会合并重复按键。开启后操作可能延迟约1秒，蓝牙反馈过慢时仍可能重复，需要实车验证。</string>
     <string name="cluster_card_position_preview">卡片位置预览（示意）</string>
     <string name="cluster_card_position_preview_note">原点为整个仪表盘投屏画面左上角 (0,0)（1920x720），X 向右、Y 向下，坐标即卡片左上角位置（px）。直接在 X/Y 输入框键入数字预览移动，点击“应用并保存”才会写入并立即刷新仪表盘上的卡片；卡片自适应后若越出屏幕会自动收回边界并保存修正坐标。</string>
     <string name="cluster_card_position_apply">应用并保存</string>

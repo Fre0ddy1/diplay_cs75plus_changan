@@ -8,16 +8,23 @@ import android.net.Uri
 import com.freddyq.diplay.customization.CustomizationSettingsGroup
 import com.freddyq.diplay.customization.CustomizationToggle
 import com.freddyq.diplay.customization.ProjectionControl
+import com.freddyq.diplay.customization.ProjectionContentControl
 import com.freddyq.diplay.customization.ProjectionLayout
 import com.freddyq.diplay.customization.VehicleCustomization
 import com.freddyq.diplay.customization.VehicleCustomizations
 
 class ChanganProjectionCustomization : VehicleCustomization {
+    private val contentRecovery = ContentHandoffRecovery {
+        VehicleCustomizations.diagnostic("ChanganProjection", it)
+    }
     override val id = "changan-projection"
     // Controller preparation and AirPlay activation may both announce the same session.
     // Projection has its own start generation; a duplicate phone-start must not reset recovery.
-    override fun onSessionStarted(context: Context) = Unit
-    override fun onSessionEnded() = ChanganProjectionBridge.clear("session-end")
+    override fun onSessionStarted(context: Context) = contentRecovery.resume()
+    override fun onSessionEnded() {
+        contentRecovery.cancel()
+        ChanganProjectionBridge.clear("session-end")
+    }
     override fun onProjectionStarted(context: Context, automatic: Boolean, control: ProjectionControl) =
         ChanganProjectionBridge.start(context, automatic, control)
     override fun onProjectionResumed(context: Context, control: ProjectionControl): Boolean {
@@ -26,8 +33,21 @@ class ChanganProjectionCustomization : VehicleCustomization {
         return true
     }
     override fun onProjectionLayoutRequested(layout: ProjectionLayout) = ChanganProjectionBridge.layoutRequested(layout)
-    override fun onProjectionManualControl() = ChanganProjectionBridge.clear("manual-control")
-    override fun onProjectionReleased() = ChanganProjectionBridge.clear("projection-released")
+    override fun onProjectionContentReady(context: Context, window: Any, control: ProjectionContentControl) {
+        if (ChanganProjectionSettings.enabled(context)) contentRecovery.frameReady(window,
+            ProjectionContentControl { result ->
+                if (ChanganProjectionSettings.enabled(context)) control.requestHandoff(result) else result(false)
+            }) else contentRecovery.cancel()
+    }
+    override fun onProjectionContentLost(window: Any) = contentRecovery.windowLost(window)
+    override fun onProjectionManualControl() {
+        contentRecovery.suspend()
+        ChanganProjectionBridge.clear("manual-control")
+    }
+    override fun onProjectionReleased() {
+        contentRecovery.invalidate()
+        ChanganProjectionBridge.clear("projection-released")
+    }
     override fun shouldRetryAutomaticProjection() = ChanganProjectionBridge.shouldRetryAutomaticProjection()
     override fun shouldActivateProjectionChannel() = ChanganProjectionBridge.shouldActivateProjectionChannel()
     override fun settings(context: Context) = listOf(
