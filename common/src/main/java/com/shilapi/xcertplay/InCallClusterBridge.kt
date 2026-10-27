@@ -309,6 +309,10 @@ object InCallClusterBridge {
     }
 
     private var openState = false      // f5349k (open in progress / active)
+    /** 本进程是否已经为"被强行打断的上一轮"做过一次 ext-screen 归还。只做一次。 */
+    private var staleResetDone = false
+    /** 归还后等 incall 处理完再重新激活。 */
+    private const val STALE_RESET_SETTLE_MS = 600L
     private var broadcastHalfSent = false
     /**
      * True when this open was started while incall already reported projecting, so only the parts
@@ -503,6 +507,26 @@ object InCallClusterBridge {
         val ctx = contextRef ?: return
         mainHandler.removeCallbacksAndMessages(token)
         generation++
+        // 上一轮是投影态、本进程还没听到 incall 说话：说明上次是被强行打断的（中控重启、
+        // 崩溃、被系统杀），我们没有机会通知 incall 这块 ext-screen 不要了。仪表不跟着重启，
+        // 所以 incall 手里还是上一轮那块旧屏，它会沿用旧状态，iPhone 也不会重新加载仪表盘
+        // 场景（field 2026-10-27 18:25：中控重启后 111 从地图变成了黑底卡片，参数一模一样）。
+        //
+        // 处理办法：先把 ext-screen 还回去（r0），等它处理完再重新激活。只做一次，避免
+        // incall 一直不上报时反复 r0。
+        if (!staleResetDone && persistedProjecting() &&
+            !lastCallbackValue.containsKey(CALLBACK_CODE_STATE) && !releasedByUs()
+        ) {
+            staleResetDone = true
+            logSeq(generation, "open: stale projection from a force-killed process; handing the ext-screen back first")
+            sendExternalScreenReset()
+            mainHandler.postAtTime(
+                { openProjection(ctx) },
+                token,
+                SystemClock.uptimeMillis() + STALE_RESET_SETTLE_MS,
+            )
+            return
+        }
         // Read incall's own report before we send anything: if the driver has already brought
         // projection up (the cluster shows "等待 CarPlay 连接"), the source is already ours and the
         // open sequence's switch would be a switch to the same source - which is what makes incall
@@ -627,6 +651,21 @@ object InCallClusterBridge {
         broadcastStatusAll(2, 2)
         broadcastOperateTo(PKG_INCALL, 0, 1)
         broadcastStatusTo(PKG_INCALL, 0, 1)
+    }
+
+    /**
+     * 只把 ext-screen 还回去，不动持久化标志、不拆 binder。
+     *
+     * 用在"上一轮被强行打断"的恢复里：那一轮没机会发 r0，incall 手里还挂着旧屏，
+     * 而仪表没有跟着重启。还一次再重新激活，等于让 incall 重新建一次 ext-screen，
+     * iPhone 也就会重新加载仪表盘的 initialURL。
+     */
+    private fun sendExternalScreenReset() {
+        broadcastOperateAll(2, 2)
+        broadcastStatusAll(2, 2)
+        broadcastOperateTo(PKG_INCALL, 0, 1)
+        broadcastStatusTo(PKG_INCALL, 0, 1)
+        r0SentAtUptimeMs = SystemClock.uptimeMillis()
     }
 
     private fun runFullOpenSequence() {
