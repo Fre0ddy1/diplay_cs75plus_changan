@@ -6093,9 +6093,14 @@ class CarPlayHostActivity : ComponentActivity() {
                     Toast.LENGTH_SHORT,
                 ).show()
             } else if (!mirror) {
-                // Nav-only mode. The automatic overview tap is removed (driver taps 全览 on
-                // the console Amap themselves when they want the detailed follow map).
-                appendLog("Cluster swipe $direction: 已切换为导航流，等待手机导航数据...")
+                // Nav-only mode, and the 111 stream really is up (the branch above did not run).
+                // Do NOT say "waiting for navigation data" here: 111 is resident and keeps
+                // delivering 26-30 fps even with no route (field 2026-10-27 13:07). That wording
+                // made a healthy switch look like a missing stream, both in the report and to us.
+                appendLog(
+                    "Cluster swipe $direction: 已切换为导航流" +
+                        "（111 已激活，活动流=$activeScreenStreamTypes）",
+                )
             }
         }
         Toast.makeText(
