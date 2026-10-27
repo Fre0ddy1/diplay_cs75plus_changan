@@ -426,6 +426,17 @@ object InCallClusterBridge {
             binder = null
             bound = false
             callbackRegistered = false
+            // 车机重新上电（点火）时 incall 会重启，而它上一轮报的 value=3 会留在
+            // lastCallbackValue 里。留着它的后果不是"状态不准"，是整个仪表从此废掉：
+            // reportsProjecting() 继续为 true，watcher 认为通道已就绪、永远不再发序列，三指也
+            // 按"通道已开"走热切换 - 仪表盘就停在黑的或者原车界面上（field 2026-10-27 12:2x：
+            // 未点火时连上、点火后不投屏，方向盘里看通道也没开）。
+            lastCallbackValue.clear()
+            callbackHeard = false
+            // 服务重启时 binder 不一定会自己回来，主动重绑一次；observeCallbackRequested 仍为
+            // true，连上后 onServiceConnected 会自动把 INavigateCallback 注册回去，incall 也会
+            // 随之重新上报它的真实状态。
+            contextRef?.let { runCatching { ensureBound(it) } }
         }
     }
 
