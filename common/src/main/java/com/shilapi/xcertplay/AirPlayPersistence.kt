@@ -661,19 +661,21 @@ object AirPlayPersistence {
     }
 
     /**
-     * 仪表激活探测档位（0=关闭，走完整序列）。
+     * 仪表激活是否走完整序列（旧的、会播报的那条）。
      *
-     * 用来定位"全屏导航已开启"那一声到底由哪一步引起：把完整序列拆成可累加的四档，
-     * 逐档路测，看仪表从哪一档开始能投、从哪一档开始播报。定位到之后按最小必要档固化，
-     * 这一项随之删除。
+     * 默认 false：只发 F0 + C0 + Z + hold。2026-10-27 实测（上电 / 未上电各四组）——上电后
+     * 静默那半 1 秒内就把 code=2 顶到 3，画面正常且全程不播；未上电时静默那半也不播，而
+     * tx2[1] 每发一次就播一次，源梯和 10019 状态梯各播一次。
+     *
+     * 只有静默确实投不上时才把这个打开，切回旧的完整序列（它会播）。
      */
-    private const val KEY_CLUSTER_PROBE_STEP = "cluster_probe_step"
+    private const val KEY_CLUSTER_FULL_SEQUENCE = "cluster_full_sequence"
 
-    fun loadClusterProbeStep(context: Context): Int =
-        context.getSharedPreferences(PREFS, Context.MODE_PRIVATE).getInt(KEY_CLUSTER_PROBE_STEP, 0)
+    fun loadClusterFullSequence(context: Context): Boolean =
+        context.getSharedPreferences(PREFS, Context.MODE_PRIVATE).getBoolean(KEY_CLUSTER_FULL_SEQUENCE, false)
 
-    fun saveClusterProbeStep(context: Context, step: Int) {
-        context.getSharedPreferences(PREFS, Context.MODE_PRIVATE).edit().putInt(KEY_CLUSTER_PROBE_STEP, step).apply()
+    fun saveClusterFullSequence(context: Context, enabled: Boolean) {
+        context.getSharedPreferences(PREFS, Context.MODE_PRIVATE).edit().putBoolean(KEY_CLUSTER_FULL_SEQUENCE, enabled).apply()
     }
 
     /**

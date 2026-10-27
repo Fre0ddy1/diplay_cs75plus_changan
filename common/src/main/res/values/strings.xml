@@ -377,13 +377,8 @@
     <string name="instrument_cluster_entire_interface">Entire CarPlay screen (mirror, stays in sync)</string>
     <string name="instrument_cluster_navigation_stream">Navigation cluster stream (guidance only)</string>
     <string name="cluster_content_title">Cluster picture source in nav-only mode</string>
-    <string name="cluster_probe_title">Dashboard activation probe</string>
-    <string name="cluster_probe_hint">Splits the activation sequence into steps that add up, to find which step makes the head unit announce full-screen navigation. Off runs the normal sequence. Use it only while diagnosing; the dashboard may stay dark on the lower steps.</string>
-    <string name="cluster_probe_off">Off · full sequence</string>
-    <string name="cluster_probe_step_1">1 · F0 + mode + props</string>
-    <string name="cluster_probe_step_2">2 · + tx2 confirm</string>
-    <string name="cluster_probe_step_3">3 · + source ladder</string>
-    <string name="cluster_probe_step_4">4 · + state ladder</string>
+    <string name="cluster_full_sequence_title">Dashboard activation uses the full sequence</string>
+    <string name="cluster_full_sequence_hint">By default only the quiet half is sent (clear screen + mode + properties): the dashboard projects when the car is powered and nothing is announced when it is not. Turn this on only when the dashboard fails to appear, to fall back to the old full sequence, which does announce.</string>
     <string name="cluster_content_custom">Map + cards drawn here (movable)</string>
     <string name="cluster_content_flycard">Apple full navigation</string>
     <string name="cluster_content_hint">All are pictures the phone sends; switching reconnects, because the URL is fixed when the window is built.</string>

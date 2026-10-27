@@ -519,11 +519,24 @@ object InCallClusterBridge {
             runSilentOpen()
             return
         }
-        // 播报定位档位（设置页开发者选项里切）。0 = 关闭，走原来的完整序列。
-        val probeStep = AirPlayPersistence.loadClusterProbeStep(ctx)
-        if (probeStep in 1..4) {
-            logSeq(generation, "probe: step=$probeStep（${probeLabel(probeStep)}）")
-            runProbeOpen(probeStep)
+        // 2026-10-27 实测（上电 / 未上电各四组，逐组杀进程）：
+        //
+        //   上电后：F0 + C0 + Z + hold 一发就够。code=1 -> 1、code=2 -> 2、code=1 -> 3、
+        //           code=2 -> 3，1 秒内画面就有了，而且四档（含完整序列）全都不播。
+        //   没上电：静默那半不播；tx2[1] 每发一轮就播一次（两组两响），9/12/40 源梯和
+        //           10019 状态梯各播一次。
+        //
+        // 也就是说让面板进全屏导航的是 C0(3)（tx8 mode=3），不是 10019 状态梯；而后者的三个
+        // 伴生动作（A0 梯、tx2、源梯）在上电后完全多余，却在车机没上电、仪表断电时替我们把
+        // "全屏导航已开启" 喊出来。所以默认只发静默那半 - 上电能投，没上电不响。
+        //
+        // 完整序列保留成设置里的手动选项：只有静默确实投不上时才切过去，因为它就是会播的那一发。
+        if (AirPlayPersistence.loadClusterFullSequence(ctx)) {
+            logSeq(generation, "open: full sequence selected in settings (the announcing path)")
+        } else {
+            silentOpenOnly = true
+            logSeq(generation, "open: silent half only (F0 + C0 + Z), no source switch, no announcement")
+            runSilentOpen()
             return
         }
         // No report from incall in this process yet. Only the force-kill warm case - we never
@@ -682,80 +695,6 @@ object InCallClusterBridge {
                 setCarProperties()
             }, token, SystemClock.uptimeMillis() + at)
         }
-    }
-
-    /**
-     * 播报定位用的分档激活，只在 [AirPlayPersistence.loadClusterProbeStep] 返回 1..4 时走这里。
-     *
-     * 完整序列由四块能独立观察的东西拼成，按累加顺序切档，唯一目的是路测时回答两个问题：
-     * 仪表从哪一档开始能投，和哪一档开始播报。
-     *
-     *   step 1  F0 + C0 + Z          静默那半，从未被观察到播报
-     *   step 2  1 + tx2[1]           源切换确认
-     *   step 3  1 + 9/12/40 源梯     源切换请求
-     *   step 4  1 + 10019 状态梯     投影模式状态机
-     *
-     * 每档都带 hold 循环（F0 + C0(3) + Z），因为发完就撒手时仪表往往还没来得及映射，
-     * 那样测出来的"投不上"会误导判断。定位到之后按最小必要档固化，这项设置随之删除。
-     */
-    private fun runProbeOpen(step: Int) {
-        val b = binder
-        val gen = generation
-        logSeq(gen, "probe open: step=$step ${probeLabel(step)}")
-        clearScreenOpen()
-        setCarProperties()
-        setMode(1)
-        setMode(3)
-        if (!silentHoldScheduled) {
-            silentHoldScheduled = true
-            for (at in HOLD_RETRY_DELAYS) {
-                mainHandler.postAtTime({
-                    if (gen != generation) return@postAtTime
-                    if (!alive()) return@postAtTime
-                    clearScreenOpen()
-                    setMode(3)
-                    setCarProperties()
-                }, token, SystemClock.uptimeMillis() + at)
-            }
-        }
-        if (step >= 2 && b != null) {
-            mainHandler.postAtTime({
-                if (gen != generation) return@postAtTime
-                if (!alive()) return@postAtTime
-                val ok = txWrite(b, 2, intArrayOf(1))
-                logSeq(gen, "probe tx2[1] -> $ok")
-            }, token, SystemClock.uptimeMillis() + 90L)
-        }
-        if (step >= 3) {
-            sendSourceEnter()
-            for ((i, d) in SOURCE_SWITCH_DELAYS.withIndex()) {
-                mainHandler.postAtTime({
-                    if (gen != generation) return@postAtTime
-                    broadcastSource(if (i == 0) 12 else 40)
-                }, token, SystemClock.uptimeMillis() + d.toLong())
-            }
-        }
-        if (step >= 4) {
-            var t = 0L
-            for (s in STATE_LADDER) {
-                val at = t
-                val state = s
-                mainHandler.postAtTime({
-                    if (gen != generation) return@postAtTime
-                    broadcastSource(state)
-                    if (state == -1) broadcastStatusOpen()
-                }, token, SystemClock.uptimeMillis() + at)
-                t += 90L
-            }
-        }
-    }
-
-    private fun probeLabel(step: Int): String = when (step) {
-        1 -> "F0+C0+Z"
-        2 -> "F0+C0+Z+tx2"
-        3 -> "F0+C0+Z+9/12/40"
-        4 -> "F0+C0+Z+10019 状态梯"
-        else -> "完整序列"
     }
 
     /**
