@@ -6195,10 +6195,6 @@ class CarPlayHostActivity : ComponentActivity() {
     private fun startClusterChannelWatcher() {
         if (watcherThread != null || DiLink51ClusterLayout.supported()) return
         if (shuttingDown.get() || isFinishing || isDestroyed) return
-        // 静默那半（F0 + C0 + Z + hold）不播报，所以它不需要"incall 已进全屏导航"这种前置条件：
-        // 只要面板尺寸正常、通道还没开，每 5 秒重试一次都是安全的。完整序列（设置里手动开的）
-        // 才需要下面的门槛，否则会在车机没上电时每 5 秒喊一次。
-        val silentMode = !AirPlayPersistence.loadClusterFullSequence(this)
         watcherThread = Thread({
             val startedAtMs = SystemClock.elapsedRealtime()
             // The cold-start clock starts with the watcher (app start), not with the session: the
@@ -6213,6 +6209,19 @@ class CarPlayHostActivity : ComponentActivity() {
                 // ours to use later, but re-sending the sequence here is what reopened the
                 // dashboard they just closed. Wait for a swipe or a new connection.
                 if (userHandedBackProjection) {
+                    quietSleep(WATCHER_PERIOD_MS)
+                    continue
+                }
+                // 车机没上电时 incall 一个 callback 都不发（2026-10-27 08:10-08:13 实测：整轮
+                // code=1=-1、没有任何上报），可它收到广播照样会喊"全屏导航已开启" - 那是唯一
+                // 还没被消掉的一类播报。所以先听它说话：听不到就什么都不发。上电后它会主动报
+                // code=2=0（2026-10-27 11:01 实测），闸门随之打开。
+                if (!InCallClusterBridge.heardFromIncall()) {
+                    val heardWaitNow = SystemClock.elapsedRealtime()
+                    if (heardWaitNow - lastClusterSizeWaitLogMs >= CLUSTER_SIZE_WAIT_LOG_MS) {
+                        lastClusterSizeWaitLogMs = heardWaitNow
+                        appendLog("Cluster watcher: 车机未上报（可能未上电），不发激活序列")
+                    }
                     quietSleep(WATCHER_PERIOD_MS)
                     continue
                 }
@@ -6254,27 +6263,12 @@ class CarPlayHostActivity : ComponentActivity() {
                     }
                     lastSentAtMs = 0L
                 } else if (autoFlyEnabled) {
-                    val displayMode = InCallClusterBridge.reportedDisplayMode()
-                    // Automatic sends require an explicitly reported full-screen panel
-                    // (code=1 == 3): with the dashboard dark or the head unit not in navigation,
-                    // every sequence is answered with an announcement while the panel stays black
-                    // (field 2026-10-26 19:21: five seconds apart, endlessly). A swipe - the driver
-                    // explicitly asking - may also try while incall is still silent (-1), because
-                    // that is the normal state right after power-up; an explicit small window (1)
-                    // is never worth a sequence.
-                    // A cold start has no mode report yet (incall stays silent until something
-                    // takes the panel), so without this one attempt auto-projection could never
-                    // start without a swipe. Exactly one, and only when the panel size is sane and
-                    // the channel is still closed - both are checked around this gate.
-                    val coldStartAttempt = !coldStartAttempted &&
-                        now - sessionStartedAtElapsedMs >= 1_000L
-                    // A swipe is the driver telling us to take the panel now. incall reports
-                    // code=1=1 whenever it sits on its own small page - which is exactly the state
-                    // the wheel's close-projection leaves it in - so demanding 3 here locked the
-                    // driver out for good (field 2026-10-27 00:25: swipe after swipe, the panel
-                    // only came back when the wheel itself reported 3 at 00:26:04). The bypass
-                    // applies only to a requested send and is rate-limited, so the unattended
-                    // five-second cadence still never announces on its own.
+                    // 走到这里说明 incall 已经在说话（上面那道闸门）：车机上电、服务在跑。此时完整
+                    // 序列实测不播报（2026-10-27 08:19，上电后四档全静音），所以不再需要"它已进
+                    // 全屏导航"这道前置门槛 - 那道门槛正是把一次失败的冷启动锁死整场的原因
+                    // （11:00 实测：静默发了几十轮，incall 一个 callback 都不回）。
+                    //
+                    // 手动请求只保留限速：三指连滑两次不该发两轮完整序列。
                     val manualSinceMs = if (lastManualActivationAtMs == 0L) {
                         Long.MAX_VALUE
                     } else {
@@ -6282,13 +6276,8 @@ class CarPlayHostActivity : ComponentActivity() {
                     }
                     val manualBypass = activationRequested &&
                         manualSinceMs >= MANUAL_ACTIVATION_MIN_INTERVAL_MS
-                    val modeReady = silentMode ||
-                        displayMode == 3 ||
-                        (activationRequested && displayMode != 1) ||
-                        manualBypass ||
-                        coldStartAttempt
                     val sinceLast = if (lastSentAtMs == 0L) now - startedAtMs else now - lastSentAtMs
-                    if (sinceLast >= WATCHER_RETRY_INTERVAL_MS || activationRequested) {
+                    if (sinceLast >= WATCHER_RETRY_INTERVAL_MS || manualBypass) {
                         if (!sizeReady) {
                             // Do not send and do not advance the clock: wait for a real panel.
                             // Log at most every few seconds so a head unit that never reports a
@@ -6301,21 +6290,12 @@ class CarPlayHostActivity : ComponentActivity() {
                                         "${watcherWidth}x${watcherHeight}，暂缓完整激活序列",
                                 )
                             }
-                        } else if (!modeReady) {
-                            if (now - lastClusterSizeWaitLogMs >= CLUSTER_SIZE_WAIT_LOG_MS) {
-                                lastClusterSizeWaitLogMs = now
-                                appendLog(
-                                    "Cluster watcher: incall 未进入全屏导航（code=1=$displayMode），" +
-                                        "暂缓自动激活；三指会强制投一次",
-                                )
-                            }
                         } else {
                             // Clear the request only when a sequence really goes out, so a swipe
                             // that lands while the gate is closed is retried instead of dropped
                             // (the previous code consumed it before the decision, which is how a
                             // swipe could ask for the panel and change nothing at all).
                             activationRequested = false
-                            if (coldStartAttempt) coldStartAttempted = true
                             if (manualBypass) lastManualActivationAtMs = now
                             lastOpenSequenceAtMs = now
                             lastSentAtMs = now

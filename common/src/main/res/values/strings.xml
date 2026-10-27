@@ -377,8 +377,8 @@
     <string name="instrument_cluster_entire_interface">Entire CarPlay screen (mirror, stays in sync)</string>
     <string name="instrument_cluster_navigation_stream">Navigation cluster stream (guidance only)</string>
     <string name="cluster_content_title">Cluster picture source in nav-only mode</string>
-    <string name="cluster_full_sequence_title">Dashboard activation uses the full sequence</string>
-    <string name="cluster_full_sequence_hint">By default only the quiet half is sent (clear screen + mode + properties): the dashboard projects when the car is powered and nothing is announced when it is not. Turn this on only when the dashboard fails to appear, to fall back to the old full sequence, which does announce.</string>
+    <string name="cluster_quiet_mode_title">Dashboard activation uses the quiet half only</string>
+    <string name="cluster_quiet_mode_hint">By default the full activation sequence runs, and it is only sent once the head unit has reported: that is what keeps it silent. Turning this on sends just the clear-screen, mode and property writes. It is quieter but a freshly started head unit may not accept it, leaving the dashboard blank. Use it for diagnosis only.</string>
     <string name="cluster_content_custom">Map + cards drawn here (movable)</string>
     <string name="cluster_content_flycard">Apple full navigation</string>
     <string name="cluster_content_hint">All are pictures the phone sends; switching reconnects, because the URL is fixed when the window is built.</string>

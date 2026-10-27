@@ -661,21 +661,22 @@ object AirPlayPersistence {
     }
 
     /**
-     * 仪表激活是否走完整序列（旧的、会播报的那条）。
+     * 仪表激活只用静默那半（F0 + C0 + Z），不发 10019 状态梯/tx2/源梯。
      *
-     * 默认 false：只发 F0 + C0 + Z + hold。2026-10-27 实测（上电 / 未上电各四组）——上电后
-     * 静默那半 1 秒内就把 code=2 顶到 3，画面正常且全程不播；未上电时静默那半也不播，而
-     * tx2[1] 每发一次就播一次，源梯和 10019 状态梯各播一次。
+     * 默认 false（走完整序列）。2026-10-27 两批实测说明：静默那半只有在 incall 已经被激活过、
+     * 只是重申时才够用；车机上电后 incall 全新重启时它不认（setMode 全部返回成功，但一个
+     * callback 都不回，仪表不亮）。完整序列在上电状态下实测不播报（8 组里四档全静音），
+     * 所以默认用它，播报交给"没上电就不发"来避免。
      *
-     * 只有静默确实投不上时才把这个打开，切回旧的完整序列（它会播）。
+     * 打开这一项等于放弃冷启动投屏，换更少的广播量，只在排查时用。
      */
-    private const val KEY_CLUSTER_FULL_SEQUENCE = "cluster_full_sequence"
+    private const val KEY_CLUSTER_QUIET_MODE = "cluster_quiet_mode"
 
-    fun loadClusterFullSequence(context: Context): Boolean =
-        context.getSharedPreferences(PREFS, Context.MODE_PRIVATE).getBoolean(KEY_CLUSTER_FULL_SEQUENCE, false)
+    fun loadClusterQuietMode(context: Context): Boolean =
+        context.getSharedPreferences(PREFS, Context.MODE_PRIVATE).getBoolean(KEY_CLUSTER_QUIET_MODE, false)
 
-    fun saveClusterFullSequence(context: Context, enabled: Boolean) {
-        context.getSharedPreferences(PREFS, Context.MODE_PRIVATE).edit().putBoolean(KEY_CLUSTER_FULL_SEQUENCE, enabled).apply()
+    fun saveClusterQuietMode(context: Context, enabled: Boolean) {
+        context.getSharedPreferences(PREFS, Context.MODE_PRIVATE).edit().putBoolean(KEY_CLUSTER_QUIET_MODE, enabled).apply()
     }
 
     /**

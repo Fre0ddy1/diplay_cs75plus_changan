@@ -521,17 +521,16 @@ object InCallClusterBridge {
         // 伴生动作（A0 梯、tx2、源梯）在上电后完全多余，却在车机没上电、仪表断电时替我们把
         // "全屏导航已开启" 喊出来。所以默认只发静默那半 - 上电能投，没上电不响。
         //
-        // 完整序列保留成设置里的手动选项：只有静默确实投不上时才切过去，因为它就是会播的那一发。
-        if (AirPlayPersistence.loadClusterFullSequence(ctx)) {
-            logSeq(generation, "open: full sequence selected in settings (the announcing path)")
+        // 完整序列是默认路径：车机上电后 incall 是全新进程时，只有 10019 状态梯能把它推进投影模式。
+        // 2026-10-27 11:00 实测：只发 F0+C0+Z 时，setMode 全部返回成功，但 incall 三条 callback
+        // 一条都不回，仪表不亮；同样的发送在 8:14 却能投 - 因为那之前 10019 梯已经把它推到过投影位。
+        //
+        // 静默那半只剩"incall 已经在投我们"（上面的 alreadyProjecting）和设置里的排查开关两种情况。
+        if (!AirPlayPersistence.loadClusterQuietMode(ctx)) {
+            logSeq(generation, "open: full sequence (the only path incall accepts after a cold start)")
         } else {
-            // 唯一不播报的路径，所以无论进程是冷的、热的、还是接着上次的，都只发它。
-            //
-            // 这里原有一个"热启动先静默，4 秒没确认再补发完整序列"的兜底。它就是未上电时替我们
-            // 喊"全屏导航已开启"的那一发：车机没上电、incall 永远确认不了，4 秒后兜底必然触发。
-            // 静默本身不播报，重试它没有任何代价 - watcher 每 5 秒会再来一次，所以兜底删掉。
             silentOpenOnly = true
-            logSeq(generation, "open: silent half only (F0 + C0 + Z), no source switch, no announcement")
+            logSeq(generation, "open: quiet mode selected in settings; F0 + C0 + Z only")
             runSilentOpen()
             return
         }

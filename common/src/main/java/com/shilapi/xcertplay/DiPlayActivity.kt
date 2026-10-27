@@ -553,13 +553,13 @@ class DiPlayActivity : ComponentActivity() {
                 addView(button(getString(R.string.vpn_root_grant), false) { runVpnRootGrant() }, matchButton(10, 60))
                 addView(button(getString(R.string.show_diagnostics_on_screen), false) { showDiagnosticsOnScreen() }, matchButton(10, 60))
                 addView(button(getString(R.string.clear_logs), false) { clearDiagnosticLogs() }, matchButton(10, 60))
-                // 仪表激活方式：默认静默那半；投不上时才切回旧的完整序列（会播报）。
+                // 排查用：只发静默那半（不播报），但冷启动时 incall 可能不认。
                 toggle(
                     this,
-                    getString(R.string.cluster_full_sequence_title),
-                    getString(R.string.cluster_full_sequence_hint),
-                    AirPlayPersistence.loadClusterFullSequence(this@DiPlayActivity),
-                ) { AirPlayPersistence.saveClusterFullSequence(this@DiPlayActivity, it) }
+                    getString(R.string.cluster_quiet_mode_title),
+                    getString(R.string.cluster_quiet_mode_hint),
+                    AirPlayPersistence.loadClusterQuietMode(this@DiPlayActivity),
+                ) { AirPlayPersistence.saveClusterQuietMode(this@DiPlayActivity, it) }
             }
             toggle(
                 card,

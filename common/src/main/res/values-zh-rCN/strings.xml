@@ -374,8 +374,8 @@
     <string name="instrument_cluster_entire_interface">整个 CarPlay 界面（镜像同步）</string>
     <string name="instrument_cluster_navigation_stream">导航仪表流（仅导航画面）</string>
     <string name="cluster_content_title">仅导航模式下仪表盘画面来源</string>
-    <string name="cluster_full_sequence_title">仪表激活改用完整序列</string>
-    <string name="cluster_full_sequence_hint">默认只发静默那半（清屏 + 模式 + 属性），上电时能正常投屏，没上电时也不会播“全屏导航已开启”。只有在仪表投不上时才打开这里，切回旧的完整序列——它会播报。</string>
+    <string name="cluster_quiet_mode_title">仪表激活只用静默那半</string>
+    <string name="cluster_quiet_mode_hint">默认走完整激活序列：车机上电后才会发送，实测不播报。打开这一项后只发清屏、模式和属性，广播量更少，但车机上电后 incall 全新启动时可能不认，导致仪表投不上。只在排查时使用。</string>
     <string name="cluster_content_custom">地图 + 自绘卡片（位置可调）</string>
     <string name="cluster_content_flycard">Apple 完整导航</string>
     <string name="cluster_content_hint">各来源都是手机推过来的画面；切换会自动重连，因为地址在建窗口时就定死了。</string>
