@@ -113,13 +113,18 @@ internal object CarPlayMediaKeys {
     /** Protocol ownership is separate from the AudioManager focus grant. */
     @Synchronized
     fun onMainAudioOwner(owner: CarPlayAudioOwner) {
+        val previous = mainAudioOwner
+        if (owner == previous) {
+            report("mainAudio unchanged=$owner; Android focus left unchanged")
+            return
+        }
         mainAudioOwner = owner
         session?.isActive = owner.allowsMedia
         if (!owner.allowsMedia) {
             focusRequest?.let { appContext?.getSystemService(AudioManager::class.java)?.abandonAudioFocusRequest(it) }
             focusHeld = false
             transientFocusInterrupted = false
-        } else if (mediaAudioActive) regainFocusLocked(onIphonePlaybackResume = true)
+        } else if (mediaAudioActive && !previous.allowsMedia) regainFocusLocked()
         report("mainAudio owner=$owner streamActive=$mediaAudioActive focusHeld=$focusHeld")
     }
 
@@ -128,8 +133,9 @@ internal object CarPlayMediaKeys {
         mainHandler.post {
             synchronized(this) {
                 if (controller !== expected) return@synchronized
-                // Playback metadata can come from another output. It never proves a CarPlay stream.
-                if (playing && mediaAudioActive) regainFocusLocked(onIphonePlaybackResume = true)
+                // Even an active CarPlay media stream can carry another phone app's voice.
+                // Metadata is not an explicit request to displace the car's current audio source.
+                report("iPhone playback metadata playing=$playing; Android focus left unchanged")
             }
         }
     }
@@ -199,12 +205,12 @@ internal object CarPlayMediaKeys {
     // Another car app (its own Spotify, the radio) took audio focus and with it the steering-wheel
     // keys. When CarPlay starts playing again it becomes the car's media source again, as any player
     // would; only the start counts, so a car source picked while the iPhone plays on is not undone.
-    private fun regainFocusLocked(onIphonePlaybackResume: Boolean = false) {
+    private fun regainFocusLocked(userRequested: Boolean = false) {
         if (!mediaAudioActive || !mainAudioOwner.allowsMedia) return
         val request = focusRequest ?: return
-        // Do not compete with an ongoing call. Only a fresh iPhone play transition may retry a
-        // transient loss for which the head unit never sent AUDIOFOCUS_GAIN.
-        if (transientFocusInterrupted && !onIphonePlaybackResume) return
+        // Only an explicit media-control action can override an unresolved transient loss.
+        // Repeated resource/metadata notifications must not trigger the native Bluetooth PAUSE.
+        if (transientFocusInterrupted && !userRequested) return
         if (focusHeld && !transientFocusInterrupted) return
         val audio = appContext?.getSystemService(AudioManager::class.java) ?: return
         if (audio.mode != AudioManager.MODE_NORMAL) return
@@ -325,9 +331,12 @@ internal object CarPlayMediaKeys {
         // Window and MediaSession deliveries share one gate. The preference selects key
         // arbitration only; both modes keep the same audio session and channel configuration.
         if (appContext?.getSystemService(AudioManager::class.java)?.mode != AudioManager.MODE_NORMAL) return
-        synchronized(this) { regainFocusLocked(onIphonePlaybackResume = true) }
         val expected = controller ?: return
         val external = fromWheel && appContext?.let { AirPlayPersistence.loadMediaViaCarBluetooth(it) } == true
+        val requestsMedia = index == CarPlayMediaButton.PLAY ||
+            (index == CarPlayMediaButton.PLAY_PAUSE && !nowPlaying.playing) ||
+            index == CarPlayMediaButton.NEXT || index == CarPlayMediaButton.PREVIOUS
+        if (!external && requestsMedia) synchronized(this) { regainFocusLocked(userRequested = true) }
         report("media input=$source index=$index externalOnly=$external mainAudio=$mainAudioOwner streamActive=$mediaAudioActive focusHeld=$focusHeld")
         wheelRouter.route(index, external) sendCarPlay@{
             if (appContext?.getSystemService(AudioManager::class.java)?.mode != AudioManager.MODE_NORMAL || CarPlayVideo.activity != null) return@sendCarPlay
