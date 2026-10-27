@@ -1730,14 +1730,17 @@ class CarPlayHostActivity : ComponentActivity() {
         if (shuttingDown.get() || isFinishing || isDestroyed) return
         if (!clusterProjectionStarted) return
         val presentation = clusterPresentation ?: return
-        // Hiding the window is the whole hand-back now: no broadcast, no activation. The driver
-        // asked for the car's own dials, and the channel stays untouched for the next session.
+        // 只隐藏窗口不算归还：incall 会一直投着我们那张看不见的窗口，它自己的仪表画面只能挤在
+        // 一个预览框里（field 2026-10-27 19:2x：断开后仪表左边一块 400x400 的原车高德地图）。
+        // 真正归还要把 ext-screen 还回去（r0）。代价是下次开启要重跑完整序列，而上电状态下
+        // 完整序列实测不播报（2026-10-27 08:19 四档全静音）。
         presentation.setMapVisible(false)
+        runCatching { InCallClusterBridge.releaseExternalScreen(this) }
         clusterWindowHidden = false
         mainHandler.removeCallbacks(releaseDashboardAfterLongLoss)
         appendLog(
-            "Disconnect: 隐藏仪表窗口（归还仪表，不发序列）" +
-                if (immediate) "（司机主动断开）" else "（${disconnectReleaseFallbackMs}ms 无画面，兜底隐藏）",
+            "Disconnect: 归还 ext-screen（r0，不再占用仪表）" +
+                if (immediate) "（司机主动断开）" else "（${disconnectReleaseFallbackMs}ms 无画面，兜底归还）",
         )
     }
 
@@ -5960,6 +5963,8 @@ class CarPlayHostActivity : ComponentActivity() {
         // A hand-back parked the position machine on -1, where a right swipe is the end of the
         // machine and does nothing at all. There the driver's swipe means "give me the dashboard
         // back", so both directions reopen the mode that was in use before the wheel closed it.
+        // 归还前记下当前是哪一路，方向盘重新开启时用它恢复（此时 pos 还是旧值）。
+        val mirrorBeforeClose = currentClusterMirrorMode()
         val handbackMirror = clusterMirrorBeforeHandback
         val reopeningFromHandback = clusterSwipePosition <= -1 && handbackMirror != null
         if (reopeningFromHandback) clusterMirrorBeforeHandback = null
@@ -6004,13 +6009,19 @@ class CarPlayHostActivity : ComponentActivity() {
             }
         }
         if (nextPos == -1) {
-            // Hand the dashboard back by hiding our window. Nothing else: no broadcast, no
-            // activation, no teardown. The channel and the window live for the whole session, so
-            // the next swipe only has to show it again.
+            // 归还必须把 ext-screen 真的还给车机（r0）。只隐藏窗口时 incall 仍投着这张空窗口，
+            // 它自己的仪表画面只能挤在一个预览框里（field 2026-10-27 19:2x：三指右滑"归还"
+            // 之后左边留着一块 400x400 的原车高德地图）。
             clusterPresentation?.setMapVisible(false)
+            runCatching { InCallClusterBridge.releaseExternalScreen(this) }
+            // r0 之后通道就是关的，watcher 会立刻重新投屏；归还期间必须停发，否则刚还回去
+            // 就又被自己抢回来。下一次三指会在 swipeClusterMode 开头清掉这个标志。
+            userHandedBackProjection = true
             // The driver closed it themselves: -1 is a real end stop again, not a hand-back.
-            clusterMirrorBeforeHandback = null
-            appendLog("Cluster swipe $direction: 隐藏仪表盘投屏窗口 (pos=-1)")
+            // 但仍记下刚才那一路：方向盘重新开启（incall 报 projecting）时用它恢复，否则
+            // onClusterProjectionConfirmed 会因为 mirrorBeforeHandback 为空而拒绝显示。
+            clusterMirrorBeforeHandback = mirrorBeforeClose
+            appendLog("Cluster swipe $direction: 归还仪表（r0 已发，pos=-1）")
             return
         }
         // pos 0 = whole-screen mirror, pos 1 = navigation stream only.
