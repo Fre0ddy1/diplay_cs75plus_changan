@@ -6101,7 +6101,9 @@ class CarPlayHostActivity : ComponentActivity() {
                     "Cluster swipe $direction: 已切换为导航流" +
                         "（111 已激活，活动流=$activeScreenStreamTypes）",
                 )
-                scheduleNavFrameCapture()
+                // 诊断抓图暂时停用（2026-10-27 19:00，排查告一段落）。
+                // 需要再看 111 的画面时，取消下面这一行的注释即可，其余代码都还在。
+                // scheduleNavFrameCapture()
             }
         }
         Toast.makeText(
@@ -6136,7 +6138,11 @@ class CarPlayHostActivity : ComponentActivity() {
      *
      * 日志里只有帧率和码率，看不出画面内容——"仪表上那行提示到底是不是 111 画的"这个问题，
      * 已经因为拿码率反推内容错了三次。1.5 秒后再抓，让 iPhone 把这一帧画完。
+     *
+     * 当前停用：调用点已注释（见 applyClusterMode 的 nav-only 分支）。恢复时取消那一行即可，
+     * 这个方法和 Presentation.captureNavFrame() 都保持可用。
      */
+    @Suppress("unused")
     private fun scheduleNavFrameCapture() {
         mainHandler.postDelayed({
             if (shuttingDown.get() || isFinishing || isDestroyed) return@postDelayed
