@@ -6247,9 +6247,12 @@ class CarPlayHostActivity : ComponentActivity() {
                 }
                 // 车机没上电时 incall 一个 callback 都不发（2026-10-27 08:10-08:13 实测：整轮
                 // code=1=-1、没有任何上报），可它收到广播照样会喊"全屏导航已开启" - 那是唯一
-                // 还没被消掉的一类播报。所以先听它说话：听不到就什么都不发。上电后它会主动报
-                // code=2=0（2026-10-27 11:01 实测），闸门随之打开。
-                if (!InCallClusterBridge.heardFromIncall()) {
+                // 还没被消掉的一类播报。所以自动发送要等它先说话（上电后会主动报 code=2=0）。
+                //
+                // 但三指是司机在车上按的：仪表就在他眼前，人不会对着黑屏滑三指。这里放行手动
+                // 请求，否则 incall 不主动上报的车机上（同型号不同 ROM，field 2026-10-27 19:00：
+                // 三指和方向盘全都打不开）连手动都救不回来。自动投屏仍然受闸门保护。
+                if (!InCallClusterBridge.heardFromIncall() && !activationRequested) {
                     val heardWaitNow = SystemClock.elapsedRealtime()
                     if (heardWaitNow - lastClusterSizeWaitLogMs >= CLUSTER_SIZE_WAIT_LOG_MS) {
                         lastClusterSizeWaitLogMs = heardWaitNow
