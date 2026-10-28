@@ -50,7 +50,8 @@ class MapEmbedService : Service() {
         }
     }
 
-    override fun onBind(intent: Intent): IBinder = messenger.binder
+    override fun onBind(intent: Intent): IBinder? =
+        if (com.freddyq.diplay.customization.VehicleCustomizations.allowAutomaticStartup(this)) messenger.binder else null
 
     override fun onDestroy() {
         destroyed = true

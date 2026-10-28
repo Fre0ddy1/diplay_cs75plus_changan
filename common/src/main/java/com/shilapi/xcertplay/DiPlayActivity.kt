@@ -179,6 +179,7 @@ class DiPlayActivity : ComponentActivity() {
 
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
+        if (!DiPlayAppExit.allowEntry(this, intent, launcher = true)) { finishAndRemoveTask(); return }
         DiPlayStartupTrace.log(this, "DiPlayActivity.onCreate begin")
         languagePreferenceAtCreate = AppLocale.preference(this)
         WindowCompat.setDecorFitsSystemWindows(window, true)
@@ -236,6 +237,7 @@ class DiPlayActivity : ComponentActivity() {
 
     override fun onNewIntent(intent: Intent) {
         super.onNewIntent(intent); setIntent(intent)
+        if (!DiPlayAppExit.allowEntry(this, intent, launcher = true)) { finishAndRemoveTask(); return }
         page = intent.getStringExtra("page") ?: "home"; render()
         automaticVehicleValidationStarted = false
         scheduleAutomaticVehicleValidation()
@@ -441,6 +443,8 @@ class DiPlayActivity : ComponentActivity() {
         right.addView(button(getString(R.string.connect_with_usb), false) { connect(false) }, matchButton())
         right.addView(label(getString(R.string.plug_your_iphone_into_a_usb_data_port_allow_carplay_when_y), 14, MUTED).apply { gravity = Gravity.CENTER; setPadding(dp(8), dp(10), dp(8), dp(24)) })
         right.addView(button(getString(R.string.settings), false) { page = "settings"; render() }, matchButton())
+        right.addView(button(DiPlayAppExit.title(this), false) { DiPlayAppExit.request(this) }, matchButton(12, 56))
+        DiPlayAppExit.description(this)?.let { right.addView(label(it, 13, MUTED)) }
         right.addView(label(getString(R.string.make_diplay_feel_right_for_your_car), 14, MUTED).apply { gravity = Gravity.CENTER; setPadding(0, dp(10), 0, dp(24)) })
         right.addView(label("${getString(homeVersionPrefix())}${version()}", 12, MUTED).apply { letterSpacing = .08f })
         if (wide) {
@@ -2796,6 +2800,7 @@ class DiPlayActivity : ComponentActivity() {
     }
 
     private fun connect(wireless: Boolean) {
+        if (!com.freddyq.diplay.customization.VehicleCustomizations.allowAutomaticStartup(this)) return
         startupHotspotCancelled = true
         // The bootstrap now runs after the first frame; make sure it is done before connecting.
         if (setupError == null) {

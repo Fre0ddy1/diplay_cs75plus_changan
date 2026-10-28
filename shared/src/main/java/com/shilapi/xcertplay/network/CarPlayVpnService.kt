@@ -61,7 +61,8 @@ class CarPlayVpnService : VpnService() {
     private var tun: ParcelFileDescriptor? = null
     private var attachGeneration = 0
 
-    override fun onBind(intent: Intent?): IBinder = binder
+    override fun onBind(intent: Intent?): IBinder? =
+        if (com.freddyq.diplay.customization.VehicleCustomizations.allowAutomaticStartup(this)) binder else null
 
     @Synchronized
     fun attach(

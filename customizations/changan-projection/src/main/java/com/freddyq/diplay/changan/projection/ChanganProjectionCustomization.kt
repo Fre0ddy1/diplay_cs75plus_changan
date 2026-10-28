@@ -10,10 +10,13 @@ import com.freddyq.diplay.customization.CustomizationToggle
 import com.freddyq.diplay.customization.ProjectionControl
 import com.freddyq.diplay.customization.ProjectionContentControl
 import com.freddyq.diplay.customization.ProjectionLayout
+import com.freddyq.diplay.customization.ProjectionEnvironment
+import com.freddyq.diplay.customization.ProjectionActivationControl
 import com.freddyq.diplay.customization.VehicleCustomization
 import com.freddyq.diplay.customization.VehicleCustomizations
 
 class ChanganProjectionCustomization : VehicleCustomization {
+    private val environment = ProjectionEnvironmentBridge()
     private val contentRecovery = ContentHandoffRecovery {
         VehicleCustomizations.diagnostic("ChanganProjection", it)
     }
@@ -22,6 +25,7 @@ class ChanganProjectionCustomization : VehicleCustomization {
     // Projection has its own start generation; a duplicate phone-start must not reset recovery.
     override fun onSessionStarted(context: Context) = contentRecovery.resume()
     override fun onSessionEnded() {
+        environment.clear()
         contentRecovery.cancel()
         ChanganProjectionBridge.clear("session-end")
     }
@@ -47,6 +51,10 @@ class ChanganProjectionCustomization : VehicleCustomization {
     override fun onProjectionReleased() {
         contentRecovery.invalidate()
         ChanganProjectionBridge.clear("projection-released")
+    }
+    override fun onProjectionEnvironment(context: Context, state: ProjectionEnvironment, control: ProjectionActivationControl): Boolean {
+        environment.observe(state, control)
+        return true
     }
     override fun shouldRetryAutomaticProjection() = ChanganProjectionBridge.shouldRetryAutomaticProjection()
     override fun shouldActivateProjectionChannel() = ChanganProjectionBridge.shouldActivateProjectionChannel()

@@ -9,6 +9,7 @@
 | `changan-projection/` | 等待实际小屏反馈后有限切全屏、取消与确认策略 |
 | `changan-audio/` | 独立媒体键策略与设置，默认CarPlay，关闭后明确交给外部控制；不重写音道 |
 | `compact-logging/` | 发行日志筛选、文件/历史/写入队列预算；独立于车辆协议与音频行为 |
+| `app-lifecycle/` | 用户退出后的持久停止、仅恢复本应用组件与有界清理；手动打开后恢复 |
 | `shared/.../customization/UpstreamNavigationAdapter.kt` | 复用上游解析器、图标映射、串行队列的单一边界 |
 
 依赖：`shared → api`，`changan-hud → shared + api`，`changan-projection → api`，`changan-audio → api`，`common → 定制模块 + shared`。模块私有provider负责注册，设置通过通用描述展示，首次默认开启、始终可见，不按车型隐藏；保存的关闭状态保留。初始化本身不发导航指令。
@@ -28,7 +29,7 @@
 ```sh
 python3 scripts/check_public_tree.py
 python3 scripts/check_customization_integration.py
-./gradlew :vehicle-customization-api:testDebugUnitTest :changan-hud:testDebugUnitTest :changan-projection:testDebugUnitTest :changan-audio:testDebugUnitTest :mobile:assembleDebug :mobile:lintDebug
+./gradlew :vehicle-customization-api:testDebugUnitTest :changan-hud:testDebugUnitTest :changan-projection:testDebugUnitTest :changan-audio:testDebugUnitTest :app-lifecycle:testDebugUnitTest :mobile:assembleDebug :mobile:lintDebug
 ```
 
 结构检查不能替代运行测试。新版须与精确c83原始基线逐项比较，不能沿用旧版24项失败的数字；完整结果见`VALIDATION.md`。合并上游若变更解析/生命周期，优先调整边界和通用入口，不能覆盖整个新版Activity来消除冲突。
@@ -40,3 +41,5 @@ HUD保留版本39的导航会话保持修复。巡航冲突方案是外部清零
 48候选增加独立音频策略模块，删除47的混合补发方案；帧后来源接管与资源/音流/焦点处理见[48实现说明](../docs/CS75PLUS-48-音频与内容接管.md)。新音频偏好不继承旧蓝牙优先值，但保留旧值供回退；后续用户明确关闭新策略会被保存。
 
 50发行加入`compact-logging`，通过通用`DiagnosticPolicy`接入：常规会话单文件256 KiB、两份历史、队列128行；仅清理应用私有目录已知旧日志槽位。上游未注册策略时保持原筛选与历史数量。视频计数继续更新以供冻结检测，仅压缩诊断输出。文件容量按UTF-8字节在批次中分段轮转，避免一次批写越界。
+
+52候选从上游master选择性吸收显示器上电就绪、服务重启后丢弃过期回调及用户关闭后暂停自动恢复的行为。恢复策略在`changan-projection/ProjectionPowerRecovery`中，每个显示器/服务代次最多4次；不套用上游无限5秒重试。首页与连接页设置共用“退出DiPlay”，退出后USB、开机与后台入口被拦截，直到手动打开主启动器。实现、边界与实车验收项见[52实现说明](../docs/CS75PLUS-52-上电恢复与退出.md)。

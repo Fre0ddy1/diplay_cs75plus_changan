@@ -17,6 +17,10 @@ import com.shilapi.xcertplay.host.R
 class DiPlaySessionService : Service() {
     override fun onBind(intent: Intent?): IBinder? = null
     override fun onStartCommand(intent: Intent?, flags: Int, startId: Int): Int {
+        if (!com.freddyq.diplay.customization.VehicleCustomizations.allowAutomaticStartup(this)) {
+            stopSelf()
+            return START_NOT_STICKY
+        }
         if (intent?.action == ACTION_STOP) {
             CarPlayBackgroundSession.stop()
             stopSelf()

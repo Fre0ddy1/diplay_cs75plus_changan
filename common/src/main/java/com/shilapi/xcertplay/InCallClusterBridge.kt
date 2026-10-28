@@ -218,6 +218,24 @@ object InCallClusterBridge {
     private var observeCallbackRequested = false
     /** Last callback value reported per code, so only transitions reach the exported log. */
     private val lastCallbackValue = java.util.concurrent.ConcurrentHashMap<Int, Int>()
+    @Volatile private var remoteServiceEpoch = 0L
+    @Volatile private var projectionDisplayAvailable = true
+    fun serviceEpoch(): Long = remoteServiceEpoch
+    fun serviceConnected(): Boolean = binder?.isBinderAlive == true && callbackRegistered
+    fun observeDisplayAvailable(available: Boolean) { projectionDisplayAvailable = available }
+    /** Power/service loss invalidates our belief, without touching the physical source. */
+    fun invalidateProjectionChannel() {
+        mainHandler.removeCallbacksAndMessages(token)
+        generation++
+        openState = false
+        contentHandoffWindow = null
+        contentReadyWindow = null
+        lastCallbackValue.clear()
+        synchronized(confirmationLock) { resumeGeneration = null }
+        projectionNeedsReconfirmation = true
+        persistProjecting(false)
+        VehicleCustomizations.onProjectionReleased()
+    }
 
     /**
      * Set on the binder thread the first time incall calls back in this process. Binder liveness
@@ -341,8 +359,9 @@ object InCallClusterBridge {
     private var resumeOpenSeen = false
     private val projectionControl = object : ProjectionControl {
         override fun requestLayout(layout: ProjectionLayout): Boolean {
+            if (contextRef?.let { !VehicleCustomizations.allowAutomaticStartup(it) } == true) return false
             check(Looper.myLooper() == Looper.getMainLooper())
-            if (!openState || binder?.isBinderAlive != true) return false
+            if (!projectionDisplayAvailable || !openState || binder?.isBinderAlive != true) return false
             val mode = when (layout) {
                 ProjectionLayout.CARD -> 1
                 ProjectionLayout.FULLSCREEN -> 3
@@ -554,13 +573,16 @@ object InCallClusterBridge {
     private val connection = object : ServiceConnection {
         override fun onServiceConnected(name: ComponentName?, service: IBinder?) {
             Log.i(TAG, "service connected: $name")
+            remoteServiceEpoch++
             binder = service
             bound = true
             if (observeCallbackRequested && !callbackRegistered) {
                 val ok = registerCallback(service ?: return)
                 logSeq(generation, "observe: registered INavigateCallback before activation -> $ok")
             }
-            if (openState) {
+            if (openState && projectionDisplayAvailable &&
+                contextRef?.let { VehicleCustomizations.allowAutomaticStartup(it) } == true &&
+                VehicleCustomizations.shouldActivateProjectionChannel()) {
                 if (silentOpenOnly) runSilentOpen() else runFullOpenSequence()
             }
         }
@@ -588,6 +610,9 @@ object InCallClusterBridge {
     }
 
     private fun forgetRemoteConnection() {
+        remoteServiceEpoch++
+        openState = false // The ready-state watcher owns activation after the service returns.
+        projectionNeedsReconfirmation = true
         contentHandoffWindow = null
         contentReadyWindow = null
         binder = null
@@ -672,6 +697,7 @@ object InCallClusterBridge {
         binder?.isBinderAlive == true && observationOwner?.get() === window && !releasedByUs()
 
     fun requestContentHandoff(context: Context, window: Any, onDispatched: (Boolean) -> Unit) {
+        if (!VehicleCustomizations.allowAutomaticStartup(context)) { onDispatched(false); return }
         check(Looper.myLooper() == Looper.getMainLooper())
         if (observationOwner?.get() !== window || releasedByUs()) {
             onDispatched(false)
@@ -727,6 +753,8 @@ object InCallClusterBridge {
      * never connects, fall back to the broadcast-only half so behaviour is never worse than before.
      */
     fun openProjection(context: Context, automatic: Boolean = false) {
+        if (!VehicleCustomizations.allowAutomaticStartup(context)) return
+        if (!projectionDisplayAvailable) return
         contextRef = context.applicationContext
         val ctx = contextRef ?: return
         val keepConfirmedFull = openState && incallReportsProjecting() && lastCallbackValue[1] == 3

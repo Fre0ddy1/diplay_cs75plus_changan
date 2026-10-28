@@ -514,6 +514,13 @@ class CarPlayHostActivity : ComponentActivity() {
     @Volatile private var watcherDisplay: android.view.Display? = null
     @Volatile private var watcherWidth = 0
     @Volatile private var watcherHeight = 0
+    @Volatile private var userClosedProjection = false
+    @Volatile private var projectionClosePending = false
+    @Volatile private var manualProjectionRequest = 0L
+    private var lastKnownProjecting = false
+    private var lastChannelActivationAt = 0L
+    private var projectionClosedAt = 0L
+    private var projectionClosedEpoch = -1L
     private var lastClusterSizeWaitLogMs = 0L
     // True once this activity has sent the projection open sequence at all. The disconnect
     // hand-back refuses to run without it: sending the ext-screen release (r0) to a head unit that
@@ -775,6 +782,7 @@ class CarPlayHostActivity : ComponentActivity() {
 
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
+        if (!DiPlayAppExit.allowEntry(this, intent)) { finishAndRemoveTask(); return }
         NavigationWidgetUpdater.attach(applicationContext)
         CenterMapOverlay.requestShow = ::showCenterMap
         MapMirrors.sink = mirrorSink
@@ -1208,7 +1216,7 @@ class CarPlayHostActivity : ComponentActivity() {
         CarPlayBackgroundSession.logger = { message -> appendLog(message) }
         // incall telling us the panel is really ours is the signal to show the dashboard window.
         InCallClusterBridge.projectingListener = { projecting ->
-            if (projecting) runOnUiThread { onClusterProjectionConfirmed() }
+            runOnUiThread { if (projecting) onClusterProjectionConfirmed() else onClusterProjectionWithdrawn() }
         }
         val languagePreference = AppLocale.preference(this)
         if (Build.VERSION.SDK_INT < 33 && languagePreference != languagePreferenceAtCreate) {
@@ -2706,7 +2714,7 @@ class CarPlayHostActivity : ComponentActivity() {
         )
 
         val exitApplicationButton = Button(this).apply {
-            text = getString(R.string.exit_application)
+            text = DiPlayAppExit.title(this@CarPlayHostActivity)
             isAllCaps = false
             textSize = 17f
             setTextColor(Color.WHITE)
@@ -4536,6 +4544,8 @@ class CarPlayHostActivity : ComponentActivity() {
 
     /** Projects now at the given mode (0=whole mirror, 1=nav stream), reusing the swipe path. */
     private fun autoProjectTo(mirror: Boolean, direction: String) {
+        if (userClosedProjection || projectionClosePending ||
+            !com.freddyq.diplay.customization.VehicleCustomizations.allowAutomaticStartup(this)) return
         // Re-check the "自动飞屏" master switch: the 5 s entry delay means the user may have
         // toggled it off between the session-activation gate and this delayed execution.
         if (!AirPlayPersistence.loadAutoFlyScreen(this)) {
@@ -4677,6 +4687,10 @@ class CarPlayHostActivity : ComponentActivity() {
                     }
                     mainHandler.removeCallbacks(airPlayStallHint)
                     activeAirPlaySession = session
+                    userClosedProjection = false
+                    projectionClosePending = false
+                    manualProjectionRequest = 0L
+                    lastKnownProjecting = false
                     resourceSession = session
                     audioResources.reset()
                     sink?.setMediaResourceAllowed(true)
@@ -5198,7 +5212,7 @@ class CarPlayHostActivity : ComponentActivity() {
     }
 
     private fun maybeStartCarPlay() {
-        if (shuttingDown.get()) return
+        if (shuttingDown.get() || !com.freddyq.diplay.customization.VehicleCustomizations.allowAutomaticStartup(this)) return
         if (CarPlayBackgroundSession.hasSession() && !CarPlayBackgroundSession.isOwner(this)) {
             if (!adoptBackgroundSession()) mainHandler.postDelayed({ maybeStartCarPlay() }, 500)
             return
@@ -5416,6 +5430,7 @@ class CarPlayHostActivity : ComponentActivity() {
     private fun exitApplication() {
         if (shuttingDown.get()) return
         restoreSettingsBaseline()
+        if (DiPlayAppExit.request(this)) return
         finishAndRemoveTask()
         shutdown(terminateProcess = true, reason = "settings exit application")
     }
@@ -5775,7 +5790,8 @@ class CarPlayHostActivity : ComponentActivity() {
             manualClusterOverride = false
             return
         }
-        if (shuttingDown.get() || isFinishing || isDestroyed || menuOpen || handshakeResetInProgress) return
+        if (shuttingDown.get() || isFinishing || isDestroyed || menuOpen || handshakeResetInProgress ||
+            userClosedProjection || projectionClosePending) return
         if (activeAirPlaySession == null) {
             lastAutoNavState = null
             return
@@ -5808,7 +5824,7 @@ class CarPlayHostActivity : ComponentActivity() {
     }
 
     private fun autoProjectForNavigation(navigating: Boolean) {
-        if (shuttingDown.get() || isFinishing || isDestroyed) return
+        if (shuttingDown.get() || isFinishing || isDestroyed || userClosedProjection || projectionClosePending) return
         val mirror = !navigating
         clusterSwipePosition = if (mirror) 0 else 1
         clusterPositionFromAuto = true
@@ -5860,6 +5876,11 @@ class CarPlayHostActivity : ComponentActivity() {
             }
         }
         clusterSwipePosition = nextPos
+        userClosedProjection = nextPos < 0
+        if (nextPos >= 0) manualProjectionRequest++ else {
+            projectionClosedAt = SystemClock.elapsedRealtime()
+            projectionClosedEpoch = InCallClusterBridge.serviceEpoch()
+        }
         if (direction != "auto") {
             InCallClusterBridge.detachAutomaticProjection(autoProjectToken)
             com.freddyq.diplay.customization.VehicleCustomizations.onProjectionManualControl()
@@ -6017,6 +6038,7 @@ class CarPlayHostActivity : ComponentActivity() {
      */
     private fun clusterDisplaySizeReady(): Boolean {
         val display = watcherDisplay ?: return false
+        if (runCatching { display.state }.getOrDefault(android.view.Display.STATE_UNKNOWN) != android.view.Display.STATE_ON) return false
         val size = runCatching { ClusterMapPresentation.sizeOf(display) }.getOrNull() ?: return false
         watcherWidth = size.x
         watcherHeight = size.y
@@ -6062,21 +6084,29 @@ class CarPlayHostActivity : ComponentActivity() {
             var attempts = 0
             var lastSentAtMs = 0L
             var channelWasOpen = false
-            while (!shuttingDown.get() && !isFinishing && !isDestroyed) {
+            var sleepOffset = SystemClock.elapsedRealtime() - SystemClock.uptimeMillis()
+            var resumeEpoch = 0L
+            while (!shuttingDown.get() && !isFinishing && !isDestroyed &&
+                com.freddyq.diplay.customization.VehicleCustomizations.allowAutomaticStartup(this)) {
+                val observedSleep = SystemClock.elapsedRealtime() - SystemClock.uptimeMillis()
+                if (observedSleep - sleepOffset >= 1_000L) {
+                    resumeEpoch++ // elapsedRealtime includes deep sleep; uptimeMillis does not.
+                    sleepOffset = observedSleep
+                }
                 // 1) Sample the channel. Read-only: incall's own report, nothing goes out here.
                 val open = runCatching { InCallClusterBridge.reportsProjecting() }.getOrDefault(false)
                 watcherChannelOpen = open
                 // Local video readiness and source handoff are independent of global LVDS state.
                 mainHandler.post {
                     val window = clusterPresentation
-                    if (activeAirPlaySession != null && window?.hasContentFrame == true &&
+                    if (activeAirPlaySession != null && window?.hasContentFrame == true && clusterDisplaySizeReady() &&
                         AirPlayPersistence.loadAutoFlyScreen(this) && !clusterProjectionAbandoned &&
                         InCallClusterBridge.contentEndpointReady(window) &&
                         !shuttingDown.get() && !isFinishing && !isDestroyed) {
                         com.freddyq.diplay.customization.VehicleCustomizations.onProjectionContentReady(
                             this, window,
                             com.freddyq.diplay.customization.ProjectionContentControl { result ->
-                                if (activeAirPlaySession != null && clusterPresentation === window && window.hasContentFrame &&
+                                if (activeAirPlaySession != null && clusterPresentation === window && window.hasContentFrame && clusterDisplaySizeReady() &&
                                     AirPlayPersistence.loadAutoFlyScreen(this) && !clusterProjectionAbandoned) {
                                     InCallClusterBridge.requestContentHandoff(this, window, result)
                                 } else result(false)
@@ -6084,7 +6114,7 @@ class CarPlayHostActivity : ComponentActivity() {
                         )
                     }
                 }
-                if (open && !channelWasOpen) mainHandler.post {
+                if (open && !channelWasOpen && clusterDisplaySizeReady()) mainHandler.post {
                     if (!shuttingDown.get() && !isFinishing && !isDestroyed) {
                         InCallClusterBridge.adoptObservedProjection(this)
                     }
@@ -6093,6 +6123,9 @@ class CarPlayHostActivity : ComponentActivity() {
 
                 // 2) Sample the dashboard display. Runs every period regardless of the channel
                 //    state, and never waits on anything.
+                watcherDisplay = watcherDisplay?.let { previous ->
+                    getSystemService(android.hardware.display.DisplayManager::class.java)?.getDisplay(previous.displayId)
+                }
                 if (watcherDisplay == null) {
                     runCatching { ClusterMapPresentation.findDisplay(this) }.getOrNull()?.let { display ->
                         watcherDisplay = display
@@ -6112,6 +6145,48 @@ class CarPlayHostActivity : ComponentActivity() {
                 // clock is not advanced while we are waiting, so the first send happens as soon as
                 // the size becomes sane.
                 val sizeReady = clusterDisplaySizeReady()
+                val displayOn = watcherDisplay?.let {
+                    runCatching { it.state == android.view.Display.STATE_ON }.getOrDefault(false)
+                } == true
+                InCallClusterBridge.observeDisplayAvailable(displayOn)
+                val environment = com.freddyq.diplay.customization.ProjectionEnvironment(
+                    watcherDisplay?.displayId, displayOn, sizeReady,
+                    InCallClusterBridge.serviceEpoch(), InCallClusterBridge.serviceConnected(), open,
+                    activeAirPlaySession != null, AirPlayPersistence.loadAutoFlyScreen(this),
+                    userClosedProjection || projectionClosePending, manualProjectionRequest, resumeEpoch,
+                )
+                val owner = autoProjectToken
+                val phone = activeAirPlaySession
+                val managed = com.freddyq.diplay.customization.VehicleCustomizations.onProjectionEnvironment(
+                    this, environment, object : com.freddyq.diplay.customization.ProjectionActivationControl {
+                        private fun current() = owner === autoProjectToken && phone === activeAirPlaySession &&
+                            environment.serviceEpoch == InCallClusterBridge.serviceEpoch() &&
+                            !shuttingDown.get() && !isFinishing && !isDestroyed &&
+                            com.freddyq.diplay.customization.VehicleCustomizations.allowAutomaticStartup(this@CarPlayHostActivity)
+                        override fun invalidateChannel(): Boolean {
+                            if (!current()) return false
+                            lastKnownProjecting = false
+                            projectionClosePending = false
+                            watcherChannelOpen = false
+                            clusterProjectionAbandoned = false
+                            clusterPresentation?.setMapVisible(false)
+                            if (clusterPresentation?.display?.displayId != environment.displayId) dismissClusterPresentation()
+                            InCallClusterBridge.invalidateProjectionChannel()
+                            return true
+                        }
+                        override fun activate(): Boolean {
+                            if (!current() || activeAirPlaySession == null || userClosedProjection || projectionClosePending ||
+                                (!AirPlayPersistence.loadAutoFlyScreen(this@CarPlayHostActivity) && manualProjectionRequest == 0L) ||
+                                !clusterDisplaySizeReady() ||
+                                !com.freddyq.diplay.customization.VehicleCustomizations.shouldActivateProjectionChannel()) return false
+                            lastChannelActivationAt = SystemClock.elapsedRealtime()
+                            clusterProjectionAbandoned = false
+                            InCallClusterBridge.openProjection(this@CarPlayHostActivity, automatic = true)
+                            return true
+                        }
+                    },
+                )
+                if (managed) { quietSleep(WATCHER_PERIOD_MS); continue }
 
                 // 3) The channel is up: the budget starts over, so a channel the driver closes by
                 //    hand later is picked up again from the first (shortest) delay.
@@ -6201,7 +6276,16 @@ class CarPlayHostActivity : ComponentActivity() {
      */
     private fun onClusterProjectionConfirmed() {
         if (shuttingDown.get() || isFinishing || isDestroyed) return
+        if (!clusterDisplaySizeReady()) return
+        projectionClosePending = false
+        if (userClosedProjection) {
+            if (projectionClosedEpoch == InCallClusterBridge.serviceEpoch() &&
+                SystemClock.elapsedRealtime() - projectionClosedAt < 600L) return
+            userClosedProjection = false
+        }
+        lastKnownProjecting = true
         if (clusterWindowHidden) return
+        if (clusterPresentation == null) ensureClusterPresentation()
         val presentation = clusterPresentation ?: return
         presentation.setMapVisible(true)
         scheduleClusterFrameCheck()
@@ -6223,6 +6307,28 @@ class CarPlayHostActivity : ComponentActivity() {
      * it again and re-checks, and by then incall usually re-lays it out properly.
      */
     private val clusterFrameCheck = Runnable { hideClusterWindowIfPlaceholder() }
+
+    private fun onClusterProjectionWithdrawn() {
+        if (!lastKnownProjecting || activeAirPlaySession == null || !clusterDisplaySizeReady() ||
+            !InCallClusterBridge.serviceConnected() ||
+            SystemClock.elapsedRealtime() - lastChannelActivationAt < 3_000L) return
+        lastKnownProjecting = false
+        projectionClosePending = true
+        val epoch = InCallClusterBridge.serviceEpoch()
+        val phone = activeAirPlaySession
+        mainHandler.postDelayed({
+            projectionClosePending = false
+            if (phone !== activeAirPlaySession || epoch != InCallClusterBridge.serviceEpoch() ||
+                !InCallClusterBridge.serviceConnected() || !clusterDisplaySizeReady() ||
+                InCallClusterBridge.reportsProjecting() || shuttingDown.get()) return@postDelayed
+            userClosedProjection = true
+            projectionClosedAt = SystemClock.elapsedRealtime()
+            projectionClosedEpoch = epoch
+            clusterPresentation?.setMapVisible(false)
+            com.freddyq.diplay.customization.VehicleCustomizations.onProjectionManualControl()
+            appendLog("Cluster: 原车关闭投屏，暂停自动恢复；可用方向盘、三指或重新连接恢复")
+        }, 600L)
+    }
 
     private fun scheduleClusterFrameCheck() {
         mainHandler.removeCallbacks(clusterFrameCheck)

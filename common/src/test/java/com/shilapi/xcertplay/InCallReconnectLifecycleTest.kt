@@ -60,7 +60,8 @@ class InCallReconnectLifecycleTest {
         for (name in listOf("binder", "openState", "contextRef", "bound", "observeCallbackRequested",
             "callbackRegistered", "callbackHeard", "generation", "observationOwner",
             "projectionNeedsReconfirmation", "automaticProjectionOwner", "callbackSerial", "resumeGeneration",
-            "resumeRequestSerial", "resumeFullSeen", "resumeOpenSeen", "projectingListener")) {
+            "resumeRequestSerial", "resumeFullSeen", "resumeOpenSeen", "projectingListener",
+            "projectionDisplayAvailable", "remoteServiceEpoch")) {
             saved[name] = ReflectionHelpers.getStaticField<Any?>(InCallClusterBridge::class.java, name)
         }
         oldCallbacks = callbacks.toMap()
@@ -88,6 +89,7 @@ class InCallReconnectLifecycleTest {
         field("automaticProjectionOwner", null)
         field("resumeGeneration", null)
         field("resumeRequestSerial", Long.MAX_VALUE)
+        field("projectionDisplayAvailable", true)
         callbacks.clear()
         callbacks[1] = 3
         callbacks[2] = 3
@@ -273,5 +275,53 @@ class InCallReconnectLifecycleTest {
         assertFalse(InCallClusterBridge.reportsProjecting())
         InCallClusterBridge.observeCallback(scope)
         assertEquals(1, scope.binds)
+    }
+
+    @Test fun offDisplayRejectsActivationAndLayoutCommands() {
+        InCallClusterBridge.observeDisplayAvailable(false)
+        InCallClusterBridge.openProjection(app, automatic = true)
+        val control = ReflectionHelpers.getStaticField<ProjectionControl>(InCallClusterBridge::class.java, "projectionControl")
+        assertFalse(control.requestLayout(ProjectionLayout.FULLSCREEN))
+        idle(60000)
+        assertTrue(calls.isEmpty())
+    }
+
+    @Test fun localInvalidationDropsStaleCallbacksWithoutVehicleCommandOrUnbinding() {
+        val beforeBinder = ReflectionHelpers.getStaticField<IBinder>(InCallClusterBridge::class.java, "binder")
+        InCallClusterBridge.invalidateProjectionChannel()
+        assertFalse(InCallClusterBridge.reportsProjecting())
+        assertTrue(callbacks.isEmpty())
+        assertSame(beforeBinder, ReflectionHelpers.getStaticField<IBinder>(InCallClusterBridge::class.java, "binder"))
+        assertTrue(ReflectionHelpers.getStaticField<Boolean>(InCallClusterBridge::class.java, "bound"))
+        idle(60000)
+        assertTrue(calls.isEmpty())
+    }
+
+    @Test fun serviceDeathAdvancesEpochAndInvalidatesOldConfirmation() {
+        val before = InCallClusterBridge.serviceEpoch()
+        val connection = ReflectionHelpers.getStaticField<ServiceConnection>(InCallClusterBridge::class.java, "connection")
+        connection.onServiceDisconnected(null)
+        assertTrue(InCallClusterBridge.serviceEpoch() > before)
+        assertFalse(InCallClusterBridge.serviceConnected())
+        assertFalse(InCallClusterBridge.reportsProjecting())
+        assertTrue(callbacks.isEmpty())
+        connection.onServiceConnected(null, fake)
+        idle(60000)
+        assertTrue(InCallClusterBridge.serviceConnected())
+        assertTrue(calls.none { it.first in setOf(1, 8, 21) })
+    }
+    @Test fun explicitAppExitBlocksLateActivationLayoutAndContentCallbacks() {
+        VehicleCustomizations.register(object : VehicleCustomization {
+            override val id = "stopped-app"
+            override fun allowAutomaticStartup(context: Context) = false
+        })
+        InCallClusterBridge.openProjection(app, automatic = true)
+        val control = ReflectionHelpers.getStaticField<ProjectionControl>(InCallClusterBridge::class.java, "projectionControl")
+        assertFalse(control.requestLayout(ProjectionLayout.FULLSCREEN))
+        var result: Boolean? = null
+        InCallClusterBridge.requestContentHandoff(app, Any()) { result = it }
+        assertEquals(false, result)
+        idle(60000)
+        assertTrue(calls.isEmpty())
     }
 }

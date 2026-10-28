@@ -8,6 +8,10 @@ import java.util.concurrent.CopyOnWriteArrayList
 interface VehicleCustomization {
     val id: String
     val diagnosticPolicy: DiagnosticPolicy? get() = null
+    fun allowAutomaticStartup(context: Context): Boolean = true
+    fun applicationExitUi(): ApplicationExitUi? = null
+    fun onManualApplicationLaunch(context: Context) {}
+    fun requestApplicationExit(context: Context, control: ApplicationExitControl): Boolean = false
     fun mediaKeyRoute(context: Context): MediaKeyRoute? = null
     fun onWirelessAudioHandoff(context: Context, connection: WirelessAudioConnection) {}
     fun onWirelessAudioEnded(owner: Any) {}
@@ -25,6 +29,8 @@ interface VehicleCustomization {
     fun onProjectionContentLost(window: Any) {}
     fun onProjectionManualControl() {}
     fun onProjectionReleased() {}
+    /** Return true when this module owns the channel watcher policy for this observation. */
+    fun onProjectionEnvironment(context: Context, state: ProjectionEnvironment, control: ProjectionActivationControl): Boolean = false
     fun shouldRetryAutomaticProjection(): Boolean = true
     /** Called only after the host observes an unavailable channel, rather than a layout retry. */
     fun shouldActivateProjectionChannel(): Boolean = shouldRetryAutomaticProjection()
@@ -56,8 +62,22 @@ open class VehicleCustomizationRegistry {
     @Synchronized fun register(extension: VehicleCustomization) {
         if (extensions.none { it.id == extension.id }) extensions += extension
     }
+    fun allowAutomaticStartup(context: Context): Boolean = extensions.all {
+        runCatching { it.allowAutomaticStartup(context.applicationContext) }.getOrDefault(false)
+    }
+    fun onManualApplicationLaunch(context: Context) = dispatch { it.onManualApplicationLaunch(context.applicationContext) }
+    fun applicationExitUi(): ApplicationExitUi? = extensions.firstNotNullOfOrNull { runCatching { it.applicationExitUi() }.getOrNull() }
+    fun requestApplicationExit(context: Context, control: ApplicationExitControl): Boolean {
+        for (extension in extensions) {
+            try { if (extension.requestApplicationExit(context.applicationContext, control)) return true }
+            catch (error: Exception) { Log.w(TAG, "${extension.id} application exit failed", error) }
+        }
+        return false
+    }
 
-    fun onSessionStarted(context: Context) = dispatch { it.onSessionStarted(context.applicationContext) }
+    fun onSessionStarted(context: Context) {
+        if (allowAutomaticStartup(context)) dispatch { it.onSessionStarted(context.applicationContext) }
+    }
 
     fun onWirelessAudioHandoff(context: Context, connection: WirelessAudioConnection) =
         dispatch { it.onWirelessAudioHandoff(context.applicationContext, connection) }
@@ -116,6 +136,14 @@ open class VehicleCustomizationRegistry {
     fun onProjectionContentLost(window: Any) = dispatch { it.onProjectionContentLost(window) }
     fun onProjectionManualControl() = dispatch { it.onProjectionManualControl() }
     fun onProjectionReleased() = dispatch { it.onProjectionReleased() }
+    fun onProjectionEnvironment(context: Context, state: ProjectionEnvironment, control: ProjectionActivationControl): Boolean {
+        for (extension in extensions) {
+            try {
+                if (extension.onProjectionEnvironment(context.applicationContext, state, control)) return true
+            } catch (error: Exception) { Log.w(TAG, "${extension.id} projection environment failed", error) }
+        }
+        return false
+    }
     fun shouldRetryAutomaticProjection(): Boolean = extensions.all { extension ->
         try { extension.shouldRetryAutomaticProjection() } catch (error: Exception) {
             Log.w(TAG, "${extension.id} retry policy failed", error)

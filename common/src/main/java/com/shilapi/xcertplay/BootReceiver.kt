@@ -11,7 +11,7 @@ class BootReceiver : BroadcastReceiver() {
         if (intent.action != Intent.ACTION_BOOT_COMPLETED) return
         val launchEnabled = AirPlayPersistence.loadAutoStartOnBoot(context)
         StartupDiagnosticSnapshot.received(context, launchEnabled)
-        if (!launchEnabled) return
+        if (!launchEnabled || !com.freddyq.diplay.customization.VehicleCustomizations.allowAutomaticStartup(context)) return
 
         val launch = Intent(context, DiPlayActivity::class.java).apply {
             addFlags(

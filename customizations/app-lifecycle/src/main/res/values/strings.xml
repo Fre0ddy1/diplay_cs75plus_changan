@@ -1,0 +1,5 @@
+<resources>
+    <string name="exit_diplay_title">Exit DiPlay</string>
+    <string name="exit_diplay_description">Disconnect and stop DiPlay in the background. It stays stopped until you open it manually.</string>
+    <string name="exit_diplay_progress">Closing DiPlay…</string>
+</resources>

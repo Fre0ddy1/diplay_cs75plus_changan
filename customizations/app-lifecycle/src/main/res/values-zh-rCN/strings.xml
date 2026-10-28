@@ -1,0 +1,5 @@
+<resources>
+    <string name="exit_diplay_title">退出DiPlay</string>
+    <string name="exit_diplay_description">断开连接并停止后台运行，直到手动打开DiPlay后才恢复。</string>
+    <string name="exit_diplay_progress">正在退出DiPlay…</string>
+</resources>

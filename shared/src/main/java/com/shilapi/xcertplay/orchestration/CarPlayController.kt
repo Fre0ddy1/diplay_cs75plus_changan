@@ -411,7 +411,7 @@ class CarPlayController(
 
     fun start() {
         synchronized(this) {
-            if (closed) return
+            if (closed || !VehicleCustomizations.allowAutomaticStartup(appContext)) return
         }
         connectionDiagnostic("start transport=${config.transport}")
         videoListener?.let { listener ->

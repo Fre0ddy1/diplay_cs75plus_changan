@@ -51,6 +51,14 @@ checks['shared/src/main/java/com/shilapi/xcertplay/orchestration/CarPlayControll
 checks['common/src/main/java/com/shilapi/xcertplay/CarPlayMediaKeys.kt'] += [
     'VehicleCustomizations.prepareMediaPlayback(context, complete)', 'releaseRecoveryFocusLocked()',
 ]
+checks['settings.gradle.kts'] += ['include(":app-lifecycle")', 'customizations/app-lifecycle']
+checks['common/build.gradle.kts'] += ['implementation(project(":app-lifecycle"))']
+checks['common/src/main/java/com/shilapi/xcertplay/DiPlayActivity.kt'] += ['DiPlayAppExit.allowEntry', 'DiPlayAppExit.request(this)']
+checks['common/src/main/java/com/shilapi/xcertplay/BootReceiver.kt'] = ['VehicleCustomizations.allowAutomaticStartup(context)']
+checks['common/src/main/java/com/shilapi/xcertplay/DiPlaySessionService.kt'] += ['VehicleCustomizations.allowAutomaticStartup(this)']
+checks['shared/src/main/java/com/shilapi/xcertplay/orchestration/CarPlayController.kt'] += ['VehicleCustomizations.allowAutomaticStartup(appContext)']
+checks['common/src/main/java/com/shilapi/xcertplay/CarPlayHostActivity.kt'] += ['VehicleCustomizations.onProjectionEnvironment(', 'DiPlayAppExit.request(this)', 'InCallClusterBridge.observeDisplayAvailable(displayOn)']
+checks['common/src/main/java/com/shilapi/xcertplay/InCallClusterBridge.kt'] += ['fun invalidateProjectionChannel()', 'projectionDisplayAvailable', 'remoteServiceEpoch++']
 failures=[]
 for name,needles in checks.items():
     path=ROOT/name
@@ -86,6 +94,9 @@ audio_manifest=ET.parse(ROOT/'customizations/changan-audio/src/main/AndroidManif
 audio_provider=audio_manifest.find('application/provider')
 if audio_provider is None or audio_provider.get(android+'exported')!='false' or audio_provider.get(android+'name')!='com.freddyq.diplay.changan.audio.ChanganAudioInitializer' or audio_provider.get(android+'authorities')!='${applicationId}.customizations.changan-audio':
     failures.append('Missing private Changan audio initializer provider')
+lifecycle_provider=ET.parse(ROOT/'customizations/app-lifecycle/src/main/AndroidManifest.xml').getroot().find('application/provider')
+if lifecycle_provider is None or lifecycle_provider.get(android+'exported')!='false' or lifecycle_provider.get(android+'name')!='com.freddyq.diplay.lifecycle.AppLifecycleInitializer' or lifecycle_provider.get(android+'authorities')!='${applicationId}.customizations.app-lifecycle':
+    failures.append('Missing private app lifecycle initializer provider')
 compact_provider=ET.parse(ROOT/'customizations/compact-logging/src/main/AndroidManifest.xml').getroot().find('application/provider')
 if compact_provider is None or compact_provider.get(android+'exported')!='false' or compact_provider.get(android+'name')!='com.freddyq.diplay.diagnostics.CompactLogInitializer' or compact_provider.get(android+'authorities')!='${applicationId}.customizations.compact-logging':
     failures.append('Missing private compact logging initializer provider')
