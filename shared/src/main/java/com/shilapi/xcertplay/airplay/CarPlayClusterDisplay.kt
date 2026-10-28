@@ -47,6 +47,19 @@ object CarPlayClusterDisplay {
          * from the instruction-card stream.
          */
         FLY_CARD(MAP_URL),
+        /**
+         * Apple's own combined instrument-cluster view: the map WITH iOS's glass turn card and its
+         * junction zoom painted into the same full-panel stream.
+         *
+         * The iPhone itself lists this URL in `altScreenURLs` (log: `[..., /map,
+         * .../instructioncard, maps:/car/instrumentcluster]`). Unlike [FLY_CARD]'s separate small
+         * card display, this is one cluster display the size of the panel, so iOS lays the card
+         * out for a full cluster screen - the 27.2 "tiny card" comes from the 480x200 canvas of the
+         * separate display, not from iOS's card itself. The card is independent of what the main
+         * screen shows (it is cluster content, not a mirror), and the junction zoom stays inside
+         * the same picture.
+         */
+        APPLE_MAP_WITH_CARD("maps:/car/instrumentcluster"),
     }
 
 
@@ -154,7 +167,13 @@ object CarPlayClusterDisplay {
     const val CARD_WIDTH_PIXELS = 480
     const val CARD_HEIGHT_PIXELS = 200
 
-    private const val CARD_WIDTH_PHYSICAL_MM = 96 // a small card panel; Apple Maps ignores it here
+    /**
+     * Physical width reported for the instruction-card display.
+     *
+     * A reported physical size keeps the aspect maths in displayEntry consistent; Apple ignores
+     * it on the cluster (see the map display).
+     */
+    private const val CARD_WIDTH_PHYSICAL_MM = 96
 
     private const val WIDTH_PHYSICAL_MM = 292 // a 12.3-inch 8:3 cluster panel; Apple Maps ignores it here
     private const val FPS = 30

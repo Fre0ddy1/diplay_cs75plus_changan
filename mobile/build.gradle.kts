@@ -1,3 +1,7 @@
+import java.text.SimpleDateFormat
+import java.util.Date
+import java.util.Locale
+
 plugins {
     alias(libs.plugins.android.application)
     alias(libs.plugins.kotlin.compose)
@@ -6,6 +10,49 @@ plugins {
 // Optional local-only input. CI and ordinary source builds contain no accessory identity.
 val localAuthenticationAssets = providers.environmentVariable("DIPLAY_AUTH_ASSETS_DIR")
     .orNull?.let { file(it).canonicalFile }
+
+// A per-build stamp: short git hash + build time.
+//
+// versionCode and versionName are frozen between test builds, and PackageInfo.lastUpdateTime is
+// the install time rather than the build time, so without this a diagnostic report cannot say
+// which APK produced it. Packaged as an asset (not a generated Kotlin constant) so a rebuild only
+// repackages the APK and never recompiles the common module's large activities.
+val buildStampAssetsDir = layout.buildDirectory.dir("generated/buildStamp/assets")
+val buildStampRepoRoot = rootProject.projectDir
+
+val generateBuildStamp by tasks.registering {
+    val outputDir = buildStampAssetsDir.get().asFile
+    val repoRoot = buildStampRepoRoot
+    outputs.dir(outputDir)
+    // The timestamp is the point: rewrite it on every build, even when nothing else changed.
+    outputs.upToDateWhen { false }
+    doLast {
+        val hash = runCatching {
+            ProcessBuilder("git", "rev-parse", "--short", "HEAD")
+                .directory(repoRoot)
+                .redirectErrorStream(true)
+                .start()
+                .inputStream.bufferedReader()
+                .use { it.readText().trim() }
+        }.getOrDefault("nogit")
+        val dirty = runCatching {
+            ProcessBuilder("git", "status", "--porcelain")
+                .directory(repoRoot)
+                .redirectErrorStream(true)
+                .start()
+                .inputStream.bufferedReader()
+                .use { it.readText().isNotBlank() }
+        }.getOrDefault(false)
+        val time = SimpleDateFormat("yyyyMMdd-HHmm", Locale.US).format(Date())
+        val value = buildString {
+            append(hash)
+            if (dirty) append("-dirty")
+            append(" / ").append(time)
+        }
+        outputDir.mkdirs()
+        outputDir.resolve("build_stamp.txt").writeText(value)
+    }
+}
 
 android {
     namespace = "com.shilapi.xcertplay"
@@ -27,6 +74,7 @@ android {
 
 
     localAuthenticationAssets?.let { sourceSets.getByName("main").assets.srcDir(it) }
+    sourceSets.getByName("main").assets.srcDir(buildStampAssetsDir.get().asFile)
 
     signingConfigs {
         create("release") {
@@ -66,6 +114,11 @@ android {
     }
 }
 
+// The generated stamp must exist before assets are merged into the APK.
+tasks.matching { it.name.startsWith("merge") && it.name.endsWith("Assets") }.configureEach {
+    dependsOn(generateBuildStamp)
+}
+
 dependencies {
     implementation(platform(libs.androidx.compose.bom))
     implementation(project(":common"))
@@ -93,6 +146,8 @@ val credentialAssets = files(android.sourceSets.flatMap { source ->
 val rejectBundledCredentials by tasks.registering {
     group = "verification"
     description = "Reject unexpected credential files in APK assets."
+    // The generated build stamp is one of the asset directories this task scans.
+    dependsOn(generateBuildStamp)
     val filesToCheck = credentialAssets
     val allowed = localAuthenticationAssets?.let { dir ->
         listOf("identity.pk8", "certificate.p7b").map { dir.resolve("offline-mfi/$it").canonicalFile }.toSet()

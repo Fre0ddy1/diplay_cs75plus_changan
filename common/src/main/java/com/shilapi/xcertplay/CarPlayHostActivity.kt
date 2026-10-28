@@ -536,6 +536,19 @@ class CarPlayHostActivity : ComponentActivity() {
     // quiet hot-switch, which would only make our (hidden) window visible on a display the
     // head-unit is not showing.
     private var clusterExtScreenReleased = false
+    /**
+     * True when this session's two wire type-111 streams arrived in the opposite order, so the
+     * card window received the panel-sized map stream and the map view the card stream.
+     *
+     * Only set when BOTH streams' reported sizes agree on the reversal (one small, one panel-
+     * sized). A single callback is not enough: a decoder can report the previous/default
+     * 1920x720 for one frame before its real 480x200 config lands (field 2026-10-28 13:23).
+     */
+    @Volatile private var clusterStreamsSwapped = false
+    /** Last decoded size of stream 111 (the map normally, the card when the setup is reversed). */
+    @Volatile private var lastAltStreamSize: Pair<Int, Int>? = null
+    /** Last decoded size of stream 112 (the card normally, the map when reversed). */
+    @Volatile private var lastCardStreamSize: Pair<Int, Int>? = null
     /** The start-up channel watcher; the only component allowed to send the activation sequence. */
     private var watcherThread: Thread? = null
     /** Last channel state the watcher sampled. Every swipe decision reads this, not incall. */
@@ -858,7 +871,7 @@ class CarPlayHostActivity : ComponentActivity() {
         appendLog(
             "Host started; MFI target=${mfiTargetLabel(mfiTarget)}; " +
                 "transport=${if (wirelessEnabled) "wireless" else "wired"}; " +
-                "installed=${installedAtLabel()}",
+                "installed=${installedAtLabel()}; build=${BuildStamp.read(this)}",
         )
         // Every saved setting goes to the log at startup, so a report never needs the driver to
         // describe what they had configured (2026-10-22: the music buffer was assumed to be
@@ -1824,10 +1837,13 @@ class CarPlayHostActivity : ComponentActivity() {
         if (navClusterSurface === surface) return
         val old = navClusterSurface
         navClusterSurface = surface
+        // After a confirmed reversed type-111 setup this view is fed by the stream the phone
+        // labelled "card" (112), so the binding follows the swap.
+        val type = if (clusterStreamsSwapped) SCREEN_TYPE_ALT_CARD else SCREEN_TYPE_ALT
         if (surface != null) {
-            sink?.setSurface(SCREEN_TYPE_ALT, surface)
+            sink?.setSurface(type, surface)
         } else if (old != null) {
-            sink?.clearSurface(SCREEN_TYPE_ALT, old)
+            sink?.clearSurface(type, old)
         }
     }
 
@@ -1841,10 +1857,90 @@ class CarPlayHostActivity : ComponentActivity() {
         if (cardClusterSurface === surface) return
         val old = cardClusterSurface
         cardClusterSurface = surface
+        // Mirror of onClusterNavSurface: a confirmed reversal feeds the card view from stream 111.
+        val type = if (clusterStreamsSwapped) SCREEN_TYPE_ALT else SCREEN_TYPE_ALT_CARD
         if (surface != null) {
-            sink?.setSurface(SCREEN_TYPE_ALT_CARD, surface)
+            sink?.setSurface(type, surface)
         } else if (old != null) {
-            sink?.clearSurface(SCREEN_TYPE_ALT_CARD, old)
+            sink?.clearSurface(type, old)
+        }
+    }
+
+    /**
+     * Routes a cluster stream's decoded size.
+     *
+     * The two wire type-111 streams (map + instruction card) are told apart by uuid normally. When
+     * the phone omits it, the SETUP order decides and can arrive reversed. The reversal is only
+     * acted on when BOTH streams' sizes agree: a panel-sized 112 next to a card-sized 111. A
+     * single callback is not proof - a decoder can report 1920x720 for one frame before its real
+     * 480x200 config arrives (field 2026-10-28 13:23, which a size-only check misread as a swap).
+     *
+     * A panel-sized "card" is never laid out as the card window: either the reversal is confirmed
+     * (the card size then comes from stream 111) or the transient is ignored and the real card
+     * size follows.
+     *
+     * Called on a media thread; window work is posted to the UI thread downstream.
+     */
+    private fun onClusterStreamOutputSize(type: Int, width: Int, height: Int) {
+        if (type == SCREEN_TYPE_ALT) {
+            lastAltStreamSize = width to height
+            if (clusterStreamsSwapped) {
+                onClusterCardVideoSize(width, height)
+            } else {
+                maybeSwapClusterStreams()
+            }
+            return
+        }
+        if (type != SCREEN_TYPE_ALT_CARD) return
+        lastCardStreamSize = width to height
+        if (clusterStreamsSwapped) return
+        maybeSwapClusterStreams()
+        if (clusterStreamsSwapped) return
+        if (looksLikePanelSize(width, height)) {
+            // Transient/default size until the real card config lands; never draw it full-panel.
+            return
+        }
+        onClusterCardVideoSize(width, height)
+    }
+
+    /** Swaps only when one stream is panel-sized and the other is card-sized. */
+    private fun maybeSwapClusterStreams() {
+        if (clusterStreamsSwapped) return
+        val alt = lastAltStreamSize ?: return
+        val card = lastCardStreamSize ?: return
+        if (looksLikePanelSize(card.first, card.second) &&
+            !looksLikePanelSize(alt.first, alt.second)
+        ) {
+            swapClusterStreams(card.first, card.second)
+        }
+    }
+
+    /** True when a decoded stream is large enough to be the panel itself, not the card canvas. */
+    private fun looksLikePanelSize(width: Int, height: Int): Boolean {
+        val panelWidth = watcherWidth
+        val panelHeight = watcherHeight
+        if (panelWidth <= 0 || panelHeight <= 0) return false
+        return width >= panelWidth * 3 / 4 && height >= panelHeight * 3 / 4
+    }
+
+    /**
+     * Stream 112 carries the map and 111 the card: swap which view each decoder draws into, and
+     * size the card window from stream 111. Logged, so a field report shows the correction.
+     */
+    private fun swapClusterStreams(mapWidth: Int, mapHeight: Int) {
+        clusterStreamsSwapped = true
+        appendLog(
+            "Cluster: 112 is ${mapWidth}x$mapHeight (panel-sized) while 111 is the card; " +
+                "type-111 routing was reversed, swapping 111/112 surfaces",
+        )
+        mainHandler.post {
+            val nav = navClusterSurface
+            val card = cardClusterSurface
+            if (nav != null) sink?.setSurface(SCREEN_TYPE_ALT_CARD, nav)
+            if (card != null) sink?.setSurface(SCREEN_TYPE_ALT, card)
+        }
+        lastAltStreamSize?.let { (width, height) ->
+            if (!looksLikePanelSize(width, height)) onClusterCardVideoSize(width, height)
         }
     }
 
@@ -4420,7 +4516,7 @@ class CarPlayHostActivity : ComponentActivity() {
                 onScreenStreamStateChanged(controllerGeneration, type, active)
             },
             onScreenStreamOutputSize = { type, width, height ->
-                if (type == SCREEN_TYPE_ALT_CARD) onClusterCardVideoSize(width, height)
+                onClusterStreamOutputSize(type, width, height)
             },
             mediaBufferMillis = AirPlayPersistence.loadMediaBufferMillis(this),
             onAudioDiagnostic = { message ->
@@ -4966,7 +5062,7 @@ class CarPlayHostActivity : ComponentActivity() {
             onScreenStreamStateChanged(restartGeneration, type, active)
         }
         snapshot.sink.setScreenStreamOutputSizeListener { type, width, height ->
-            if (type == SCREEN_TYPE_ALT_CARD) onClusterCardVideoSize(width, height)
+            onClusterStreamOutputSize(type, width, height)
         }
         currentSurface?.let(::attachSurface)
         val serviceReused = snapshot.controller.hasActiveAirPlayAttachment()

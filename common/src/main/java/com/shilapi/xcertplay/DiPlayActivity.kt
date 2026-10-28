@@ -771,6 +771,7 @@ class DiPlayActivity : ComponentActivity() {
                 val clusterContentChoices = listOf(
                     CarPlayClusterDisplay.Content.MAP_WITH_CUSTOM_CARD to R.string.cluster_content_custom,
                     CarPlayClusterDisplay.Content.FLY_CARD to R.string.cluster_content_flycard,
+                    CarPlayClusterDisplay.Content.APPLE_MAP_WITH_CARD to R.string.cluster_content_apple_combined,
                 )
                 choice(
                     card,
@@ -1295,6 +1296,9 @@ class DiPlayActivity : ComponentActivity() {
         content.addView(label(getString(R.string.carplay_at_home_in_your_car), 20, MUTED).apply { setPadding(0, dp(8), 0, dp(24)) })
         section(content, "${getString(aboutVersionPrefix())}${version()}") { card ->
             card.addView(label(getString(R.string.an_independent_carplay_receiver_for_android_head_units_wir), 17, TEXT))
+            card.addView(
+                label("Build ${BuildStamp.read(this)}", 13, MUTED).apply { setPadding(0, dp(8), 0, 0) },
+            )
         }
         section(content, getString(R.string.made_possible_by_open_source)) { card ->
             card.addView(label(getString(R.string.receiver_based_on_xcertplay_licensed_under_gpl_3_0_diplay), 16, MUTED))
@@ -3050,6 +3054,7 @@ class DiPlayActivity : ComponentActivity() {
 
     private fun buildDiagnosticReport(appContext: Context): String = buildString {
         appendLine("DiPlay ${version()} · private beta diagnostic report")
+        appendLine("Build: ${BuildStamp.read(appContext)}")
         appendLine("Android ${Build.VERSION.RELEASE} / API ${Build.VERSION.SDK_INT}")
         appendLine("Head unit: ${Build.MANUFACTURER} ${Build.MODEL}")
         appendLine("Connection: ${if (AirPlayPersistence.loadWirelessEnabled(appContext)) "wireless" else "USB"}")
@@ -3067,8 +3072,8 @@ class DiPlayActivity : ComponentActivity() {
         // Every saved setting, so a report never needs the driver to say what they had configured.
         append(AirPlayPersistence.describeSavedSettings(appContext))
         appendLine("Head-unit board: ${Build.BOARD}; hardware: ${Build.HARDWARE}; build: ${Build.DISPLAY}")
-        // The version number does not change between test builds, so name the installed package:
-        // it is the only way to tell whether a report came from the APK that was just built.
+        // The build stamp above identifies the APK; the install time still answers "when was this
+        // one installed", which the stamp cannot.
         runCatching {
             val info = appContext.packageManager.getPackageInfo(appContext.packageName, 0)
             val stamp = java.text.SimpleDateFormat("yyyy-MM-dd HH:mm", java.util.Locale.US)

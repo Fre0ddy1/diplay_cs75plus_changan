@@ -48,17 +48,20 @@ class CarPlayClusterDisplayTest {
     }
 
     @Test
-    fun theDashboardOffersOnlyTwoSources() {
+    fun theDashboardOffersThreeSources() {
         val custom = CarPlayClusterDisplay.config(1920, 720, content = CarPlayClusterDisplay.Content.MAP_WITH_CUSTOM_CARD)
         assertEquals("maps:/car/instrumentcluster/map", custom.initialUrl)
         // MAP stays as an internal value for stored settings from older builds.
         // FLY_CARD (dual-stream) uses the MAP URL too: the map stream must stay card-free, the
         // turn card comes from the separate instruction-card display.
+        // APPLE_MAP_WITH_CARD asks for the combined cluster URL, where iOS itself lays out the
+        // map, the glass card and the junction zoom in one full-panel stream.
         assertEquals(
             listOf(
                 "maps:/car/instrumentcluster/map",
                 "maps:/car/instrumentcluster/map",
                 "maps:/car/instrumentcluster/map",
+                "maps:/car/instrumentcluster",
             ),
             CarPlayClusterDisplay.Content.entries.map { it.url },
         )

@@ -378,6 +378,7 @@
     <string name="cluster_quiet_mode_hint">默认走完整激活序列：车机上电后才会发送，实测不播报。打开这一项后只发清屏、模式和属性，广播量更少，但车机上电后 incall 全新启动时可能不认，导致仪表投不上。只在排查时使用。</string>
     <string name="cluster_content_custom">地图 + 自绘卡片（位置可调）</string>
     <string name="cluster_content_flycard">Apple 完整导航</string>
+    <string name="cluster_content_apple_combined">Apple 地图+卡片（单流）</string>
     <string name="cluster_content_hint">各来源都是手机推过来的画面；切换会自动重连，因为地址在建窗口时就定死了。</string>
     <string name="cluster_card_song_max_chars">歌曲卡最大字数</string>
     <string name="cluster_card_song_max_chars_desc">每行按这里的字数排版：不足也保留同样宽度，超出的字换到下一行。</string>
