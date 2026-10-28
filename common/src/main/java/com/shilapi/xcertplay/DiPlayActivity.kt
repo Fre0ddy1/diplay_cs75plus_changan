@@ -3467,6 +3467,7 @@ class DiPlayActivity : ComponentActivity() {
         val exit = title == DiPlayAppExit.title(this@DiPlayActivity)
         setTextColor(if (primary) Color.WHITE else if (exit) GlassUi.danger else TEXT)
         typeface = Typeface.create("sans-serif-medium", Typeface.NORMAL)
+        backgroundTintList = null
         background = GlassUi.button(this@DiPlayActivity, primary, destructive = exit)
         setPadding(dp(14), 0, dp(14), 0); minHeight = dp(48); stateListAnimator = null
         setOnClickListener { click() }

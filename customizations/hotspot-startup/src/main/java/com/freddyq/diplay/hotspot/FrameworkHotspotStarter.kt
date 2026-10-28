@@ -13,7 +13,9 @@ internal class FrameworkHotspotStarter(
     private val log: (String) -> Unit,
     private val wrapper: Class<*> = ConnectivityManager::class.java,
     private val managerProvider: () -> Any? = { app.getSystemService(ConnectivityManager::class.java) },
+    private val restored: () -> Unit = {},
 ) : PlatformHotspotStarter {
+    override fun onReady() = restored()
     override fun start(receiver: ResultReceiver) {
         log("car hotspot framework stage=resolve-wrapper")
         val callbackType = Class.forName("android.net.ConnectivityManager\$OnStartTetheringCallback")

@@ -3,4 +3,8 @@ package com.freddyq.diplay.customization
 import android.os.ResultReceiver
 
 /** Starts the saved platform hotspot; a callback result alone does not confirm the radio is ON. */
-fun interface PlatformHotspotStarter { fun start(receiver: ResultReceiver) }
+fun interface PlatformHotspotStarter {
+    fun start(receiver: ResultReceiver)
+    /** Called only after this request was dispatched and the shared state check confirmed AP ON. */
+    fun onReady() {}
+}

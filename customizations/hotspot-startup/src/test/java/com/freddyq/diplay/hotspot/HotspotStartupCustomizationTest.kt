@@ -16,10 +16,13 @@ import org.robolectric.Shadows.shadowOf
 import org.robolectric.annotation.Config
 import org.robolectric.annotation.Implements
 import org.robolectric.annotation.Implementation
+import org.robolectric.annotation.LooperMode
+import org.robolectric.shadows.ShadowToast
 import org.robolectric.util.ReflectionHelpers
 
 @RunWith(RobolectricTestRunner::class)
-@Config(manifest = Config.NONE, sdk = [28], shadows = [HotspotStartupCustomizationTest.Permission::class])
+@Config(sdk = [28], shadows = [HotspotStartupCustomizationTest.Permission::class])
+@LooperMode(LooperMode.Mode.PAUSED)
 class HotspotStartupCustomizationTest {
     private val app get() = RuntimeEnvironment.getApplication()
     private val extensions get() = ReflectionHelpers.getField<MutableList<VehicleCustomization>>(VehicleCustomizations, "extensions")
@@ -74,6 +77,18 @@ class HotspotStartupCustomizationTest {
     }
     @Test fun absenceOfCustomizationPreservesUpstreamOptOut() {
         extensions.clear(); assertFalse(CarHotspotSettings.enabled(app))
+    }
+    @Test fun restoredNoticeIsShownOnMainThreadAfterStateConfirmation() {
+        module.platformHotspotStarter(app).onReady()
+        assertNull(ShadowToast.getTextOfLatestToast())
+        shadowOf(android.os.Looper.getMainLooper()).idle()
+        assertEquals(app.getString(R.string.hotspot_ready_notice), ShadowToast.getTextOfLatestToast())
+    }
+    @Test fun disablingRecoveryBeforeQueuedNoticeSuppressesIt() {
+        module.platformHotspotStarter(app).onReady()
+        CarHotspotSettings.setEnabled(app, false)
+        shadowOf(android.os.Looper.getMainLooper()).idle()
+        assertNull(ShadowToast.getTextOfLatestToast())
     }
     @Implements(Settings.System::class)
     class Permission {

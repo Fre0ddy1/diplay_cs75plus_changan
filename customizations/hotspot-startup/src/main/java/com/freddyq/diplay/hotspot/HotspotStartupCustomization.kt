@@ -25,8 +25,17 @@ class HotspotStartupCustomization : VehicleCustomization {
     private var lastNotice: CarHotspotTethering.Result? = null
     private var lastNoticeAt = 0L
     override fun automaticHotspotDefault(context: Context) = true
-    override fun platformHotspotStarter(context: Context): PlatformHotspotStarter =
-        FrameworkHotspotStarter(context.applicationContext, ::diagnostic)
+    override fun platformHotspotStarter(context: Context): PlatformHotspotStarter {
+        val app = context.applicationContext
+        return FrameworkHotspotStarter(app, ::diagnostic, restored = {
+            main.post {
+                if (VehicleCustomizations.allowAutomaticStartup(app) && CarHotspotSettings.enabled(app)) {
+                    Toast.makeText(app, R.string.hotspot_ready_notice, Toast.LENGTH_SHORT).show()
+                    diagnostic("hotspot restored notice shown")
+                }
+            }
+        })
+    }
 
     private fun selected() = foreground?.current()?.let { it.wireless && it.vehicleHotspot } == true
     override fun onApplicationForeground(context: Context, control: ApplicationForegroundControl): Boolean {

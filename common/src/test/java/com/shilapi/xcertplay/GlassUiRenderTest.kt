@@ -40,7 +40,7 @@ class GlassUiRenderTest {
         VehicleCustomizations.register(com.freddyq.diplay.changan.projection.ChanganProjectionCustomization())
         VehicleCustomizations.register(com.freddyq.diplay.hotspot.HotspotStartupCustomization())
         val app = RuntimeEnvironment.getApplication()
-        val info = app.packageManager.getPackageInfo(app.packageName, 0).apply { versionName = "0.2.22-ca75plus.13" }
+        val info = app.packageManager.getPackageInfo(app.packageName, 0).apply { versionName = "0.2.22-ca75plus.14" }
         shadowOf(app.packageManager).installPackage(info)
     }
     @After fun restore() { extensions.clear(); extensions.addAll(previous) }
@@ -83,6 +83,10 @@ class GlassUiRenderTest {
     @Test fun primaryAndSecondaryTextRemainLegibleOnLightSurfaces() {
         assertTrue(androidx.core.graphics.ColorUtils.calculateContrast(GlassUi.text, GlassUi.background) >= 7)
         assertTrue(androidx.core.graphics.ColorUtils.calculateContrast(GlassUi.secondary, GlassUi.background) >= 4.5)
+        assertTrue(androidx.core.graphics.ColorUtils.calculateContrast(GlassUi.accent, GlassUi.background) >= 4.5)
+        assertTrue(androidx.core.graphics.ColorUtils.calculateContrast(GlassUi.muted, GlassUi.background) >= 4.5)
         assertTrue(androidx.core.graphics.ColorUtils.calculateContrast(android.graphics.Color.WHITE, GlassUi.accent) >= 4.5)
+        assertTrue(androidx.core.graphics.ColorUtils.calculateContrast(GlassUi.buttonBorder, GlassUi.buttonSurface) >= 3)
+        assertTrue(androidx.core.graphics.ColorUtils.calculateContrast(GlassUi.buttonBorder, GlassUi.buttonSurfaceEnd) >= 3)
     }
 }

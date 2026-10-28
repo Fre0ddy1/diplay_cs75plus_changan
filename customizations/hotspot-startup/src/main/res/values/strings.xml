@@ -1,4 +1,5 @@
 <resources>
+    <string name="hotspot_ready_notice">Car hotspot is on</string>
     <string name="hotspot_group">Car hotspot recovery</string>
     <string name="hotspot_auto_title">Restore car hotspot on launch</string>
     <string name="hotspot_auto_description">In Car hotspot mode, check when DiPlay opens or returns to the foreground. Start the saved hotspot if it is off. Keep its name and password unchanged. A system permission may be needed the first time.</string>

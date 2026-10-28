@@ -22,12 +22,14 @@ object CarHotspotTethering {
     fun permitted(context: Context): Boolean = Settings.System.canWrite(context)
 
     /** Blocking; serialize startup and connection requests, checking cancellation after acquiring the lock. */
-    fun enable(context: Context, isCancelled: () -> Boolean, log: (String) -> Unit): Result =
-        enable(15_000L, isCancelled, { permitted(context) }, { CarHotspotStatus.isEnabled(context) }, log) { receiver ->
+    fun enable(context: Context, isCancelled: () -> Boolean, log: (String) -> Unit): Result {
+        var dispatchedPlatform: com.freddyq.diplay.customization.PlatformHotspotStarter? = null
+        val result = enable(15_000L, isCancelled, { permitted(context) }, { CarHotspotStatus.isEnabled(context) }, log) { receiver ->
             val platform = com.freddyq.diplay.customization.VehicleCustomizations.platformHotspotStarter(context)
             if (platform != null) {
                 log("car hotspot control strategy=platform-wrapper")
                 platform.start(receiver)
+                dispatchedPlatform = platform
                 log("car hotspot control request dispatched; awaiting actual AP ON")
                 return@enable
             }
@@ -39,7 +41,15 @@ object CarHotspotTethering {
             log("car hotspot control stage=public-interface-dispatch implementation=${service.javaClass.name}")
             AndroidHotspotStarter.start(service, receiver, context.packageName)
             log("car hotspot control request dispatched; awaiting actual AP ON")
-        }.also { log("car hotspot auto-enable: ${it.diagnostic}") }
+        }
+        log("car hotspot auto-enable: ${result.diagnostic}")
+        if (result == Result.READY && !isCancelled()) {
+            runCatching { dispatchedPlatform?.onReady() }.onFailure {
+                log("car hotspot ready notice error=${it.javaClass.simpleName}")
+            }
+        }
+        return result
+    }
 
     internal fun enable(
         timeoutMillis: Long,

@@ -1,17 +1,17 @@
 <resources>
     <style name="Theme.DiPlay.Glass" parent="android:Theme.Material.Light.NoActionBar">
         <item name="android:fontFamily">sans</item>
-        <item name="android:colorAccent">#216C7B</item>
+        <item name="android:colorAccent">#0056C3</item>
         <item name="android:windowLightStatusBar">true</item>
         <item name="android:windowLightNavigationBar">true</item>
-        <item name="android:navigationBarColor">#EAF0F5</item>
-        <item name="android:statusBarColor">#EAF0F5</item>
-        <item name="android:windowBackground">#EAF0F5</item>
+        <item name="android:navigationBarColor">#CDD5DF</item>
+        <item name="android:statusBarColor">#CDD5DF</item>
+        <item name="android:windowBackground">#CDD5DF</item>
         <item name="android:windowActionModeOverlay">true</item>
     </style>
     <style name="Theme.DiPlay.Glass.Dialog" parent="android:Theme.Material.Light.Dialog.Alert">
-        <item name="android:colorAccent">#216C7B</item>
+        <item name="android:colorAccent">#0056C3</item>
         <item name="android:fontFamily">sans</item>
-        <item name="android:windowBackground">#F7FAFC</item>
+        <item name="android:windowBackground">#DDE4ED</item>
     </style>
 </resources>
