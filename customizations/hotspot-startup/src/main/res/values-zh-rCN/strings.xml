@@ -1,0 +1,10 @@
+<resources>
+    <string name="hotspot_group">车机热点恢复</string>
+    <string name="hotspot_auto_title">启动时恢复车机热点</string>
+    <string name="hotspot_auto_description">使用“车载热点”连接时，打开 DiPlay 或返回前台会检查热点，关闭时自动开启，保留原车名称和密码。首次使用可能需要系统授权。</string>
+    <string name="hotspot_grant_title">授予热点控制权限</string>
+    <string name="hotspot_grant_description">进入系统授权页，允许 DiPlay 修改系统设置，再返回即可重试。无需开启 ADB。</string>
+    <string name="hotspot_permission_notice">请在 DiPlay“设置 → 连接”中授予热点控制权限，再返回 DiPlay。</string>
+    <string name="hotspot_failed_notice">车机热点未能自动恢复，请手动打开原车热点后再连接。</string>
+    <string name="hotspot_permission_unavailable">无法打开授权页，请在系统设置中手动允许 DiPlay 修改系统设置。</string>
+</resources>

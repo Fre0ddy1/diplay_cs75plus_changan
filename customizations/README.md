@@ -11,6 +11,7 @@
 | `compact-logging/` | 发行日志筛选、文件/历史/写入队列预算；独立于车辆协议与音频行为 |
 | `app-lifecycle/` | 用户退出后的持久停止、仅恢复本应用组件与有界清理；手动打开后恢复 |
 | `glass-ui/` | 明亮磨玻璃主题、静态柔化背景、玻璃面板、控件色板与首页文案；不处理CarPlay视频 |
+| `hotspot-startup/` | 打开/返回DiPlay前台时检查车机热点，复用现有开启接口，合并请求与有限补试、系统授权入口 |
 | `shared/.../customization/UpstreamNavigationAdapter.kt` | 复用上游解析器、图标映射、串行队列的单一边界 |
 
 依赖：`shared → api`，`changan-hud → shared + api`，`changan-projection → api`，`changan-audio → api`，`common → 定制模块 + shared`。模块私有provider负责注册，设置通过通用描述展示，首次默认开启、始终可见，不按车型隐藏；保存的关闭状态保留。初始化本身不发导航指令。
@@ -46,3 +47,5 @@ HUD保留版本39的导航会话保持修复。巡航冲突方案是外部清零
 52候选从上游master选择性吸收显示器上电就绪、服务重启后丢弃过期回调及用户关闭后暂停自动恢复的行为。恢复策略在`changan-projection/ProjectionPowerRecovery`中，每个显示器/服务代次最多4次；不套用上游无限5秒重试。首页与连接页设置共用“退出DiPlay”，退出后USB、开机与后台入口被拦截，直到手动打开主启动器。实现、边界与实车验收项见[52实现说明](../docs/CS75PLUS-52-上电恢复与退出.md)。
 
 53候选重设计首页、设置分类页与CarPlay连接/设置菜单。`glass-ui`统一主题资源和轻量Drawable；在Android9上使用静态渐变柔化背景、半透明表面、描边与阴影实现磨玻璃观感，不请求Android12背景模糊，也不截取或模糊实时视频。未保存的仪表内容改用仅地图，单独卡片可见性和音乐封面默认关闭；显式保存的选择继续优先。详见[53界面说明](../docs/CS75PLUS-53-磨玻璃界面.md)。
+
+54候选新增`hotspot-startup`，在“车载热点”无线模式下打开/返回DiPlay前台时恢复原车热点。缺省开启、显式保存的关闭优先；已有热点不重启，使用原配置。未授权时提供系统“修改系统设置”入口，不使用ADB授予权限。复用shared既有`CarHotspotTethering`开启与实际状态确认；说明及静态依据见[54热点恢复](../docs/CS75PLUS-54-启动热点恢复.md)。

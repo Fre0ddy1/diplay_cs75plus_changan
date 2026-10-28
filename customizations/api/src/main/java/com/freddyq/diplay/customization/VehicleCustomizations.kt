@@ -12,6 +12,9 @@ interface VehicleCustomization {
     fun applicationExitUi(): ApplicationExitUi? = null
     fun onManualApplicationLaunch(context: Context) {}
     fun requestApplicationExit(context: Context, control: ApplicationExitControl): Boolean = false
+    fun automaticHotspotDefault(context: Context): Boolean? = null
+    /** True claims startup hotspot handling; work must be asynchronous. */
+    fun onApplicationForeground(context: Context, control: ApplicationForegroundControl): Boolean = false
     fun mediaKeyRoute(context: Context): MediaKeyRoute? = null
     fun onWirelessAudioHandoff(context: Context, connection: WirelessAudioConnection) {}
     fun onWirelessAudioEnded(owner: Any) {}
@@ -37,7 +40,13 @@ interface VehicleCustomization {
     fun settings(context: Context): List<CustomizationSettingsGroup> = emptyList()
 }
 
-data class CustomizationSettingsGroup(val title: Int, val toggles: List<CustomizationToggle>)
+enum class CustomizationSettingsArea { DASHBOARD, CONNECTION, SYSTEM }
+data class CustomizationSettingsGroup(
+    val title: Int, val toggles: List<CustomizationToggle>,
+    val actions: List<CustomizationSettingsAction> = emptyList(),
+    val area: CustomizationSettingsArea = CustomizationSettingsArea.DASHBOARD,
+)
+data class CustomizationSettingsAction(val title: Int, val description: Int, val onClick: () -> Unit)
 data class CustomizationToggle(
     val title: Int,
     val description: Int,
@@ -64,6 +73,17 @@ open class VehicleCustomizationRegistry {
     }
     fun allowAutomaticStartup(context: Context): Boolean = extensions.all {
         runCatching { it.allowAutomaticStartup(context.applicationContext) }.getOrDefault(false)
+    }
+    fun automaticHotspotDefault(context: Context): Boolean? = extensions.firstNotNullOfOrNull {
+        runCatching { it.automaticHotspotDefault(context.applicationContext) }.getOrNull()
+    }
+    fun onApplicationForeground(context: Context, control: ApplicationForegroundControl): Boolean {
+        if (!allowAutomaticStartup(context)) return true
+        for (extension in extensions) {
+            try { if (extension.onApplicationForeground(context.applicationContext, control)) return true }
+            catch (error: Exception) { Log.w(TAG, "${extension.id} foreground failed", error) }
+        }
+        return false
     }
     fun onManualApplicationLaunch(context: Context) = dispatch { it.onManualApplicationLaunch(context.applicationContext) }
     fun applicationExitUi(): ApplicationExitUi? = extensions.firstNotNullOfOrNull { runCatching { it.applicationExitUi() }.getOrNull() }
@@ -168,6 +188,11 @@ open class VehicleCustomizationRegistry {
                         } catch (error: Exception) {
                             Log.w(TAG, "${extension.id} setting change failed", error)
                         }
+                    })
+                }, actions = group.actions.map { action ->
+                    action.copy(onClick = {
+                        try { action.onClick() }
+                        catch (error: Exception) { Log.w(TAG, "${extension.id} setting action failed", error) }
                     })
                 })
             }

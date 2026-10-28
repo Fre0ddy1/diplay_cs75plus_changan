@@ -53,6 +53,10 @@ checks['common/src/main/java/com/shilapi/xcertplay/CarPlayMediaKeys.kt'] += [
 ]
 checks['settings.gradle.kts'] += ['include(":app-lifecycle")', 'customizations/app-lifecycle']
 checks['settings.gradle.kts'] += ['include(":glass-ui")', 'customizations/glass-ui']
+checks['settings.gradle.kts'] += ['include(":hotspot-startup")', 'customizations/hotspot-startup']
+checks['common/build.gradle.kts'] += ['implementation(project(":hotspot-startup"))']
+checks['common/src/main/java/com/shilapi/xcertplay/DiPlayActivity.kt'] += ['VehicleCustomizations.onApplicationForeground(', 'if (!managedHotspot) startCarHotspotOnLaunch()', 'group.actions.forEach', 'CustomizationSettingsArea.CONNECTION']
+checks['shared/src/main/java/com/shilapi/xcertplay/network/CarHotspotSettings.kt'] = ['VehicleCustomizations.automaticHotspotDefault(context)']
 checks['common/build.gradle.kts'] += ['implementation(project(":glass-ui"))']
 checks['common/src/main/AndroidManifest.xml'] = ['@style/Theme.DiPlay.Glass']
 checks['common/src/main/java/com/shilapi/xcertplay/DiPlayActivity.kt'] += ['GlassUi.backdrop()', 'GlassUi.lift(this)', 'GlassUi.button(']
@@ -102,6 +106,9 @@ if audio_provider is None or audio_provider.get(android+'exported')!='false' or 
 lifecycle_provider=ET.parse(ROOT/'customizations/app-lifecycle/src/main/AndroidManifest.xml').getroot().find('application/provider')
 if lifecycle_provider is None or lifecycle_provider.get(android+'exported')!='false' or lifecycle_provider.get(android+'name')!='com.freddyq.diplay.lifecycle.AppLifecycleInitializer' or lifecycle_provider.get(android+'authorities')!='${applicationId}.customizations.app-lifecycle':
     failures.append('Missing private app lifecycle initializer provider')
+hotspot_provider=ET.parse(ROOT/'customizations/hotspot-startup/src/main/AndroidManifest.xml').getroot().find('application/provider')
+if hotspot_provider is None or hotspot_provider.get(android+'exported')!='false' or hotspot_provider.get(android+'name')!='com.freddyq.diplay.hotspot.HotspotStartupInitializer' or hotspot_provider.get(android+'authorities')!='${applicationId}.customizations.hotspot-startup':
+    failures.append('Missing private hotspot startup initializer provider')
 compact_provider=ET.parse(ROOT/'customizations/compact-logging/src/main/AndroidManifest.xml').getroot().find('application/provider')
 if compact_provider is None or compact_provider.get(android+'exported')!='false' or compact_provider.get(android+'name')!='com.freddyq.diplay.diagnostics.CompactLogInitializer' or compact_provider.get(android+'authorities')!='${applicationId}.customizations.compact-logging':
     failures.append('Missing private compact logging initializer provider')

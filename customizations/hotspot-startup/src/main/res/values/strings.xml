@@ -1,0 +1,10 @@
+<resources>
+    <string name="hotspot_group">Car hotspot recovery</string>
+    <string name="hotspot_auto_title">Restore car hotspot on launch</string>
+    <string name="hotspot_auto_description">In Car hotspot mode, check when DiPlay opens or returns to the foreground. Start the saved hotspot if it is off. Keep its name and password unchanged. A system permission may be needed the first time.</string>
+    <string name="hotspot_grant_title">Allow hotspot control</string>
+    <string name="hotspot_grant_description">Open the system permission page and allow DiPlay to modify system settings. Return to DiPlay to retry; ADB is not used.</string>
+    <string name="hotspot_permission_notice">Allow hotspot control in DiPlay Settings → Connection, then return to DiPlay.</string>
+    <string name="hotspot_failed_notice">Could not restore the car hotspot. Open car hotspot settings, then reconnect.</string>
+    <string name="hotspot_permission_unavailable">The permission page is unavailable. Allow DiPlay to modify system settings manually.</string>
+</resources>

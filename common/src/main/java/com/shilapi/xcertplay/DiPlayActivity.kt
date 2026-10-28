@@ -283,9 +283,19 @@ class DiPlayActivity : ComponentActivity() {
         if (!initialLaunch && !adbSwitchChangePending && !pausedForAdbSwitchChange &&
             (page == "home" || page == "settings" || page == "connection")) render()
         pausedForAdbSwitchChange = false
+        val hotspotApp = applicationContext
+        val managedHotspot = com.freddyq.diplay.customization.VehicleCustomizations.onApplicationForeground(
+            this, com.freddyq.diplay.customization.ApplicationForegroundControl {
+                com.freddyq.diplay.customization.ApplicationForeground(
+                    AirPlayPersistence.loadWirelessEnabled(hotspotApp),
+                    AirPlayPersistence.loadWirelessHotspotMode(hotspotApp) == WirelessHotspotMode.MANUAL,
+                    CarPlayBackgroundSession.active,
+                )
+            },
+        )
         if (initialLaunch) {
             initialLaunch = false
-            startCarHotspotOnLaunch()
+            if (!managedHotspot) startCarHotspotOnLaunch()
             if (setupError == null && !CarPlayBackgroundSession.hasSession() &&
                 DiPlayPreferences.autoConnect(this) && intent.getStringExtra("page") == null) {
                 handler.post { connect(AirPlayPersistence.loadWirelessEnabled(this)) }
@@ -1217,13 +1227,24 @@ class DiPlayActivity : ComponentActivity() {
                 // step pickers never moved them.
             }
         }
+        val groupsBeforeCustomizations = activeSectionGroups
         com.freddyq.diplay.customization.VehicleCustomizations.settings(this).forEach { group ->
+            activeSectionGroups = when (group.area) {
+                com.freddyq.diplay.customization.CustomizationSettingsArea.CONNECTION -> GROUP_CONNECT
+                com.freddyq.diplay.customization.CustomizationSettingsArea.SYSTEM -> GROUP_SYSTEM
+                com.freddyq.diplay.customization.CustomizationSettingsArea.DASHBOARD -> GROUP_CLUSTER
+            }
             section(content, getString(group.title), R.drawable.ic_dp_navigation) { card ->
                 group.toggles.forEach { setting ->
                     toggle(card, getString(setting.title), getString(setting.description), setting.enabled, save = setting.onChanged)
                 }
+                group.actions.forEach { action ->
+                    card.addView(button(getString(action.title), false, action.onClick), matchButton(12, 56))
+                    card.addView(label(getString(action.description), 13, MUTED).apply { setPadding(0, dp(8), 0, dp(6)) })
+                }
             }
         }
+        activeSectionGroups = groupsBeforeCustomizations
         if (BydOutputSettings.navigationAvailable(this)) section(content, getString(R.string.byd_navigation), R.drawable.ic_dp_navigation) { card ->
             toggle(card, getString(R.string.navigation_on_hud_and_instrument_cluster),
                 getString(R.string.show_phone_navigation_arrows_distance_and_street_names_on),

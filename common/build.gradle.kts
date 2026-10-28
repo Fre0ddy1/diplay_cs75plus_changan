@@ -35,6 +35,7 @@ dependencies {
     implementation(project(":compact-logging"))
     implementation(project(":app-lifecycle"))
     implementation(project(":glass-ui"))
+    implementation(project(":hotspot-startup"))
     implementation(platform(libs.androidx.compose.bom))
     implementation(libs.androidx.activity.compose)
     implementation(libs.androidx.compose.material3)

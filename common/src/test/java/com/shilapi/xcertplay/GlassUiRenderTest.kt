@@ -38,8 +38,9 @@ class GlassUiRenderTest {
         VehicleCustomizations.register(com.freddyq.diplay.changan.ChanganCustomization())
         VehicleCustomizations.register(com.freddyq.diplay.changan.audio.ChanganAudioCustomization())
         VehicleCustomizations.register(com.freddyq.diplay.changan.projection.ChanganProjectionCustomization())
+        VehicleCustomizations.register(com.freddyq.diplay.hotspot.HotspotStartupCustomization())
         val app = RuntimeEnvironment.getApplication()
-        val info = app.packageManager.getPackageInfo(app.packageName, 0).apply { versionName = "0.2.22-ca75plus.11" }
+        val info = app.packageManager.getPackageInfo(app.packageName, 0).apply { versionName = "0.2.22-ca75plus.12" }
         shadowOf(app.packageManager).installPackage(info)
     }
     @After fun restore() { extensions.clear(); extensions.addAll(previous) }
@@ -72,6 +73,7 @@ class GlassUiRenderTest {
         }
         render("home")
         render("settings")
+        render("settings", DiPlayActivity.GROUP_CONNECT)
         render("settings", DiPlayActivity.GROUP_CLUSTER)
         val host = Robolectric.buildActivity(CarPlayHostActivity::class.java).get()
         val menu = ReflectionHelpers.callInstanceMethod<View>(host, "buildSettingsMenu")
