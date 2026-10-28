@@ -40,7 +40,7 @@ class GlassUiRenderTest {
         VehicleCustomizations.register(com.freddyq.diplay.changan.projection.ChanganProjectionCustomization())
         VehicleCustomizations.register(com.freddyq.diplay.hotspot.HotspotStartupCustomization())
         val app = RuntimeEnvironment.getApplication()
-        val info = app.packageManager.getPackageInfo(app.packageName, 0).apply { versionName = "0.2.22-ca75plus.14" }
+        val info = app.packageManager.getPackageInfo(app.packageName, 0).apply { versionName = "0.2.22-ca75plus.15" }
         shadowOf(app.packageManager).installPackage(info)
     }
     @After fun restore() { extensions.clear(); extensions.addAll(previous) }
@@ -88,5 +88,20 @@ class GlassUiRenderTest {
         assertTrue(androidx.core.graphics.ColorUtils.calculateContrast(android.graphics.Color.WHITE, GlassUi.accent) >= 4.5)
         assertTrue(androidx.core.graphics.ColorUtils.calculateContrast(GlassUi.buttonBorder, GlassUi.buttonSurface) >= 3)
         assertTrue(androidx.core.graphics.ColorUtils.calculateContrast(GlassUi.buttonBorder, GlassUi.buttonSurfaceEnd) >= 3)
+    }
+    @Test fun equalSizePagesShareBoundedWallpaperAndReplacementKeepsOldPageDrawable() {
+        val first = GlassUi.backdrop().apply { setBounds(0, 0, 1280, 720) }
+        val second = GlassUi.backdrop().apply { setBounds(0, 0, 1280, 720) }
+        val pixels = ReflectionHelpers.getField<Bitmap>(first, "bitmap")
+        assertSame(pixels, ReflectionHelpers.getField<Bitmap>(second, "bitmap"))
+        GlassUi.backdrop().apply { setBounds(0, 0, 4096, 2160) }.let {
+            val replacement = ReflectionHelpers.getField<Bitmap>(it, "bitmap")
+            assertTrue(replacement.allocationByteCount <= 640 * 360 * 4)
+        }
+        assertFalse(pixels.isRecycled)
+        val output = Bitmap.createBitmap(1280, 720, Bitmap.Config.ARGB_8888)
+        first.draw(Canvas(output))
+        assertEquals(255, android.graphics.Color.alpha(output.getPixel(640, 360)))
+        output.recycle()
     }
 }

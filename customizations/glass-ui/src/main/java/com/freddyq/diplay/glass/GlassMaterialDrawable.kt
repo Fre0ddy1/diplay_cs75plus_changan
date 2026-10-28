@@ -15,7 +15,9 @@ internal class GlassMaterialDrawable(
 ) : Drawable() {
     private val paint = Paint(Paint.ANTI_ALIAS_FLAG)
     private val face = RectF()
+    private val inner = RectF()
     private var radius = 0f
+    private var innerRadius = 0f
     private var fill: Shader? = null
     private var rim: Shader? = null
     private var reflection: Shader? = null
@@ -26,6 +28,9 @@ internal class GlassMaterialDrawable(
         val halfStroke = density * .45f
         face.inset(halfStroke, halfStroke)
         radius = min(density * radiusDp, face.height() / 2)
+        inner.set(face)
+        inner.inset(density * 1.2f, density * 1.2f)
+        innerRadius = (radius - density).coerceAtLeast(0f)
         val colors = when {
             primary -> intArrayOf(0xF50961D8.toInt(), 0xF20050BD.toInt())
             destructive -> intArrayOf(0xB3FFF5F6.toInt(), 0x70FFE9EC)
@@ -47,9 +52,8 @@ internal class GlassMaterialDrawable(
         paint.style = Paint.Style.STROKE; paint.strokeWidth = density * .9f; paint.shader = rim
         canvas.drawRoundRect(face, radius, radius, paint)
         if (control) {
-            val inner = RectF(face).apply { inset(density * 1.2f, density * 1.2f) }
             paint.strokeWidth = density * .5f; paint.shader = reflection
-            canvas.drawRoundRect(inner, (radius - density).coerceAtLeast(0f), (radius - density).coerceAtLeast(0f), paint)
+            canvas.drawRoundRect(inner, innerRadius, innerRadius, paint)
         }
         paint.shader = null
     }
@@ -59,35 +63,46 @@ internal class GlassMaterialDrawable(
     @Deprecated("Drawable opacity") override fun getOpacity() = PixelFormat.TRANSLUCENT
 }
 
-/** A small, static blurred wallpaper cache; rebuilding happens only when bounds change. */
+/** Reuse one bounded wallpaper for equal-size pages; old visible drawables retain their pixels. */
 internal class FrostBackdrop : Drawable() {
     private val paint = Paint(Paint.ANTI_ALIAS_FLAG or Paint.FILTER_BITMAP_FLAG)
     private var bitmap: Bitmap? = null
     override fun onBoundsChange(bounds: Rect) {
-        bitmap?.recycle()
         val width = min(640, (bounds.width() / 4).coerceAtLeast(1))
         val height = (width.toFloat() * bounds.height() / bounds.width().coerceAtLeast(1)).toInt().coerceIn(1, 360)
-        bitmap = Bitmap.createBitmap(width, height, Bitmap.Config.ARGB_8888).also { target ->
-            val canvas = Canvas(target)
-            val w = width.toFloat(); val h = height.toFloat()
-            canvas.drawColor(GlassUi.background)
-            val fields = listOf(
-                RadialGradient(w * .88f, h * .12f, w * .64f, 0xCBA5B6D5.toInt(), Color.TRANSPARENT, Shader.TileMode.CLAMP),
-                RadialGradient(w * .08f, h * .98f, w * .62f, 0xC7A9C7BC.toInt(), Color.TRANSPARENT, Shader.TileMode.CLAMP),
-                RadialGradient(w * .45f, h * .05f, w * .40f, 0xA8E4D4D1.toInt(), Color.TRANSPARENT, Shader.TileMode.CLAMP),
-            )
-            fields.forEach { paint.shader = it; canvas.drawRect(0f, 0f, w, h, paint) }
-            paint.shader = null; paint.style = Paint.Style.STROKE; paint.strokeCap = Paint.Cap.ROUND
-            paint.maskFilter = BlurMaskFilter((w * .025f).coerceAtLeast(1f), BlurMaskFilter.Blur.NORMAL)
-            paint.strokeWidth = w * .09f; paint.color = 0x57739BD3
-            canvas.drawPath(Path().apply { moveTo(-w * .12f, h * .86f); cubicTo(w * .24f, -h * .65f, w * .50f, h * 1.90f, w * 1.1f, h * .10f) }, paint)
-            paint.strokeWidth = w * .045f; paint.color = 0x45F1C9B9
-            canvas.drawPath(Path().apply { moveTo(w * .48f, -h * .5f); cubicTo(w * .96f, h * .45f, w * .64f, h * .55f, w * 1.2f, h * 1.3f) }, paint)
-            paint.maskFilter = null; paint.style = Paint.Style.FILL; paint.color = Color.WHITE
-        }
+        bitmap = wallpaper(width, height)
     }
     override fun draw(canvas: Canvas) { bitmap?.let { canvas.drawBitmap(it, null, bounds, paint) } ?: canvas.drawColor(GlassUi.background) }
     override fun setAlpha(alpha: Int) {}
     override fun setColorFilter(colorFilter: ColorFilter?) {}
     @Deprecated("Drawable opacity") override fun getOpacity() = PixelFormat.OPAQUE
+
+    companion object {
+        private var cached: Bitmap? = null
+        @Synchronized private fun wallpaper(width: Int, height: Int): Bitmap {
+            cached?.let { if (it.width == width && it.height == height) return it }
+            val paint = Paint(Paint.ANTI_ALIAS_FLAG)
+            val result = Bitmap.createBitmap(width, height, Bitmap.Config.ARGB_8888).also { target ->
+                val canvas = Canvas(target)
+                val w = width.toFloat(); val h = height.toFloat()
+                canvas.drawColor(GlassUi.background)
+                val fields = listOf(
+                    RadialGradient(w * .88f, h * .12f, w * .64f, 0xCBA5B6D5.toInt(), Color.TRANSPARENT, Shader.TileMode.CLAMP),
+                    RadialGradient(w * .08f, h * .98f, w * .62f, 0xC7A9C7BC.toInt(), Color.TRANSPARENT, Shader.TileMode.CLAMP),
+                    RadialGradient(w * .45f, h * .05f, w * .40f, 0xA8E4D4D1.toInt(), Color.TRANSPARENT, Shader.TileMode.CLAMP),
+                )
+                fields.forEach { paint.shader = it; canvas.drawRect(0f, 0f, w, h, paint) }
+                paint.shader = null; paint.style = Paint.Style.STROKE; paint.strokeCap = Paint.Cap.ROUND
+                paint.maskFilter = BlurMaskFilter((w * .025f).coerceAtLeast(1f), BlurMaskFilter.Blur.NORMAL)
+                paint.strokeWidth = w * .09f; paint.color = 0x57739BD3
+                canvas.drawPath(Path().apply { moveTo(-w * .12f, h * .86f); cubicTo(w * .24f, -h * .65f, w * .50f, h * 1.90f, w * 1.1f, h * .10f) }, paint)
+                paint.strokeWidth = w * .045f; paint.color = 0x45F1C9B9
+                canvas.drawPath(Path().apply { moveTo(w * .48f, -h * .5f); cubicTo(w * .96f, h * .45f, w * .64f, h * .55f, w * 1.2f, h * 1.3f) }, paint)
+                paint.maskFilter = null; paint.style = Paint.Style.FILL; paint.color = Color.WHITE
+            }
+            // Never recycle shared pixels: a previous page may still be drawing during replacement.
+            cached = result
+            return result
+        }
+    }
 }
