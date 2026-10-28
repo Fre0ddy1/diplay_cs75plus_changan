@@ -1,0 +1,9 @@
+<resources>
+    <string name="glass_brand" translatable="false">diplay-cs75plus</string>
+    <string name="glass_eyebrow">CS75PLUS · CARPLAY</string>
+    <string name="glass_home_title">Make yourself at home.</string>
+    <string name="glass_home_description">Your maps, music and conversations. Ready for the road.</string>
+    <string name="glass_quick_actions">YOUR CONNECTION</string>
+    <string name="glass_settings_hint">Display, sound and dashboard. Just the way you like it.</string>
+    <string name="glass_settings_title">A place for everything.</string>
+</resources>

@@ -34,6 +34,7 @@ dependencies {
     implementation(project(":changan-audio"))
     implementation(project(":compact-logging"))
     implementation(project(":app-lifecycle"))
+    implementation(project(":glass-ui"))
     implementation(platform(libs.androidx.compose.bom))
     implementation(libs.androidx.activity.compose)
     implementation(libs.androidx.compose.material3)

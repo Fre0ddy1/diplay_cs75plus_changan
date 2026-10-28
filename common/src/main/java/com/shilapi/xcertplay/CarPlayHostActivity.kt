@@ -1,5 +1,7 @@
 package com.shilapi.xcertplay
 
+import com.freddyq.diplay.glass.GlassUi
+
 import android.Manifest
 import android.content.Context
 import android.content.Intent
@@ -2134,7 +2136,7 @@ class CarPlayHostActivity : ComponentActivity() {
             orientation = LinearLayout.VERTICAL
             gravity = Gravity.CENTER
             setPadding(dp(32), dp(32), dp(32), dp(32))
-            setBackgroundColor(Color.rgb(12, 17, 27))
+            background = GlassUi.backdrop()
             isClickable = true
             setOnTouchListener { view, event -> onGestureTouch(view, event) }
         }
@@ -2142,19 +2144,19 @@ class CarPlayHostActivity : ComponentActivity() {
             setImageResource(R.drawable.ic_carplay); contentDescription = getString(R.string.carplay)
         }, LinearLayout.LayoutParams(dp(88), dp(88)))
         panel.addView(TextView(this).apply {
-            text = getString(R.string.diplay); textSize = 34f; setTextColor(Color.rgb(241, 245, 252))
+            text = getString(com.freddyq.diplay.glass.R.string.glass_brand); textSize = 34f; setTextColor(GlassUi.text)
             gravity = Gravity.CENTER; setPadding(0, dp(18), 0, dp(14))
             typeface = Typeface.create("sans-serif-medium", Typeface.NORMAL)
         })
         val stage = TextView(this).apply {
             text = getString(R.string.getting_carplay_ready); textSize = 22f; gravity = Gravity.CENTER
-            setTextColor(Color.rgb(241, 245, 252))
+            setTextColor(GlassUi.text)
         }
         panel.addView(stage)
         panel.addView(TextView(this).apply {
             text = if (wirelessEnabled) getString(R.string.keep_your_iphone_nearby_with_bluetooth_and_wi_fi_on_allow)
                 else getString(R.string.use_a_usb_data_cable_and_unlock_your_iphone_allow_trust_an)
-            textSize = 17f; gravity = Gravity.CENTER; setTextColor(Color.rgb(168, 182, 202))
+            textSize = 17f; gravity = Gravity.CENTER; setTextColor(GlassUi.secondary)
             setPadding(0, dp(14), 0, dp(24))
         })
         panel.addView(Button(this).apply {
@@ -2165,13 +2167,13 @@ class CarPlayHostActivity : ComponentActivity() {
         }, LinearLayout.LayoutParams(dp(300), dp(64)).apply { bottomMargin = dp(12) })
         panel.addView(Button(this).apply {
             text = getString(R.string.back_to_diplay); isAllCaps = false; textSize = 18f
-            setTextColor(Color.rgb(12, 17, 27))
-            background = GradientDrawable().apply { setColor(Color.rgb(166, 200, 255)); cornerRadius = dp(20).toFloat() }
+            setTextColor(Color.WHITE)
+            background = GlassUi.button(this@CarPlayHostActivity, primary = true)
             setOnClickListener { showDiPlayHome() }
         }, LinearLayout.LayoutParams(dp(300), dp(64)))
         val gestureHint = TextView(this).apply {
             text = getString(R.string.open_diplay_settings_hint)
-            textSize = 13f; gravity = Gravity.CENTER; setTextColor(Color.rgb(168, 182, 202)); setPadding(0, dp(20), 0, 0)
+            textSize = 13f; gravity = Gravity.CENTER; setTextColor(GlassUi.secondary); setPadding(0, dp(20), 0, 0)
         }
         panel.addView(gestureHint)
         root.addView(panel, FrameLayout.LayoutParams(-1, -1))
@@ -2190,11 +2192,11 @@ class CarPlayHostActivity : ComponentActivity() {
 
     private fun buildSettingsMenu(): View {
         val overlay = FrameLayout(this).apply {
-            setBackgroundColor(Color.BLACK)
+            background = GlassUi.backdrop()
             isClickable = true
         }
         val panel = FrameLayout(this).apply {
-            setBackgroundColor(MENU_BACKGROUND)
+            background = GlassUi.panel(this@CarPlayHostActivity, 28)
         }
         val content = LinearLayout(this).apply {
             orientation = LinearLayout.VERTICAL
@@ -2758,8 +2760,8 @@ class CarPlayHostActivity : ComponentActivity() {
                 text = "X"
                 isAllCaps = false
                 textSize = 22f
-                setTextColor(Color.WHITE)
-                backgroundTintList = ColorStateList.valueOf(MENU_TRACK_OFF)
+                setTextColor(GlassUi.text)
+                background = GlassUi.button(this@CarPlayHostActivity)
                 contentDescription = getString(R.string.discard_changes_and_exit_settings)
                 minWidth = 0
                 minHeight = 0
@@ -3330,13 +3332,13 @@ class CarPlayHostActivity : ComponentActivity() {
         val left = RadioButton(this).apply {
             id = View.generateViewId()
             text = getString(R.string.left_hand_drive)
-            setTextColor(Color.WHITE)
+            setTextColor(GlassUi.text)
             isChecked = !rightHandDrive
         }
         val right = RadioButton(this).apply {
             id = View.generateViewId()
             text = getString(R.string.right_hand_drive)
-            setTextColor(Color.WHITE)
+            setTextColor(GlassUi.text)
             isChecked = rightHandDrive
         }
         group.addView(left)
@@ -3546,7 +3548,7 @@ class CarPlayHostActivity : ComponentActivity() {
             EditText(this@CarPlayHostActivity).apply {
                 setText(value)
                 textSize = 18f
-                setTextColor(Color.WHITE)
+                setTextColor(GlassUi.text)
                 setHintTextColor(MENU_SECONDARY)
                 backgroundTintList = ColorStateList.valueOf(MENU_ACCENT)
                 minHeight = dp(48)
@@ -3890,7 +3892,7 @@ class CarPlayHostActivity : ComponentActivity() {
     ): TextView = TextView(this).apply {
         this.text = text
         textSize = sizeSp
-        setTextColor(color)
+        setTextColor(if (color == Color.WHITE) GlassUi.text else color)
         typeface = if (bold) Typeface.DEFAULT_BOLD else Typeface.DEFAULT
         includeFontPadding = false
     }
@@ -6771,13 +6773,13 @@ class CarPlayHostActivity : ComponentActivity() {
         // the three-finger swipe switches the dashboard to the navigation stream, so Amap
         // renders the detailed follow map there (UNI-V-box behaviour).
         const val MAX_SETTINGS_MENU_WIDTH_PX = 1200
-        val MENU_BACKGROUND = Color.rgb(12, 16, 19)
-        val MENU_SECONDARY = Color.rgb(170, 180, 190)
-        val MENU_ACCENT = Color.rgb(127, 205, 154)
-        val MENU_ACCENT_TRACK = Color.rgb(78, 143, 102)
-        val MENU_TRACK_OFF = Color.rgb(64, 74, 80)
-        val MENU_BUTTON_TEXT = Color.rgb(8, 17, 11)
-        val MENU_DANGER = Color.rgb(190, 45, 45)
+        val MENU_BACKGROUND = GlassUi.background
+        val MENU_SECONDARY = GlassUi.secondary
+        val MENU_ACCENT = GlassUi.accent
+        val MENU_ACCENT_TRACK = GlassUi.accentTrack
+        val MENU_TRACK_OFF = GlassUi.trackOff
+        val MENU_BUTTON_TEXT = Color.WHITE
+        val MENU_DANGER = GlassUi.danger
         val NO_VIDEO_BACKGROUND = Color.rgb(0x16, 0x16, 0x18)
     }
 

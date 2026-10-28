@@ -2,6 +2,9 @@
 // UI copy and visual language adapted from DiAuto. See docs/THIRD_PARTY_NOTICES.md.
 package com.shilapi.xcertplay
 
+import com.freddyq.diplay.glass.GlassUi
+import com.freddyq.diplay.glass.R as GlassR
+
 import android.Manifest
 import android.app.AlertDialog
 import android.bluetooth.BluetoothManager
@@ -185,7 +188,8 @@ class DiPlayActivity : ComponentActivity() {
         WindowCompat.setDecorFitsSystemWindows(window, true)
         window.statusBarColor = BG; window.navigationBarColor = BG
         WindowInsetsControllerCompat(window, window.decorView).apply {
-            isAppearanceLightStatusBars = false
+            isAppearanceLightStatusBars = true
+            isAppearanceLightNavigationBars = true
             hide(WindowInsetsCompat.Type.statusBars())
         }
         pendingCarHotspotSetup = savedInstanceState?.getBoolean("pending_car_hotspot") ?: false
@@ -320,13 +324,13 @@ class DiPlayActivity : ComponentActivity() {
         settingsRight = null
         settingsContentScroll = null
         textScale = 1f
-        val scroll = ScrollView(this).apply { setBackgroundColor(BG); isFillViewport = true; clipToPadding = false }
+        val scroll = ScrollView(this).apply { isFillViewport = true; clipToPadding = false }
         rootScroll = scroll
         val content = column().apply { setPadding(dp(32), dp(24), dp(32), dp(32)) }
         scroll.addView(content)
         val header = row().apply { gravity = Gravity.CENTER_VERTICAL }
         header.addView(ImageView(this).apply { setImageResource(R.drawable.ic_carplay); contentDescription = getString(R.string.carplay) }, LinearLayout.LayoutParams(dp(36), dp(36)))
-        header.addView(label(getString(R.string.diplay), 23, TEXT, true).apply { setPadding(dp(12), 0, dp(16), 0) }, LinearLayout.LayoutParams(0, dp(56), 1f))
+        header.addView(label(getString(GlassR.string.glass_brand), 23, TEXT, true).apply { setPadding(dp(12), 0, dp(16), 0) }, LinearLayout.LayoutParams(0, dp(56), 1f))
         header.addView(button(if (page == "home") getString(R.string.car_home) else getString(R.string.back), false) {
             if (page == "home") startActivity(Intent(Intent.ACTION_MAIN).addCategory(Intent.CATEGORY_HOME))
             else { page = "home"; render() }
@@ -362,7 +366,6 @@ class DiPlayActivity : ComponentActivity() {
         }
         val root: ViewGroup = if (settingsBody != null) {
             column().apply {
-                setBackgroundColor(BG)
                 addView(scroll, LinearLayout.LayoutParams(-1, -2))
                 addView(settingsBody, LinearLayout.LayoutParams(-1, 0, 1f))
             }
@@ -372,6 +375,7 @@ class DiPlayActivity : ComponentActivity() {
         // Scroll restore belongs to whichever view actually scrolls on this page.
         val restoreTarget = settingsContentScroll ?: scroll
         rootScroll = restoreTarget
+        root.background = GlassUi.backdrop()
         setContentView(root)
         renderedPage = page
         refreshStatus()
@@ -392,9 +396,9 @@ class DiPlayActivity : ComponentActivity() {
         val wide = resources.configuration.screenWidthDp >= 850
         val body = column()
         val left = column()
-        left.addView(label(getString(R.string.your_phone_your_drive), 12, ACCENT, true).apply { letterSpacing = .16f })
-        left.addView(label(getString(R.string.a_familiar_drive), if (wide) 42 else 36, TEXT, true).apply { setPadding(0, dp(12), 0, dp(10)) })
-        left.addView(label(getString(R.string.your_maps_music_and_conversations_carplay_right_here_on_yo), 19, MUTED))
+        left.addView(label(getString(GlassR.string.glass_eyebrow), 12, ACCENT, true).apply { letterSpacing = .16f })
+        left.addView(label(getString(GlassR.string.glass_home_title), if (wide) 36 else 30, TEXT, true).apply { setPadding(0, dp(10), 0, dp(8)) })
+        left.addView(label(getString(GlassR.string.glass_home_description), 17, MUTED))
         val card = card()
         card.addView(label(getString(R.string.wireless_carplay), 12, ACCENT, true).apply { letterSpacing = .12f })
         status = label(getString(R.string.ready_when_you_are), 24, TEXT, true).apply { setPadding(0, dp(10), 0, dp(16)) }
@@ -430,7 +434,10 @@ class DiPlayActivity : ComponentActivity() {
             CarPlayBackgroundSession.stop { runOnUiThread { refreshStatus() } }
         }.apply { visibility = View.GONE }
         card.addView(disconnectButton, matchButton(10, 56))
-        val right = column().apply { gravity = Gravity.CENTER_HORIZONTAL }
+        val right = card().apply { gravity = Gravity.CENTER_HORIZONTAL }
+        right.addView(label(getString(GlassR.string.glass_quick_actions), 12, ACCENT, true).apply {
+            letterSpacing = .1f; setPadding(0, 0, 0, dp(16))
+        }, LinearLayout.LayoutParams(-1, -2))
         val logo = ImageView(this).apply {
             setImageResource(R.drawable.ic_carplay)
             contentDescription = getString(R.string.carplay_icon)
@@ -438,22 +445,22 @@ class DiPlayActivity : ComponentActivity() {
         }
         val branding = column().apply {
             gravity = Gravity.CENTER
-            addView(logo, LinearLayout.LayoutParams(dp(96), dp(96)))
+            addView(logo, LinearLayout.LayoutParams(dp(72), dp(72)))
         }
         right.addView(button(getString(R.string.connect_with_usb), false) { connect(false) }, matchButton())
         right.addView(label(getString(R.string.plug_your_iphone_into_a_usb_data_port_allow_carplay_when_y), 14, MUTED).apply { gravity = Gravity.CENTER; setPadding(dp(8), dp(10), dp(8), dp(24)) })
         right.addView(button(getString(R.string.settings), false) { page = "settings"; render() }, matchButton())
+        right.addView(label(getString(GlassR.string.glass_settings_hint), 14, MUTED).apply { gravity = Gravity.CENTER; setPadding(0, dp(10), 0, dp(20)) })
         right.addView(button(DiPlayAppExit.title(this), false) { DiPlayAppExit.request(this) }, matchButton(12, 56))
         DiPlayAppExit.description(this)?.let { right.addView(label(it, 13, MUTED)) }
-        right.addView(label(getString(R.string.make_diplay_feel_right_for_your_car), 14, MUTED).apply { gravity = Gravity.CENTER; setPadding(0, dp(10), 0, dp(24)) })
-        right.addView(label("${getString(homeVersionPrefix())}${version()}", 12, MUTED).apply { letterSpacing = .08f })
+        right.addView(label("${getString(homeVersionPrefix())}${version()}", 12, MUTED).apply { letterSpacing = .08f; setPadding(0, dp(16), 0, 0) })
         if (wide) {
             // Both rows share column widths. The USB button starts at the wireless
             // card's top edge, independently of hero wrapping or font scaling.
             fun columns(first: View, second: View, stretchSecond: Boolean = false) = row().apply {
                 gravity = Gravity.TOP
                 addView(first, LinearLayout.LayoutParams(0, -2, 1.6f))
-                addView(space(40), LinearLayout.LayoutParams(dp(40), 1))
+                addView(space(24), LinearLayout.LayoutParams(dp(24), 1))
                 addView(second, LinearLayout.LayoutParams(0, if (stretchSecond) -1 else -2, 1f))
             }
             body.addView(columns(left, branding, true))
@@ -479,7 +486,7 @@ class DiPlayActivity : ComponentActivity() {
     private fun settings(host: LinearLayout): LinearLayout {
         // Read from arm's length: 15sp row titles were fine print on a 1920x720 panel.
         textScale = 1.22f
-        host.addView(label(getString(R.string.your_drive_your_way), 20, TEXT, true))
+        host.addView(label(getString(GlassR.string.glass_settings_title), 23, TEXT, true))
         host.addView(label(getString(R.string.apply_reconnects_carplay_for_size_resolution_music_buffer), 11, MUTED).apply { setPadding(0, dp(6), 0, dp(10)) })
         // Rail plus two content columns. Sections are collected first and distributed later, so a
         // preference never has two widgets and the page uses the panel's width instead of leaving a
@@ -489,7 +496,7 @@ class DiPlayActivity : ComponentActivity() {
         // scrolls. Never a nested scroll with the page, which would drag the rail away again.
         val rail = column()
         val railScroll = ScrollView(this).apply {
-            setBackgroundColor(BG)
+            background = GlassUi.panel(this@DiPlayActivity)
             clipToPadding = false
             layoutParams = LinearLayout.LayoutParams(dp(212), -1)
         }
@@ -503,7 +510,7 @@ class DiPlayActivity : ComponentActivity() {
         val content = staging
         fun gap(width: Int) = View(this).apply { layoutParams = LinearLayout.LayoutParams(dp(width), -1) }
         val rightScroll = ScrollView(this).apply {
-            setBackgroundColor(BG)
+            setBackgroundColor(Color.TRANSPARENT)
             isFillViewport = true
             clipToPadding = false
             layoutParams = LinearLayout.LayoutParams(0, -1, 1f)
@@ -3265,7 +3272,7 @@ class DiPlayActivity : ComponentActivity() {
     }
 
     private fun groupCard() = column().apply {
-        background = rounded(SURFACE, BORDER, 14)
+        GlassUi.lift(this)
         setPadding(dp(16), dp(4), dp(16), dp(4))
     }
 
@@ -3277,7 +3284,7 @@ class DiPlayActivity : ComponentActivity() {
      */
     private fun cardGroup(parent: LinearLayout, title: String, build: (LinearLayout) -> Unit) {
         val group = column().apply {
-            background = rounded(Color.rgb(16, 24, 35), Color.rgb(38, 53, 74), 12)
+            GlassUi.lift(this, nested = true)
             setPadding(dp(14), dp(2), dp(14), dp(6))
             layoutParams = LinearLayout.LayoutParams(-1, -2).apply { topMargin = dp(14) }
         }
@@ -3289,7 +3296,7 @@ class DiPlayActivity : ComponentActivity() {
     }
 
     private fun divider() = View(this).apply {
-        setBackgroundColor(Color.rgb(31, 43, 57))
+        setBackgroundColor(GlassUi.divider)
         layoutParams = LinearLayout.LayoutParams(-1, dp(1))
     }
 
@@ -3426,7 +3433,7 @@ class DiPlayActivity : ComponentActivity() {
         return value
     }
 
-    private fun card() = column().apply { background = rounded(SURFACE, BORDER); setPadding(dp(24), dp(24), dp(24), dp(24)) }
+    private fun card() = column().apply { GlassUi.lift(this); setPadding(dp(24), dp(24), dp(24), dp(24)) }
     private fun column() = LinearLayout(this).apply { orientation = LinearLayout.VERTICAL; layoutParams = LinearLayout.LayoutParams(-1, -2) }
     private fun row() = LinearLayout(this).apply { orientation = LinearLayout.HORIZONTAL; layoutParams = LinearLayout.LayoutParams(-1, -2) }
     private fun label(value: String, size: Int, color: Int, bold: Boolean = false) = TextView(this).apply {
@@ -3435,13 +3442,11 @@ class DiPlayActivity : ComponentActivity() {
         setLineSpacing(dp(3).toFloat(), 1f)
     }
     private fun button(title: String, primary: Boolean, click: () -> Unit) = Button(this).apply {
-        text = title; isAllCaps = false; textSize = 15f * textScale; setTextColor(if (primary) BG else TEXT)
+        text = title; isAllCaps = false; textSize = 16f * textScale
+        val exit = title == DiPlayAppExit.title(this@DiPlayActivity)
+        setTextColor(if (primary) Color.WHITE else if (exit) GlassUi.danger else TEXT)
         typeface = Typeface.create("sans-serif-medium", Typeface.NORMAL)
-        background = android.graphics.drawable.RippleDrawable(
-            ColorStateList.valueOf(0x33FFFFFF),
-            rounded(if (primary) ACCENT else SURFACE, if (primary) ACCENT else BORDER, 12),
-            null,
-        )
+        background = GlassUi.button(this@DiPlayActivity, primary, destructive = exit)
         setPadding(dp(14), 0, dp(14), 0); minHeight = dp(48); stateListAnimator = null
         setOnClickListener { click() }
     }
@@ -3458,7 +3463,7 @@ class DiPlayActivity : ComponentActivity() {
      */
     private fun buildSettingsRail(rail: LinearLayout) {
         rail.removeAllViews()
-        rail.setPadding(0, dp(26), 0, dp(16))
+        rail.setPadding(dp(10), dp(14), dp(10), dp(14))
         val items = listOf(
             R.string.settings_group_frequent to GROUP_FREQUENT,
             R.string.settings_group_connect to GROUP_CONNECT,
@@ -3472,8 +3477,8 @@ class DiPlayActivity : ComponentActivity() {
             val item = row().apply {
                 gravity = Gravity.CENTER_VERTICAL
                 setPadding(dp(12), 0, dp(10), 0)
-                minimumHeight = dp(50)
-                background = if (selected) rounded(Color.rgb(22, 38, 30), BORDER, 10) else null
+                minimumHeight = dp(56)
+                background = if (selected) rounded(GlassUi.selected, BORDER, 14) else null
                 isClickable = true
                 setOnClickListener {
                     if (settingsGroup == group) return@setOnClickListener
@@ -3552,17 +3557,17 @@ class DiPlayActivity : ComponentActivity() {
         const val GROUP_ALL = (1 shl 6) - 1
         // Accent follows the CarPlay menu (MENU_ACCENT in CarPlayHostActivity): one palette across
         // both screens instead of a blue settings page next to a green menu.
-        private val BG = Color.rgb(12, 17, 27)
-        private val SURFACE = Color.rgb(21, 30, 44)
-        private val RAIL = Color.rgb(9, 13, 20)
-        private val BORDER = Color.rgb(34, 48, 63)
-        private val ACCENT = Color.rgb(127, 205, 154)
-        private val ACCENT_TRACK = Color.rgb(78, 143, 102)
-        private val TRACK_OFF = Color.rgb(64, 74, 80)
-        private val THUMB_OFF = Color.rgb(150, 164, 180)
-        private val TEXT = Color.rgb(241, 245, 252)
-        private val MUTED = Color.rgb(168, 182, 202)
-        private val MUTED_DIM = Color.rgb(124, 141, 166)
-        private val WARNING = Color.rgb(255, 196, 128)
+        private val BG = GlassUi.background
+        private val SURFACE = GlassUi.surface
+        private val RAIL = GlassUi.inset
+        private val BORDER = GlassUi.border
+        private val ACCENT = GlassUi.accent
+        private val ACCENT_TRACK = GlassUi.accentTrack
+        private val TRACK_OFF = GlassUi.trackOff
+        private val THUMB_OFF = GlassUi.thumbOff
+        private val TEXT = GlassUi.text
+        private val MUTED = GlassUi.secondary
+        private val MUTED_DIM = GlassUi.muted
+        private val WARNING = GlassUi.warning
     }
 }

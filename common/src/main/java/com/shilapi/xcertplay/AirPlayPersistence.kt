@@ -789,11 +789,9 @@ object AirPlayPersistence {
     fun loadClusterContent(context: Context): CarPlayClusterDisplay.Content {
         val stored = context.getSharedPreferences(PREFS, Context.MODE_PRIVATE)
             .getString(KEY_CLUSTER_CONTENT, null)
-        // Default: Apple's full navigation (field decision 2026-10-25). A stored name that no
-        // longer exists (Apple's instruments view and the experimental paths were removed)
-        // resolves to the default as well, so an old install lands on something that works.
+        // Unconfigured/unknown choices use the card-free map; explicit saved choices still win.
         return CarPlayClusterDisplay.Content.entries.firstOrNull { it.name == stored }
-            ?: CarPlayClusterDisplay.Content.FLY_CARD
+            ?: CarPlayClusterDisplay.Content.MAP
     }
 
     fun saveClusterContent(context: Context, content: CarPlayClusterDisplay.Content) {
@@ -974,10 +972,8 @@ object AirPlayPersistence {
      * switch ([loadClusterTurnCardVisible]) and also defaults off. A stored value always wins.
      */
     fun loadClusterCardVisible(context: Context, card: String): Boolean {
-        // The arrival card is on by default since 2026-10-25 (field decision): the dashboard
-        // shows it in both nav-only and mirror mode, and hiding it is the exception.
         return context.getSharedPreferences(PREFS, Context.MODE_PRIVATE)
-            .getBoolean(clusterCardKey(card, "visible"), true)
+            .getBoolean(clusterCardKey(card, "visible"), false)
     }
 
     fun saveClusterCardVisible(context: Context, card: String, visible: Boolean) {
@@ -1130,7 +1126,7 @@ object AirPlayPersistence {
     /** Whether the lyrics card includes the album art CarPlay sends with the item. */
     fun loadClusterSongShowArtwork(context: Context): Boolean =
         context.getSharedPreferences(PREFS, Context.MODE_PRIVATE)
-            .getBoolean(KEY_CLUSTER_SONG_SHOW_ARTWORK, true)
+            .getBoolean(KEY_CLUSTER_SONG_SHOW_ARTWORK, false)
 
     fun saveClusterSongShowArtwork(context: Context, show: Boolean) {
         context.getSharedPreferences(PREFS, Context.MODE_PRIVATE).edit()

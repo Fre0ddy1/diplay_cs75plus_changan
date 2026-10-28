@@ -52,6 +52,11 @@ checks['common/src/main/java/com/shilapi/xcertplay/CarPlayMediaKeys.kt'] += [
     'VehicleCustomizations.prepareMediaPlayback(context, complete)', 'releaseRecoveryFocusLocked()',
 ]
 checks['settings.gradle.kts'] += ['include(":app-lifecycle")', 'customizations/app-lifecycle']
+checks['settings.gradle.kts'] += ['include(":glass-ui")', 'customizations/glass-ui']
+checks['common/build.gradle.kts'] += ['implementation(project(":glass-ui"))']
+checks['common/src/main/AndroidManifest.xml'] = ['@style/Theme.DiPlay.Glass']
+checks['common/src/main/java/com/shilapi/xcertplay/DiPlayActivity.kt'] += ['GlassUi.backdrop()', 'GlassUi.lift(this)', 'GlassUi.button(']
+checks['common/src/main/java/com/shilapi/xcertplay/CarPlayHostActivity.kt'] += ['GlassUi.backdrop()', 'GlassUi.panel(']
 checks['common/build.gradle.kts'] += ['implementation(project(":app-lifecycle"))']
 checks['common/src/main/java/com/shilapi/xcertplay/DiPlayActivity.kt'] += ['DiPlayAppExit.allowEntry', 'DiPlayAppExit.request(this)']
 checks['common/src/main/java/com/shilapi/xcertplay/BootReceiver.kt'] = ['VehicleCustomizations.allowAutomaticStartup(context)']

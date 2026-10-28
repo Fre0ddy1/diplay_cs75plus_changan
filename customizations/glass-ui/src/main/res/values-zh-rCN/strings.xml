@@ -1,0 +1,8 @@
+<resources>
+    <string name="glass_eyebrow">CS75PLUS · CARPLAY</string>
+    <string name="glass_home_title">连接，就此出发。</string>
+    <string name="glass_home_description">熟悉的地图、音乐与通话，陪你走好每一程。</string>
+    <string name="glass_quick_actions">连接与控制</string>
+    <string name="glass_settings_hint">显示、声音、仪表，按你的习惯来。</string>
+    <string name="glass_settings_title">每个细节，都合你意。</string>
+</resources>
