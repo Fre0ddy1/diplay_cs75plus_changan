@@ -7,4 +7,6 @@
     <string name="hotspot_permission_notice">Allow hotspot control in DiPlay Settings → Connection, then return to DiPlay.</string>
     <string name="hotspot_failed_notice">Could not restore the car hotspot. Open car hotspot settings, then reconnect.</string>
     <string name="hotspot_permission_unavailable">The permission page is unavailable. Allow DiPlay to modify system settings manually.</string>
+    <string name="hotspot_system_denied_notice">System-settings permission is allowed, but hotspot control was denied. Turn the hotspot on manually and export logs.</string>
+    <string name="hotspot_interface_notice">Could not access the hotspot control interface. Turn the hotspot on manually and export logs.</string>
 </resources>

@@ -70,7 +70,7 @@ class CarHotspotFallbackTest {
         ConnectivityManager::class.java.getDeclaredField("mService").apply {
             isAccessible = true
         }.set(app.getSystemService(ConnectivityManager::class.java), null)
-        assertStartupFailure("This firmware does not support automatic hotspot startup")
+        assertStartupFailure("Automatic hotspot control interface is unavailable")
     }
 
     @Test fun missingControlPermissionIsStillReported() {

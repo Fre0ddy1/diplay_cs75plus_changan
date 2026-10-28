@@ -7,4 +7,6 @@
     <string name="hotspot_permission_notice">请在 DiPlay“设置 → 连接”中授予热点控制权限，再返回 DiPlay。</string>
     <string name="hotspot_failed_notice">车机热点未能自动恢复，请手动打开原车热点后再连接。</string>
     <string name="hotspot_permission_unavailable">无法打开授权页，请在系统设置中手动允许 DiPlay 修改系统设置。</string>
+    <string name="hotspot_system_denied_notice">已允许修改系统设置，但系统仍拒绝热点控制。请手动开启热点并导出日志。</string>
+    <string name="hotspot_interface_notice">未能访问热点控制接口，请手动开启热点并导出日志。</string>
 </resources>

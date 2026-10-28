@@ -13,6 +13,7 @@ interface VehicleCustomization {
     fun onManualApplicationLaunch(context: Context) {}
     fun requestApplicationExit(context: Context, control: ApplicationExitControl): Boolean = false
     fun automaticHotspotDefault(context: Context): Boolean? = null
+    fun platformHotspotStarter(context: Context): PlatformHotspotStarter? = null
     /** True claims startup hotspot handling; work must be asynchronous. */
     fun onApplicationForeground(context: Context, control: ApplicationForegroundControl): Boolean = false
     fun mediaKeyRoute(context: Context): MediaKeyRoute? = null
@@ -76,6 +77,9 @@ open class VehicleCustomizationRegistry {
     }
     fun automaticHotspotDefault(context: Context): Boolean? = extensions.firstNotNullOfOrNull {
         runCatching { it.automaticHotspotDefault(context.applicationContext) }.getOrNull()
+    }
+    fun platformHotspotStarter(context: Context): PlatformHotspotStarter? = extensions.firstNotNullOfOrNull {
+        it.platformHotspotStarter(context.applicationContext)
     }
     fun onApplicationForeground(context: Context, control: ApplicationForegroundControl): Boolean {
         if (!allowAutomaticStartup(context)) return true

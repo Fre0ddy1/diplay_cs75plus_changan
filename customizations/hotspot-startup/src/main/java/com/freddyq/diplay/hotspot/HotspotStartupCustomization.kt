@@ -25,6 +25,8 @@ class HotspotStartupCustomization : VehicleCustomization {
     private var lastNotice: CarHotspotTethering.Result? = null
     private var lastNoticeAt = 0L
     override fun automaticHotspotDefault(context: Context) = true
+    override fun platformHotspotStarter(context: Context): PlatformHotspotStarter =
+        FrameworkHotspotStarter(context.applicationContext, ::diagnostic)
 
     private fun selected() = foreground?.current()?.let { it.wireless && it.vehicleHotspot } == true
     override fun onApplicationForeground(context: Context, control: ApplicationForegroundControl): Boolean {
@@ -56,8 +58,12 @@ class HotspotStartupCustomization : VehicleCustomization {
         val now = SystemClock.elapsedRealtime()
         if (lastNotice == result && now - lastNoticeAt < 30_000L) return
         lastNotice = result; lastNoticeAt = now
-        Toast.makeText(app, if (result == CarHotspotTethering.Result.PERMISSION_REQUIRED) R.string.hotspot_permission_notice
-            else R.string.hotspot_failed_notice, Toast.LENGTH_LONG).show()
+        val message = when (result) {
+            CarHotspotTethering.Result.PERMISSION_REQUIRED -> if (CarHotspotTethering.permitted(app)) R.string.hotspot_system_denied_notice else R.string.hotspot_permission_notice
+            CarHotspotTethering.Result.UNSUPPORTED -> R.string.hotspot_interface_notice
+            else -> R.string.hotspot_failed_notice
+        }
+        Toast.makeText(app, message, Toast.LENGTH_LONG).show()
     }
     override fun settings(context: Context): List<CustomizationSettingsGroup> {
         val app = context.applicationContext

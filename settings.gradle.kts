@@ -31,6 +31,8 @@ project(":changan-projection").projectDir = file("customizations/changan-project
 include(":common")
 include(":glass-ui")
 include(":hotspot-startup")
+include(":android9-hotspot-stubs")
+project(":android9-hotspot-stubs").projectDir = file("customizations/android9-hotspot-stubs")
 project(":hotspot-startup").projectDir = file("customizations/hotspot-startup")
 project(":glass-ui").projectDir = file("customizations/glass-ui")
 include(":app-lifecycle")

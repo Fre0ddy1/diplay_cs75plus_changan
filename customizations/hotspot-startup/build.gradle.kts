@@ -11,6 +11,8 @@ android {
 dependencies {
     implementation(project(":vehicle-customization-api"))
     implementation(project(":shared"))
+    compileOnly(project(":android9-hotspot-stubs"))
     testImplementation(libs.junit)
     testImplementation("org.robolectric:robolectric:4.17")
+    testCompileOnly(project(":android9-hotspot-stubs"))
 }
