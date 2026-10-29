@@ -543,6 +543,20 @@ class DiPlayActivity : ComponentActivity() {
             }.apply { isEnabled = !exportInProgress }
             card.addView(exportButton, matchButton(10, 60))
             card.addView(button(getString(R.string.choose_save_location), false) { chooseReportDestination() }, matchButton(10, 60))
+            // Off by default: with it off the log keeps only what a report needs (connection state,
+            // navigation switches, track changes, audio buffers, each stream's first frame) instead
+            // of every iAP2 notification and per-stream statistic. See SessionLogPolicy.
+            toggle(
+                card,
+                getString(R.string.full_session_log_title),
+                getString(R.string.full_session_log_hint),
+                AirPlayPersistence.loadFullSessionLog(this),
+            ) { enabled ->
+                AirPlayPersistence.saveFullSessionLog(this, enabled)
+                // Same process as the CarPlay session, so the next line already obeys the switch.
+                SessionLogPolicy.full = enabled
+                clusterUiLog("Session log mode=${if (enabled) "full" else "key events only"} (诊断)")
+            }
             // Developer rows stay folded away: the driver only needs the report and its location.
             val developerRows = column().apply {
                 visibility = if (DiPlayPreferences.showDeveloperOptions(this@DiPlayActivity)) {

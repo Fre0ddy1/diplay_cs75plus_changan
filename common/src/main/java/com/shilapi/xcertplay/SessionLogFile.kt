@@ -38,7 +38,16 @@ internal class SessionLogFile(val file: File) : Closeable {
         enqueue(header)
     }
 
-    fun append(line: String) = enqueue(line)
+    /**
+     * Queues one line. The [SessionLogPolicy] gate sits here, ahead of redaction and of the queue:
+     * with the full log switched off, a dropped line costs one substring scan and nothing else -
+     * no regex pass, no queue slot, no write on the head unit's flash. Headers written by [reset]
+     * bypass this on purpose, so a filtered log still says what it is.
+     */
+    fun append(line: String) {
+        if (!SessionLogPolicy.shouldWrite(line)) return
+        enqueue(line)
+    }
 
     private fun enqueue(line: String) {
         if (closed) return

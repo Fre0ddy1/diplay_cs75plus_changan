@@ -376,6 +376,8 @@
     <string name="cluster_content_title">仅导航模式下仪表盘画面来源</string>
     <string name="cluster_quiet_mode_title">仪表激活只用静默那半</string>
     <string name="cluster_quiet_mode_hint">默认走完整激活序列：车机上电后才会发送，实测不播报。打开这一项后只发清屏、模式和属性，广播量更少，但车机上电后 incall 全新启动时可能不认，导致仪表投不上。只在排查时使用。</string>
+    <string name="full_session_log_title">完整日志写入</string>
+    <string name="full_session_log_hint">把每条协议消息与每个流的统计都写进日志，仅排查时打开。关闭时只留连接状态、仪表切换、切歌、音频缓冲等关键事项，更省车机。</string>
     <string name="cluster_content_custom">地图 + 自绘卡片（位置可调）</string>
     <string name="cluster_content_flycard">Apple 完整导航</string>
     <string name="cluster_content_apple_combined">Apple 地图+卡片（单流）</string>

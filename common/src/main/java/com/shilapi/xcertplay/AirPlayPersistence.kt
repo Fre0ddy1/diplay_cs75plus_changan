@@ -76,6 +76,7 @@ object AirPlayPersistence {
     private const val KEY_MANUAL_HOTSPOT_CHANNEL = "manual_hotspot_channel"
     private const val KEY_MANUAL_HOTSPOT_SECURITY = "manual_hotspot_security"
     private const val KEY_DEBUG_LOGS_ENABLED = "debug_logs_enabled"
+    private const val KEY_FULL_SESSION_LOG = "full_session_log"
     private const val KEY_MANUFACTURER = "manufacturer"
     private const val KEY_MODEL = "model"
     private const val KEY_OEM_LABEL = "oem_label"
@@ -455,6 +456,22 @@ object AirPlayPersistence {
     fun saveDebugLogsEnabled(context: Context, enabled: Boolean) {
         context.getSharedPreferences(PREFS, Context.MODE_PRIVATE).edit()
             .putBoolean(KEY_DEBUG_LOGS_ENABLED, enabled)
+            .apply()
+    }
+
+    /**
+     * Whether every diagnostic line is written to `diplay.log` (诊断 → 完整日志写入).
+     *
+     * Off by default: iAP2 notifications and per-stream statistics are volume, not information, and
+     * the file lives on the head unit's flash. See [SessionLogPolicy] for what stays.
+     */
+    fun loadFullSessionLog(context: Context): Boolean =
+        context.getSharedPreferences(PREFS, Context.MODE_PRIVATE)
+            .getBoolean(KEY_FULL_SESSION_LOG, false)
+
+    fun saveFullSessionLog(context: Context, enabled: Boolean) {
+        context.getSharedPreferences(PREFS, Context.MODE_PRIVATE).edit()
+            .putBoolean(KEY_FULL_SESSION_LOG, enabled)
             .apply()
     }
 

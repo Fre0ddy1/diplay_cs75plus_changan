@@ -7106,11 +7106,22 @@ class CarPlayHostActivity : ComponentActivity() {
     private fun initializeSessionLog() {
         val logFile = File(File(filesDir, "logs"), "diplay.log")
         val activeLog = SessionLogFile(logFile)
+        // Installed before the first line is written, so the whole session obeys the switch.
+        SessionLogPolicy.applyStoredPreference(this)
         runCatching {
             activeLog.reset(
                 "DiPlay log started " +
                     "${SimpleDateFormat("yyyy-MM-dd HH:mm:ss.SSS", Locale.US).format(Date())} " +
                     "pid=${Process.myPid()} path=${logFile.absolutePath}",
+            )
+            // A filtered log must say so, or a later reader cannot tell an event that did not
+            // happen from one that was not recorded.
+            activeLog.append(
+                formattedLogLine(
+                    "Session log mode=" +
+                        if (SessionLogPolicy.full) "full" else "key events only (诊断 → 完整日志写入)",
+                    System.currentTimeMillis(),
+                ),
             )
         }
         sessionLog = activeLog
