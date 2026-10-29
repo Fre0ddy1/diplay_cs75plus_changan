@@ -74,6 +74,14 @@ internal class AudioFocusCoordinator(
     private var timedDucking = false
     /** Set for as long as a navigation prompt is playing; we observe this exactly. */
     private var guidanceDucking = false
+    /**
+     * True after the head unit took focus transiently (AUDIOFOCUS_LOSS_TRANSIENT /
+     * _CAN_DUCK) and never followed with a GAIN callback. BYD's firmware ducks our MEDIA
+     * track on a transient loss during a navigation prompt and, without a later gain event,
+     * leaves it ducked for the rest of the drive - the "fixed ducking the slider cannot fix"
+     * a driver reported (2026-10-29). reassertFocus() lifts it once the prompt ends.
+     */
+    private var transientLossSeen = false
     // Our own duck is only ever meant to bridge a short prompt, so it undoes itself. The head unit
     // does not always send AUDIOFOCUS_GAIN when the interrupting audio ends, and without this the
     // music stayed at 20 % for the rest of the drive - field report: "it turned the media volume
@@ -83,6 +91,7 @@ internal class AudioFocusCoordinator(
         synchronized(this@AudioFocusCoordinator) {
             timedDucking = false
             applyDuckVolume()
+            reassertFocus()
         }
     }
     private val listener = AudioManager.OnAudioFocusChangeListener { change ->
@@ -91,16 +100,25 @@ internal class AudioFocusCoordinator(
             when (change) {
                 AudioManager.AUDIOFOCUS_LOSS_TRANSIENT_CAN_DUCK -> {
                     timedDucking = true
+                    transientLossSeen = true
                     applyDuckVolume()
                     volumeHandler.removeCallbacks(unduckRunnable)
                     volumeHandler.postDelayed(unduckRunnable, DUCK_HOLD_MS)
                 }
+                AudioManager.AUDIOFOCUS_LOSS_TRANSIENT -> {
+                    // The head unit ducked our track on a transient loss (e.g. a navigation
+                    // prompt) but our own duck is driven by the guidance paths; remember the
+                    // loss so reassertFocus() can lift the mixer duck once the prompt ends.
+                    transientLossSeen = true
+                    runCatching { report("Audio: transient focus loss seen") }
+                }
                 AudioManager.AUDIOFOCUS_GAIN -> {
                     volumeHandler.removeCallbacks(unduckRunnable)
                     timedDucking = false
+                    transientLossSeen = false
                     applyDuckVolume()
                 }
-                // Keep CarPlay audio running on permanent or transient loss. Some head units
+                // Keep CarPlay audio running on permanent loss. Some head units
                 // do not send a later gain callback after taking focus back.
             }
         }
@@ -236,6 +254,7 @@ internal class AudioFocusCoordinator(
             volumeHandler.removeCallbacks(unduckRunnable)
             timedDucking = false
             applyDuckVolume()
+            reassertFocus()
         }
     }
 
@@ -249,6 +268,9 @@ internal class AudioFocusCoordinator(
             if (guidanceDucking == active) return
             guidanceDucking = active
             applyDuckVolume()
+            // When the prompt ends, lift any mixer duck the head unit left behind on a transient
+            // focus loss (BYD leaves it ducked without a gain callback - 2026-10-29).
+            if (!active) reassertFocus()
         }
     }
 
@@ -256,6 +278,40 @@ internal class AudioFocusCoordinator(
         val target = if (guidanceDucking || timedDucking) duckVolume() else FULL_VOLUME
         runCatching { report("Audio: duck guidance=$guidanceDucking timed=$timedDucking target=$target") }
         setVolume(target)
+    }
+
+    /**
+     * Re-requests the MEDIA focus we already hold so the head unit re-runs its duck evaluation
+     * and restores our track volume.
+     *
+     * BYD's firmware ducks our MEDIA track on a transient focus loss during a navigation prompt
+     * and, absent a later gain callback, leaves it ducked for the rest of the drive - the
+     * "fixed ducking the slider cannot fix" a driver reported (2026-10-29). Re-requesting the
+     * focus we should be holding makes the unit lift that duck. Only acts when a transient loss
+     * was actually observed, and only for a MEDIA primary, so it is a no-op in the normal case.
+     */
+    private fun reassertFocus() {
+        synchronized(this) {
+            if (!enabled || !transientLossSeen) return
+            val primary = active.values.maxByOrNull { it.channel.focusPriority() } ?: return
+            if (primary.channel != AudioChannel.MEDIA) return
+            transientLossSeen = false
+            // Abandon and re-request so the head unit re-evaluates and restores our volume.
+            manager?.let { request?.abandon(it) }
+            request = null
+            requestedChannel = null
+            val next = AudioFocusRequestCompat(
+                AudioManager.AUDIOFOCUS_GAIN,
+                primary.attributes,
+                listener,
+                Handler(Looper.getMainLooper()),
+            )
+            request = next
+            requestedChannel = AudioChannel.MEDIA
+            val result = manager?.let(next::request)
+            Log.i(TAG, "Audio: focus re-asserted channel=MEDIA granted=$result")
+            runCatching { report("Audio: focus re-asserted channel=MEDIA granted=$result") }
+        }
     }
 
     private fun AudioChannel.focusPriority(): Int = when (this) {
