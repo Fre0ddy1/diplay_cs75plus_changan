@@ -1,4 +1,5 @@
 <manifest xmlns:android="http://schemas.android.com/apk/res/android">
+    <queries><package android:name="com.autonavi.amapauto" /></queries>
     <application>
         <provider
             android:name="com.freddyq.diplay.changan.projection.ChanganProjectionInitializer"

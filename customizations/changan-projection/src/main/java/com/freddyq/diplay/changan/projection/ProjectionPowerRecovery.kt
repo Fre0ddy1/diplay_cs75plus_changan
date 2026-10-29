@@ -27,6 +27,7 @@ internal class ProjectionPowerRecovery {
         return if (attempts < DELAYS.size && now >= nextAt) Action.ACTIVATE else Action.WAIT
     }
     fun invalidated() { invalidate = false }
+    fun exhausted(): Boolean = attempts >= DELAYS.size
     fun activated(now: Long) {
         nextAt = now + DELAYS[attempts.coerceAtMost(DELAYS.lastIndex)]
         attempts++

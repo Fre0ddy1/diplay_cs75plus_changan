@@ -16,10 +16,10 @@ import com.freddyq.diplay.customization.VehicleCustomization
 import com.freddyq.diplay.customization.VehicleCustomizations
 
 class ChanganProjectionCustomization : VehicleCustomization {
-    private val environment = ProjectionEnvironmentBridge()
     private val contentRecovery = ContentHandoffRecovery {
         VehicleCustomizations.diagnostic("ChanganProjection", it)
     }
+    private val environment = ProjectionEnvironmentBridge { contentRecovery.invalidate() }
     override val id = "changan-projection"
     // Controller preparation and AirPlay activation may both announce the same session.
     // Projection has its own start generation; a duplicate phone-start must not reset recovery.
@@ -38,6 +38,7 @@ class ChanganProjectionCustomization : VehicleCustomization {
     }
     override fun onProjectionLayoutRequested(layout: ProjectionLayout) = ChanganProjectionBridge.layoutRequested(layout)
     override fun onProjectionContentReady(context: Context, window: Any, control: ProjectionContentControl) {
+        if (environment.prerequisiteWaiting) return
         if (ChanganProjectionSettings.enabled(context)) contentRecovery.frameReady(window,
             ProjectionContentControl { result ->
                 if (ChanganProjectionSettings.enabled(context)) control.requestHandoff(result) else result(false)
@@ -45,15 +46,17 @@ class ChanganProjectionCustomization : VehicleCustomization {
     }
     override fun onProjectionContentLost(window: Any) = contentRecovery.windowLost(window)
     override fun onProjectionManualControl() {
+        environment.cancelPrerequisite()
         contentRecovery.suspend()
         ChanganProjectionBridge.clear("manual-control")
     }
     override fun onProjectionReleased() {
+        environment.cancelPrerequisite()
         contentRecovery.invalidate()
         ChanganProjectionBridge.clear("projection-released")
     }
     override fun onProjectionEnvironment(context: Context, state: ProjectionEnvironment, control: ProjectionActivationControl): Boolean {
-        environment.observe(state, control)
+        environment.observe(state, control, context)
         return true
     }
     override fun shouldRetryAutomaticProjection() = ChanganProjectionBridge.shouldRetryAutomaticProjection()

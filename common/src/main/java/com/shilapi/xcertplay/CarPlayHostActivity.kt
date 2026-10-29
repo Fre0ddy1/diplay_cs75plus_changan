@@ -6161,6 +6161,26 @@ class CarPlayHostActivity : ComponentActivity() {
                 val phone = activeAirPlaySession
                 val managed = com.freddyq.diplay.customization.VehicleCustomizations.onProjectionEnvironment(
                     this, environment, object : com.freddyq.diplay.customization.ProjectionActivationControl {
+                        private fun sessionCurrent() = owner === autoProjectToken && phone != null && phone === activeAirPlaySession &&
+                            !shuttingDown.get() && !isFinishing && !isDestroyed && !userClosedProjection && !projectionClosePending &&
+                            com.freddyq.diplay.customization.VehicleCustomizations.allowAutomaticStartup(this@CarPlayHostActivity)
+                        override fun launchPrerequisite(intent: Intent): Boolean {
+                            if (!sessionCurrent() || !clusterDisplaySizeReady() ||
+                                (!AirPlayPersistence.loadAutoFlyScreen(this@CarPlayHostActivity) && manualProjectionRequest == 0L)) return false
+                            return runCatching {
+                                startActivity(intent.addFlags(Intent.FLAG_ACTIVITY_NEW_TASK))
+                                true
+                            }.getOrElse { appendLog("Projection prerequisite launch failed: ${it.javaClass.simpleName}"); false }
+                        }
+                        override fun returnToProjection(): Boolean {
+                            if (!sessionCurrent() || !clusterDisplaySizeReady() ||
+                                (!AirPlayPersistence.loadAutoFlyScreen(this@CarPlayHostActivity) && manualProjectionRequest == 0L)) return false
+                            return runCatching {
+                                startActivity(Intent(this@CarPlayHostActivity, CarPlayHostActivity::class.java)
+                                    .addFlags(Intent.FLAG_ACTIVITY_REORDER_TO_FRONT or Intent.FLAG_ACTIVITY_NEW_TASK))
+                                true
+                            }.getOrElse { appendLog("Projection prerequisite return failed: ${it.javaClass.simpleName}"); false }
+                        }
                         private fun current() = owner === autoProjectToken && phone === activeAirPlaySession &&
                             environment.serviceEpoch == InCallClusterBridge.serviceEpoch() &&
                             !shuttingDown.get() && !isFinishing && !isDestroyed &&

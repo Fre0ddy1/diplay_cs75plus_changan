@@ -1,5 +1,7 @@
 package com.freddyq.diplay.customization
 
+import android.content.Intent
+
 /** Observed platform state only; no vehicle properties or protocol values. */
 data class ProjectionEnvironment(
     val displayId: Int?, val displayOn: Boolean, val sizeReady: Boolean,
@@ -13,4 +15,8 @@ interface ProjectionActivationControl {
     fun invalidateChannel(): Boolean
     /** True means activation was dispatched, never that pixels were observed. */
     fun activate(): Boolean
+    /** Launch a module-selected prerequisite without changing the current phone session. */
+    fun launchPrerequisite(intent: Intent): Boolean = false
+    /** Return to the same live projection host, never start a replacement session. */
+    fun returnToProjection(): Boolean = false
 }
