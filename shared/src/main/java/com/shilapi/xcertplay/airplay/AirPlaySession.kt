@@ -115,8 +115,15 @@ class AirPlaySession(
 
     internal fun logDebug(message: String) = debugLog(message)
 
+    @Volatile private var mainFrameRendered = false
+
+    /** True once the main screen has shown a picture in this session (upstream #981 gate). */
+    val hasRenderedMainFrame: Boolean get() = mainFrameRendered && !closed.get()
+
     internal fun videoFrameRendered() {
-        if (!closed.get()) listener.onVideoFrameRendered(this)
+        if (closed.get()) return
+        mainFrameRendered = true
+        listener.onVideoFrameRendered(this)
     }
 
     internal fun logTrace(message: String) = trace(message)
@@ -152,6 +159,58 @@ class AirPlaySession(
         return sendCommand(mapOf("type" to "showUI", "params" to mapOf("uuid" to uuid, "url" to url))) &&
             sendCommand(mapOf("type" to "forceKeyFrame", "params" to mapOf("uuid" to uuid)))
     }
+
+    /**
+     * Re-asserts BOTH cluster displays with their own URLs.
+     *
+     * A quick disconnect/reconnect can leave the iPhone's per-UUID content stale: the panel-sized
+     * map arrives on the card UUID (and the small card on the map UUID), or the map UUID keeps the
+     * "only navigation is supported on the instrument cluster" placeholder. [setClusterUiShown]
+     * only re-asks the map display. This asks each UUID explicitly once the streams are up, so the
+     * phone redraws the map and the instruction card where they belong. Cheap RTSP writes; the
+     * streams stay up.
+     */
+    fun reassertClusterDisplays(): Boolean {
+        var ok = true
+        config.cluster?.initialUrl?.let { url ->
+            ok = sendCommand(mapOf("type" to "showUI", "params" to mapOf("uuid" to AirPlayInfoPlist.ALT_UUID, "url" to url))) &&
+                sendCommand(mapOf("type" to "forceKeyFrame", "params" to mapOf("uuid" to AirPlayInfoPlist.ALT_UUID))) && ok
+        }
+        config.clusterCard?.initialUrl?.let { url ->
+            ok = sendCommand(mapOf("type" to "showUI", "params" to mapOf("uuid" to AirPlayInfoPlist.CARD_UUID, "url" to url))) &&
+                sendCommand(mapOf("type" to "forceKeyFrame", "params" to mapOf("uuid" to AirPlayInfoPlist.CARD_UUID))) && ok
+        }
+        return ok
+    }
+
+    /**
+     * Asks for an IDR on the instruction-card stream without re-sending showUI.
+     *
+     * The diagnostic recorder needs a keyframe as its first sample, but showUI makes iOS
+     * re-render the card page and can replace it with the "only the navigation page..." page.
+     * forceKeyFrame alone gives the IDR without touching the page.
+     */
+    fun forceCardKeyFrame(): Boolean =
+        sendCommand(
+            mapOf(
+                "type" to "forceKeyFrame",
+                "params" to mapOf("uuid" to AirPlayInfoPlist.CARD_UUID),
+            ),
+        )
+
+    /** After surfaces are swapped: IDR on both streams, still without re-sending showUI. */
+    fun forceClusterKeyFrames(): Boolean =
+        sendCommand(
+            mapOf(
+                "type" to "forceKeyFrame",
+                "params" to mapOf("uuid" to AirPlayInfoPlist.ALT_UUID),
+            ),
+        ) && sendCommand(
+            mapOf(
+                "type" to "forceKeyFrame",
+                "params" to mapOf("uuid" to AirPlayInfoPlist.CARD_UUID),
+            ),
+        )
 
     fun sendCommand(command: Map<String, Any?>): Boolean = synchronized(eventWriteLock) {
         sendCommandLocked(command)
@@ -644,6 +703,9 @@ class AirPlaySession(
         debugLog("airplay command type=$type keys=${params.keys.sorted()}")
         if (type == "modesChanged") {
             debugLog("airplay modesChanged detail=${compact(params)}")
+        }
+        if (type == "suggestUI") {
+            debugLog("airplay suggestUI urls=${params["urls"]}")
         }
         val streamId = request.headers["x-apple-streamid"]?.toLongOrNull()
         val data = params["data"] as? ByteArray

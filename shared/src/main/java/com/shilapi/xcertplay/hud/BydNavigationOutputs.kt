@@ -171,6 +171,9 @@ object BydNavigationOutputs {
         val change = synchronized(overlayLock) { overlayRoute.accept(frame.messageId, frame.payload) }
         if (change != BydHudRouteChange.NONE) {
             refreshTurnOverlay()
+            // 0x5201 selects CurrentLaneGuidanceIndex; the matching 0x5204 may have arrived
+            // just before it, so the lane overlay must be republished on route updates too.
+            refreshLaneOverlay()
             // The route state (0x5201) is what "导航时自动切换仪表视图" reacts to. The transition
             // is the event: no polling, no one-second tick.
             notifyNavigationStateIfChanged()

@@ -607,6 +607,39 @@ class CarPlayController(
         return sent
     }
 
+    /**
+     * Re-asserts the map and the instruction card with their own URLs once their streams are up.
+     *
+     * A quick reconnect can leave the iPhone showing the map on the card UUID, the card on the map
+     * UUID, or the "only navigation is supported on the instrument cluster" placeholder. This
+     * sends showUI + forceKeyFrame for both UUIDs; the de-duplicating [applyClusterUi] state is
+     * reset so later calls behave normally.
+     */
+    fun reassertClusterDisplays(reason: String): Boolean {
+        val session = activeSession ?: return false
+        if (session.clusterStream <= 0) return false
+        val sent = session.reassertClusterDisplays()
+        debugLog("Cluster displays reasserted ($reason) sent=$sent")
+        if (sent) synchronized(clusterUiLock) { clusterUiShown = true }
+        return sent
+    }
+
+    /** Diagnostic: IDR on the card stream only; deliberately does not send showUI. */
+    fun forceCardKeyFrame(reason: String): Boolean {
+        val session = activeSession ?: return false
+        val sent = session.forceCardKeyFrame()
+        debugLog("Cluster card keyframe requested ($reason) sent=$sent")
+        return sent
+    }
+
+    /** After a 111/112 surface swap: force IDRs without re-selecting the pages. */
+    fun forceClusterKeyFrames(reason: String): Boolean {
+        val session = activeSession ?: return false
+        val sent = session.forceClusterKeyFrames()
+        debugLog("Cluster keyframes requested ($reason) sent=$sent")
+        return sent
+    }
+
     /** Waits for USB, iAP2, MFi and VPN teardown; intended for a non-main lifecycle thread. */
     fun awaitClosed(timeoutMillis: Long): Boolean {
         require(timeoutMillis >= 0) { "timeoutMillis must not be negative" }
@@ -1438,6 +1471,8 @@ class CarPlayController(
             override fun onVideoFrameRendered(session: AirPlaySession) {
                 if (isStaleWirelessRun(generation) || activeSession !== session) return
                 wirelessConnectionProof.rendered(generation, session)
+                // Upstream #981: the UI may start the cluster output only after this frame.
+                sessionListener.onVideoFrameRendered(session)
             }
 
             override fun onDebugLog(message: String) {

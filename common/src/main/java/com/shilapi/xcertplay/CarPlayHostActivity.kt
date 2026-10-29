@@ -476,8 +476,20 @@ class CarPlayHostActivity : ComponentActivity() {
     private var handshakeResetInProgress = false
     private var startAfterHandshakeReset = false
     private var restartGeneration = 0
+    /** One re-assert per session, after the cluster streams are up (quick-reconnect placeholder). */
+    private var clusterUiReasserted = false
+    /** When the previous AirPlay session ended, to enforce a gap before a quick reconnect. */
+    private var lastSessionEndedAt = 0L
+    /** True while a too-quick reconnect is waiting out [MIN_RECONNECT_GAP_MS]. */
+    private var startDeferred = false
     private var reconnectScheduled = false
     private var sessionLog: SessionLogFile? = null
+    /** Diagnostic card H.264 dump; only alive between a navigation start and its end. */
+    private var cardStreamRecorder: CardStreamRecorder? = null
+    /** Navigation is active, but the card stream/config may not be ready yet. */
+    private var cardRecordingWanted = false
+    private var cardKeyFrameRetries = 0
+    private var cardKeyFrameChecks = 0
     private var settingsGestureHint: TextView? = null
     private var gestureSequenceActive = false
     private var gestureTracking = false
@@ -549,6 +561,8 @@ class CarPlayHostActivity : ComponentActivity() {
     @Volatile private var lastAltStreamSize: Pair<Int, Int>? = null
     /** Last decoded size of stream 112 (the card normally, the map when reversed). */
     @Volatile private var lastCardStreamSize: Pair<Int, Int>? = null
+    /** Last full geometry of stream 111, so the card view can reuse its crop after a swap. */
+    @Volatile private var lastAltGeometry: com.shilapi.xcertplay.media.ScreenStreamGeometry? = null
     /** The start-up channel watcher; the only component allowed to send the activation sequence. */
     private var watcherThread: Thread? = null
     /** Last channel state the watcher sampled. Every swipe decision reads this, not incall. */
@@ -600,7 +614,7 @@ class CarPlayHostActivity : ComponentActivity() {
 
     private var gestureStartX = 0f
     private var gestureStartY = 0f
-    // Press→release trajectory: the action is decided on finger-up from the whole swipe,
+    // Press鈫抮elease trajectory: the action is decided on finger-up from the whole swipe,
     // so a mid-move axis lock is unnecessary and a down-swipe can never fire the
     // horizontal dashboard switch. The finger count at press decides which gesture applies.
     private var gestureStartFingers = 0
@@ -674,6 +688,22 @@ class CarPlayHostActivity : ComponentActivity() {
                 appendLog("Cluster repaint ($reason) sent=$sent")
             }
         }.onFailure { appendLog("Cluster repaint skipped (${it.javaClass.simpleName})") }
+    }
+
+    /**
+     * Re-asserts BOTH cluster UUIDs with their own URLs (showUI + forceKeyFrame).
+     *
+     * The quick disconnect/reconnect path can leave the iPhone showing the map on the card UUID,
+     * the card on the map UUID, or the "only navigation is supported on the instrument cluster"
+     * placeholder on the panel. This runs once per session after the streams come up.
+     */
+    private fun requestClusterReassert(reason: String) {
+        runCatching {
+            repaintExecutor.execute {
+                val sent = runCatching { controller?.reassertClusterDisplays(reason) }.getOrDefault(false)
+                appendLog("Cluster reassert ($reason) sent=$sent")
+            }
+        }.onFailure { appendLog("Cluster reassert skipped (${it.javaClass.simpleName})") }
     }
 
     private val checkVideoFreeze = object : Runnable {
@@ -1099,7 +1129,7 @@ class CarPlayHostActivity : ComponentActivity() {
             maybeStartCarPlay()
         } else if (consent.resolveActivity(packageManager) == null) {
             // This head-unit ROM has no AOSP VPN consent dialog (com.android.vpndialogs is
-            // absent — launch throws ActivityNotFoundException). There is nothing to show, so
+            // absent 鈥?launch throws ActivityNotFoundException). There is nothing to show, so
             // attempt the wired path directly: a slimmed ROM that drops the dialog usually
             // does not enforce consent either. Any rejection surfaces as AttachResult.Failed.
             appendLog("Startup: VPN consent dialog unavailable on this ROM, attempting wired path directly")
@@ -1137,7 +1167,7 @@ class CarPlayHostActivity : ComponentActivity() {
                         // The dialog component exists per resolveActivity but its class is missing on
                         // this ROM (launch throws ActivityNotFoundException). A ROM that drops the
                         // dialog usually does not enforce consent either, so attempt the wired path
-                        // directly — same fallback as the resolveActivity==null branch. Any rejection
+                        // directly 鈥?same fallback as the resolveActivity==null branch. Any rejection
                         // surfaces as AttachResult.Failed, never a crash.
                         awaitingVpnConsent = false
                         vpnReady = true
@@ -1308,7 +1338,7 @@ class CarPlayHostActivity : ComponentActivity() {
                 clusterDisplayListenerRegistered = true
             }
         }
-        // Any settings save (card dx/dy, content-top, left-rail crop, dashboard rect…) must
+        // Any settings save (card dx/dy, content-top, left-rail crop, dashboard rect鈥? must
         // redraw the live dashboard immediately: refresh the card overlays AND re-apply the
         // TextureView crop transform. The crop must NOT reconnect (re-activating the 111 nav
         // stream would make the head unit announce "全屏导航已开启", which the driver rejected).
@@ -1340,6 +1370,21 @@ class CarPlayHostActivity : ComponentActivity() {
             mainHandler.post { onNavigationStateEvent(navigating) }
         }
         com.shilapi.xcertplay.hud.BydNavigationOutputs.setSongListener(clusterSongListener)
+        // Lane guidance (0x5204) is drawn under our own turn card; it is empty until the iPhone
+        // sends a lane list, and null hides the strip.
+        com.shilapi.xcertplay.hud.BydNavigationOutputs.setLaneOverlayListener { lanes ->
+            mainHandler.post {
+                clusterPresentation?.setLaneGuidance(lanes)
+                appendLog(
+                    "Lane: " + (lanes?.lanes?.joinToString(" | ") {
+                        "#${it.position} st=${it.status} ang=${it.angles.joinToString("/")} " +
+                            "hi=${it.highlight ?: "-"}"
+                    } ?: "-") +
+                        " preferred=${lanes?.currentLane ?: -1} event=${lanes?.eventIndex ?: -1}" +
+                        " showing=${lanes?.showing ?: false}",
+                )
+            }
+        }
         com.shilapi.xcertplay.hud.BydNavigationOutputs.routeTraceListener = routeTraceListener
         mainHandler.removeCallbacks(refreshTurnOverlay)
         mainHandler.post(refreshTurnOverlay)
@@ -1444,8 +1489,10 @@ class CarPlayHostActivity : ComponentActivity() {
             { surface -> runOnUiThread { onClusterMirrorSurface(surface) } },
             { surface -> runOnUiThread { onClusterNavSurface(surface) } },
             { surface -> runOnUiThread { onClusterCardSurface(surface) } },
+            onCardDebug = { appendLog(it) },
             navOnlyCards = true,
             flyCard = CarPlayClusterDisplay.isFlyCard(AirPlayPersistence.loadClusterContent(this)),
+            customCards = AirPlayPersistence.loadClusterContent(this) == CarPlayClusterDisplay.Content.MAP_WITH_CUSTOM_CARD,
         )
         // The system dismisses a presentation when its display goes away; allow a new one on resume.
         presentation.setOnDismissListener {
@@ -1468,7 +1515,7 @@ class CarPlayHostActivity : ComponentActivity() {
             presentation.setStreamActive(clusterStreamActive())
             // A window built while the card stream was already up must not wait for the next
             // stream event, which only comes on a transition.
-            presentation.setCardStreamActive(activeScreenStreamTypes.contains(SCREEN_TYPE_ALT_CARD))
+            presentation.setCardStreamActive(activeScreenStreamTypes.contains(SCREEN_TYPE_ALT_CARD) && !cardCaptureOnlyMode())
             // Invisible until the head unit is really in projection mode. Before activation incall
             // maps the ext-screen to a small placeholder box at the right of the panel, and this
             // window is created 4-5 s before the open sequence (measured 2026-10-18 14:18: window
@@ -1523,8 +1570,10 @@ class CarPlayHostActivity : ComponentActivity() {
             { surface -> runOnUiThread { onClusterMirrorSurface(surface) } },
             { surface -> runOnUiThread { onClusterNavSurface(surface) } },
             { surface -> runOnUiThread { onClusterCardSurface(surface) } },
+            onCardDebug = { appendLog(it) },
             navOnlyCards = true,
             flyCard = CarPlayClusterDisplay.isFlyCard(AirPlayPersistence.loadClusterContent(this)),
+            customCards = AirPlayPersistence.loadClusterContent(this) == CarPlayClusterDisplay.Content.MAP_WITH_CUSTOM_CARD,
         )
         presentation.setOnDismissListener {
             if (clusterPresentation === presentation) {
@@ -1543,7 +1592,7 @@ class CarPlayHostActivity : ComponentActivity() {
             if (AirPlayPersistence.loadClusterAutoNavMode(this)) autoNavModePending = true
             presentation.setMode(currentClusterMirrorMode())
             presentation.setStreamActive(clusterStreamActive())
-            presentation.setCardStreamActive(activeScreenStreamTypes.contains(SCREEN_TYPE_ALT_CARD))
+            presentation.setCardStreamActive(activeScreenStreamTypes.contains(SCREEN_TYPE_ALT_CARD) && !cardCaptureOnlyMode())
             presentation.setMapVisible(false)
             applyClusterTurnOverlay()
             appendLog("Cluster map: quiet window shown display=${display.displayId}")
@@ -1566,6 +1615,8 @@ class CarPlayHostActivity : ComponentActivity() {
                 theme,
                 { surface -> runOnUiThread { if (clusterPresentation === presentation) onClusterSurface(surface) } },
                 { _ -> /* DiLink 5.1 single TextureView: no nav-only surface */ },
+                onCardDebug = { appendLog(it) },
+                customCards = AirPlayPersistence.loadClusterContent(this) == CarPlayClusterDisplay.Content.MAP_WITH_CUSTOM_CARD,
             )
             presentation.setOnDismissListener {
                 if (clusterLayers[fullMap] === presentation) clusterLayers.remove(fullMap)
@@ -1785,7 +1836,7 @@ class CarPlayHostActivity : ComponentActivity() {
         // Clearing first would destroy the decoder and can leave stream 111 waiting for an IDR.
         if (force) {
             // Hot mode switch (mirror <-> navigation stream): release the previous binding
-            // first, otherwise the cluster window keeps showing the old decoder output —
+            // first, otherwise the cluster window keeps showing the old decoder output 鈥?
             // e.g. mirror stream 110 still displayed while pos=0 (navigation) was requested.
             clusterSurface?.let { old ->
                 sink?.clearSurface(SCREEN_TYPE_ALT, old)
@@ -1881,11 +1932,17 @@ class CarPlayHostActivity : ComponentActivity() {
      *
      * Called on a media thread; window work is posted to the UI thread downstream.
      */
-    private fun onClusterStreamOutputSize(type: Int, width: Int, height: Int) {
+    private fun onClusterStreamOutputSize(
+        type: Int,
+        geometry: com.shilapi.xcertplay.media.ScreenStreamGeometry,
+    ) {
+        val width = geometry.cropWidth
+        val height = geometry.cropHeight
         if (type == SCREEN_TYPE_ALT) {
             lastAltStreamSize = width to height
+            lastAltGeometry = geometry
             if (clusterStreamsSwapped) {
-                onClusterCardVideoSize(width, height)
+                onClusterCardVideoSize(geometry)
             } else {
                 maybeSwapClusterStreams()
             }
@@ -1900,7 +1957,7 @@ class CarPlayHostActivity : ComponentActivity() {
             // Transient/default size until the real card config lands; never draw it full-panel.
             return
         }
-        onClusterCardVideoSize(width, height)
+        onClusterCardVideoSize(geometry)
     }
 
     /** Swaps only when one stream is panel-sized and the other is card-sized. */
@@ -1914,6 +1971,9 @@ class CarPlayHostActivity : ComponentActivity() {
             swapClusterStreams(card.first, card.second)
         }
     }
+
+    /** The 08:28 baseline has no capture-only path; the diagnostic experiment is retired. */
+    private fun cardCaptureOnlyMode(): Boolean = false
 
     /** True when a decoded stream is large enough to be the panel itself, not the card canvas. */
     private fun looksLikePanelSize(width: Int, height: Int): Boolean {
@@ -1938,9 +1998,15 @@ class CarPlayHostActivity : ComponentActivity() {
             val card = cardClusterSurface
             if (nav != null) sink?.setSurface(SCREEN_TYPE_ALT_CARD, nav)
             if (card != null) sink?.setSurface(SCREEN_TYPE_ALT, card)
+            clusterUiReasserted = false
+            // New surfaces wait for a keyframe; without one the swapped views stay black until
+            // navigation happens to produce an IDR. Force both without touching the card page.
+            mainHandler.postDelayed({ controller?.forceClusterKeyFrames("swap") }, 200L)
         }
-        lastAltStreamSize?.let { (width, height) ->
-            if (!looksLikePanelSize(width, height)) onClusterCardVideoSize(width, height)
+        lastAltGeometry?.let { geometry ->
+            if (!looksLikePanelSize(geometry.cropWidth, geometry.cropHeight)) {
+                onClusterCardVideoSize(geometry)
+            }
         }
     }
 
@@ -1949,11 +2015,14 @@ class CarPlayHostActivity : ComponentActivity() {
      * Delivered on a media thread; the presentation window is re-laid out on the UI thread so the
      * FLY_CARD window is always exactly the size of the picture the phone sends.
      */
-    private fun onClusterCardVideoSize(width: Int, height: Int) {
-        appendLog("Cluster card stream size ${width}x$height")
+    private fun onClusterCardVideoSize(geometry: com.shilapi.xcertplay.media.ScreenStreamGeometry) {
+        appendLog(
+            "Cluster card stream ${geometry.streamWidth}x${geometry.streamHeight} " +
+                "crop=${geometry.cropLeft},${geometry.cropTop} ${geometry.cropWidth}x${geometry.cropHeight}",
+        )
         runOnUiThread {
-            clusterPresentation?.setCardVideoSize(width, height)
-            clusterLayers.values.forEach { it.setCardVideoSize(width, height) }
+            clusterPresentation?.setCardVideoGeometry(geometry)
+            clusterLayers.values.forEach { it.setCardVideoGeometry(geometry) }
             // What the driver actually sees: the laid-out frame, not just the stream size.
             mainHandler.postDelayed({
                 val presentation = clusterPresentation ?: return@postDelayed
@@ -2260,6 +2329,7 @@ class CarPlayHostActivity : ComponentActivity() {
         AirPlayPersistence.overlaySettingsListener = null
         com.shilapi.xcertplay.hud.BydNavigationOutputs.setTurnOverlayListener(null)
         com.shilapi.xcertplay.hud.BydNavigationOutputs.setSongListener(null)
+        com.shilapi.xcertplay.hud.BydNavigationOutputs.setLaneOverlayListener(null)
         clusterMonitor?.stop()
         mainHandler.removeCallbacks(hideIdleCenterMap)
         homeMonitor?.stop()
@@ -2292,6 +2362,7 @@ class CarPlayHostActivity : ComponentActivity() {
         CarPlayBackgroundSession.setDockAction(null)
         pictureBinding?.close()
         pictureBinding = null
+        stopCardH264Recording("activity destroyed")
         sessionLog?.append("Activity destroyed")
         sessionLog?.close()
         sessionLog = null
@@ -4308,6 +4379,24 @@ class CarPlayHostActivity : ComponentActivity() {
         )
         appendLog(requestSummary)
         appendLog(effectiveSummary)
+        // The instruction-card display is advertised ONLY in FLY_CARD mode. Declaring the panel
+        // (a full 1920x720) made the iPhone stream a full-screen card that covered the dashboard
+        // (field 2026-10-26 18:52: stream 1920x720, drawn 1920x720 at 0,0), so it stays a
+        // dedicated small display. Its canvas is 960x480 (2x the native 480x200) so iOS 27.2 draws
+        // normal type instead of compressing it into a tiny 480x200 card; the real content
+        // rectangle comes back as the codec output crop and the window shows only that crop
+        // (cardWindowParams), so the card renders at a readable size.
+        val cardDisplay = if (CarPlayClusterDisplay.isFlyCard(AirPlayPersistence.loadClusterContent(this))) {
+            CarPlayClusterDisplay.cardConfig().also {
+                appendLog(
+                    "Cluster card display: canvas=${it.widthPixels}x${it.heightPixels} " +
+                        "physical=${it.widthPhysicalMm}x${it.heightPhysicalMm}mm " +
+                        "url=${it.initialUrl}",
+                )
+            }
+        } else {
+            null
+        }
         return AirPlayConfig(
             deviceName = "DiPlay",
             deviceId = DiPlayBootstrap.deviceId(airPlayIdentity),
@@ -4315,15 +4404,7 @@ class CarPlayHostActivity : ComponentActivity() {
             sourceVersion = "950.7.1",
             main = declared,
             cluster = clusterDisplayConfig(),
-            // The instruction-card display is advertised ONLY in FLY_CARD mode. Back to the small
-            // card canvas: declaring the panel made iPhone stream a full-screen card and the
-            // window covered the dashboard (field 2026-10-26 18:52: stream 1920x720, drawn
-            // 1920x720 at 0,0). iPhone does NOT pick a smaller size on its own.
-            clusterCard = if (CarPlayClusterDisplay.isFlyCard(AirPlayPersistence.loadClusterContent(this))) {
-                CarPlayClusterDisplay.cardConfig()
-            } else {
-                null
-            },
+            clusterCard = cardDisplay,
             rightHandDrive = rightHandDrive,
             hevc = hevcEnabled,
             microphone = microphoneAvailable,
@@ -4500,6 +4581,8 @@ class CarPlayHostActivity : ComponentActivity() {
     ): AndroidMediaSink {
         // Capture this session's log: late decoder shutdown must not write into a new session.
         val diagnosticLog = sessionLog
+        // 08:28 baseline: no capture-only card stream; normal decoding and card window.
+        val cardCaptureOnly = false
         return AndroidMediaSink(
             surface = null,
             videoWidth = videoWidth,
@@ -4507,6 +4590,18 @@ class CarPlayHostActivity : ComponentActivity() {
             preferSoftwareHevcDecoder = hevcSoftwareDecoderEnabled,
             advancedAudioChannelMapping = advancedAudioChannelMapping,
             audioFocusEnabled = AirPlayPersistence.loadAudioFocusEnabled(this),
+            // Diagnostic tap: only the instruction-card stream is written; the recorder is
+            // non-null only between navigation start and end.
+            onVideoConfigAnnexB = { type, bytes ->
+                if (type == SCREEN_TYPE_ALT_CARD) {
+                    cardStreamRecorder?.writeConfig(bytes)
+                    if (cardRecordingWanted) mainHandler.post { startCardRecordingIfReady() }
+                }
+            },
+            onVideoFrameAnnexB = { type, bytes ->
+                if (type == SCREEN_TYPE_ALT_CARD) cardStreamRecorder?.writeFrame(bytes)
+            },
+            captureOnlyTypes = if (cardCaptureOnly) setOf(SCREEN_TYPE_ALT_CARD) else emptySet(),
             mediaChannel = AirPlayPersistence.loadMediaAudioChannel(this),
             navigationChannel = AirPlayPersistence.loadNavigationAudioChannel(this),
             navDuckPercent = { AirPlayPersistence.loadNavDuckPercent(this) },
@@ -4515,8 +4610,8 @@ class CarPlayHostActivity : ComponentActivity() {
             onScreenStreamActiveChanged = { type, active ->
                 onScreenStreamStateChanged(controllerGeneration, type, active)
             },
-            onScreenStreamOutputSize = { type, width, height ->
-                onClusterStreamOutputSize(type, width, height)
+            onScreenStreamOutputSize = { type, geometry ->
+                onClusterStreamOutputSize(type, geometry)
             },
             mediaBufferMillis = AirPlayPersistence.loadMediaBufferMillis(this),
             onAudioDiagnostic = { message ->
@@ -4842,6 +4937,17 @@ class CarPlayHostActivity : ComponentActivity() {
                 }
             }
 
+            override fun onVideoFrameRendered(session: AirPlaySession) {
+                runOnUiThread {
+                    if (controllerGeneration != restartGeneration || activeAirPlaySession !== session) {
+                        return@runOnUiThread
+                    }
+                    // Upstream #981: the main picture is up, so the cluster window can be built.
+                    appendLog("Main video first frame rendered; cluster output may start")
+                    ensureClusterPresentation()
+                }
+            }
+
             override fun onSessionActive(session: AirPlaySession) {
                 runOnUiThread {
                     if (controllerGeneration != restartGeneration) {
@@ -4887,8 +4993,10 @@ class CarPlayHostActivity : ComponentActivity() {
 
             override fun onSessionEnded(session: AirPlaySession) {
                 runOnUiThread {
+                    stopCardH264Recording("session ended")
                     if (activeAirPlaySession === session) activeAirPlaySession = null
                     CarPlayBackgroundSession.active = false
+                    lastSessionEndedAt = SystemClock.elapsedRealtime()
                     // A new session is a new connection: allow auto-project to fire again after
                     // any reconnect. restartCarPlay() also resets these, but some reconnect paths
                     // early-return before that reset (handshakeReset/menuOpen), which would leave
@@ -5061,8 +5169,8 @@ class CarPlayHostActivity : ComponentActivity() {
         snapshot.sink.setScreenStreamActiveChangedListener { type, active ->
             onScreenStreamStateChanged(restartGeneration, type, active)
         }
-        snapshot.sink.setScreenStreamOutputSizeListener { type, width, height ->
-            onClusterStreamOutputSize(type, width, height)
+        snapshot.sink.setScreenStreamOutputSizeListener { type, geometry ->
+            onClusterStreamOutputSize(type, geometry)
         }
         currentSurface?.let(::attachSurface)
         val serviceReused = snapshot.controller.hasActiveAirPlayAttachment()
@@ -5087,6 +5195,29 @@ class CarPlayHostActivity : ComponentActivity() {
     private fun startCarPlay(size: DisplaySize) {
         if (CarPlayBackgroundSession.hasSession() && !CarPlayBackgroundSession.isOwner(this)) return
         if (shuttingDown.get() || menuOpen || handshakeResetInProgress || controller != null) return
+        // A reconnect a few seconds after a drop leaves the iPhone's cluster page stale (the
+        // "only the navigation page is supported on the instrument cluster" page, rendered either
+        // in the card window or across the panel). Waiting at least MIN_RECONNECT_GAP_MS after the
+        // previous session ended avoids it; field test: 3 s reproduced, 10-20 s did not.
+        val sinceEnd = if (lastSessionEndedAt == 0L) Long.MAX_VALUE
+        else SystemClock.elapsedRealtime() - lastSessionEndedAt
+        if (sinceEnd in 0 until MIN_RECONNECT_GAP_MS) {
+            if (!startDeferred) {
+                startDeferred = true
+                val waitMs = MIN_RECONNECT_GAP_MS - sinceEnd
+                appendLog(
+                    "Quick reconnect: waiting ${waitMs}ms before the new session " +
+                        "(last one ended ${sinceEnd}ms ago)",
+                )
+                mainHandler.postDelayed({
+                    startDeferred = false
+                    startCarPlay(size)
+                }, waitMs)
+            }
+            return
+        }
+        startDeferred = false
+        clusterUiReasserted = false
         val controllerGeneration = restartGeneration
         val config = createRuntimeConfig()
         val airPlayConfig = createAirPlayConfig(size)
@@ -5664,9 +5795,9 @@ class CarPlayHostActivity : ComponentActivity() {
     }
 
     /**
-     * End-of-gesture decision from the whole press→release trajectory:
-     * - horizontal swipe (dominant X, >= distance, |dy| within slop) → dashboard mode switch
-     * - downward swipe (dominant Y, >= distance, finger count matches the settings choice) → DiPlay settings
+     * End-of-gesture decision from the whole press鈫抮elease trajectory:
+     * - horizontal swipe (dominant X, >= distance, |dy| within slop) 鈫?dashboard mode switch
+     * - downward swipe (dominant Y, >= distance, finger count matches the settings choice) 鈫?DiPlay settings
      * Nothing fires mid-move, so a down-swipe can never collide with the horizontal switch.
      */
     private fun finishGestureIfNeeded(): Boolean {
@@ -5949,6 +6080,85 @@ class CarPlayHostActivity : ComponentActivity() {
         mainHandler.postDelayed(navStateConfirmation, NAV_STATE_CONFIRM_MS)
     }
 
+    /**
+     * Diagnostic (field request 2026-10-29): on each navigation start, dump the instruction-card
+     * stream as raw H.264 to the log folder. Only FLY_CARD has a card display; the toggle is off
+     * by default. The recorder starts before the first card frame, so its VideoConfig (SPS/PPS)
+     * can be written as the file header.
+     */
+    private fun maybeStartCardH264Recording() {
+        if (!AirPlayPersistence.loadClusterCardDiagnostics(this)) return
+        if (AirPlayPersistence.loadClusterContent(this) != CarPlayClusterDisplay.Content.FLY_CARD) return
+        cardRecordingWanted = true
+        startCardRecordingIfReady()
+    }
+
+    /**
+     * Starts only once the card stream is active AND its VideoConfig (SPS/PPS) is known.
+     *
+     * Starting earlier produced an IDR-less or header-less file: forceKeyFrame had no stream to
+     * act on, or the first samples arrived before SPS/PPS. The navigation start is remembered in
+     * [cardRecordingWanted] and this is retried from the stream/config callbacks.
+     */
+    private fun startCardRecordingIfReady() {
+        if (!cardRecordingWanted) return
+        if (cardStreamRecorder?.currentFile != null) return
+        if (SCREEN_TYPE_ALT_CARD !in activeScreenStreamTypes) return
+        val config = sink?.latestVideoConfig(SCREEN_TYPE_ALT_CARD) ?: return
+        if (config.second.isEmpty()) {
+            appendLog("Card capture: waiting for non-empty SPS/PPS")
+            return
+        }
+        val recorder = CardStreamRecorder(File(filesDir, "logs"))
+        val file = recorder.start(config.first, config.second) ?: return
+        cardStreamRecorder = recorder
+        cardKeyFrameRetries = 0
+        cardKeyFrameChecks = 0
+        appendLog("Card H.264 capture: ${file.absolutePath} configBytes=${config.second.size}")
+        val sent = controller?.forceCardKeyFrame("card diagnostics") ?: false
+        appendLog("Card keyframe requested sent=$sent")
+        if (!sent) scheduleCardKeyFrameRetry() else scheduleCardKeyFrameCheck()
+    }
+
+    /** A successful command does not prove an IDR arrived; close the loop on the actual file. */
+    private fun scheduleCardKeyFrameCheck() {
+        if (cardKeyFrameChecks >= 3) return
+        cardKeyFrameChecks++
+        mainHandler.postDelayed({
+            val recorder = cardStreamRecorder ?: return@postDelayed
+            if (!cardRecordingWanted || recorder.sawKeyFrame) return@postDelayed
+            appendLog("Card keyframe still missing; requesting again (${cardKeyFrameChecks}/3)")
+            controller?.forceCardKeyFrame("card diagnostics verify $cardKeyFrameChecks")
+            scheduleCardKeyFrameCheck()
+        }, 800L)
+    }
+
+    private fun scheduleCardKeyFrameRetry() {
+        if (cardKeyFrameRetries >= 3) return
+        cardKeyFrameRetries++
+        mainHandler.postDelayed({
+            if (!cardRecordingWanted || cardStreamRecorder?.currentFile == null) return@postDelayed
+            val sent = controller?.forceCardKeyFrame("card diagnostics retry $cardKeyFrameRetries") ?: false
+            appendLog("Card keyframe retry $cardKeyFrameRetries sent=$sent")
+            if (!sent) scheduleCardKeyFrameRetry() else scheduleCardKeyFrameCheck()
+        }, 500L)
+    }
+
+    private fun stopCardH264Recording(reason: String) {
+        cardRecordingWanted = false
+        cardKeyFrameRetries = 0
+        cardKeyFrameChecks = 0
+        val recorder = cardStreamRecorder ?: return
+        cardStreamRecorder = null
+        val file = recorder.stop()
+        if (file != null) {
+            appendLog(
+                "Card H.264 saved: ${file.absolutePath} bytes=${file.length()} " +
+                    "frames=${recorder.frameCount} keyframe=${recorder.sawKeyFrame} reason=$reason",
+            )
+        }
+    }
+
     private val navStateConfirmation = Runnable {
         val navigating = pendingNavigationState ?: return@Runnable
         if (shuttingDown.get() || isFinishing || isDestroyed || handshakeResetInProgress || menuOpen) {
@@ -5960,6 +6170,7 @@ class CarPlayHostActivity : ComponentActivity() {
             appendLog("Nav auto: 确认窗口内状态又变了，忽略这次切换 navigating=$navigating")
             return@Runnable
         }
+        if (!navigating) stopCardH264Recording("navigation ended")
         applyAutoNavState(navigating)
     }
 
@@ -6034,7 +6245,7 @@ class CarPlayHostActivity : ComponentActivity() {
 
     /**
      * Three-finger left/right swipe is a forward/backward position machine like CarPlay boxes:
-     * left advances the dashboard mode (initial → navigation stream → whole-interface mirror),
+     * left advances the dashboard mode (initial 鈫?navigation stream 鈫?whole-interface mirror),
      * right goes back; past the ends nothing happens, and before any left swipe a right swipe
      * has no effect. The switch is hot: only the sink binding changes, the session and stream
      * 111 stay up, so there is no reconnect.
@@ -6618,7 +6829,7 @@ class CarPlayHostActivity : ComponentActivity() {
             // confirmation callback already ran while the flag was still set and skipped it.
             userHandedBackProjection = false
             lastKnownProjecting = true
-            appendLog("Cluster: 投影状态自行恢复，撤销归还判定")
+            appendLog("Cluster: 鎶曞奖鐘舵€佽嚜琛屾仮澶嶏紝鎾ら攢褰掕繕鍒ゅ畾")
             onClusterProjectionConfirmed()
             return@Runnable
         }
@@ -6811,8 +7022,11 @@ class CarPlayHostActivity : ComponentActivity() {
             if (type == SCREEN_TYPE_ALT_CARD) {
                 // FLY_CARD's instruction-card window exists only while this stream is really up;
                 // the presentation destroys it when the stream goes away (no idle black slab).
-                Log.i(ClusterMapPresentation.TAG, "cluster card stream active=$active")
-                clusterPresentation?.setCardStreamActive(active)
+                // Diagnostic capture-only never builds it: there is no decoder and no picture.
+                val showCard = active && !cardCaptureOnlyMode()
+                Log.i(ClusterMapPresentation.TAG, "cluster card stream active=$active show=$showCard")
+                clusterPresentation?.setCardStreamActive(showCard)
+                if (active) startCardRecordingIfReady()
             }
             if (type == SCREEN_TYPE_ALT || (currentClusterMirrorMode() && type == SCREEN_TYPE_MAIN)) {
                 Log.i(ClusterMapPresentation.TAG, "cluster stream active=$active")
@@ -7007,6 +7221,8 @@ class CarPlayHostActivity : ComponentActivity() {
         const val DISPLAY_CHANGE_DEBOUNCE_MILLIS = 500L
         const val CONFIGURATION_POLL_INTERVAL_MILLIS = 2_000L
         const val RECONNECT_DELAY_MILLIS = 2_000L
+        /** Minimum gap after a session ends before a new one starts (quick-reconnect placeholder). */
+        const val MIN_RECONNECT_GAP_MS = 10_000L
         const val IAP_TUNNEL_RECONNECT_DELAY_MILLIS = 15_000L
         const val CONTROLLER_CLOSE_TIMEOUT_MILLIS = 4_000L
         /** How long the panel waits for AirPlay before naming the iPhone-side fix. */
@@ -7017,6 +7233,8 @@ class CarPlayHostActivity : ComponentActivity() {
         const val GESTURE_MIN_FINGERS = 3
         /**
          * How long the volume keys stay on the guidance stream after a prompt starts. A prompt is
+        /** Minimum gap after a session ends; below it the iPhone keeps its stale cluster page. */
+        const val MIN_RECONNECT_GAP_MS = 10_000L
          * a few seconds; the navigation stream on this head unit can stay open much longer, and
          * routing the keys for that whole time leaves the driver unable to change the music.
          */

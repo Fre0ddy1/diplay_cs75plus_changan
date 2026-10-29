@@ -207,6 +207,12 @@ object AirPlayInfoPlist {
             "heightPhysical" to heightPhysical,
             "features" to (display.features ?: (DISPLAY_FEATURE_HIGH_FIDELITY_TOUCH or DISPLAY_FEATURE_KNOBS)),
             "primaryInputDevice" to display.primaryInputDevice,
+            // Upstream 0.2.22 declares these four on every display (0 = the iPhone decides).
+            // Without them the phone may not apply the car's day/night state to this screen.
+            "uiAppearanceMode" to 0,
+            "uiAppearanceSetting" to 0,
+            "mapAppearanceMode" to 0,
+            "mapAppearanceSetting" to 0,
         )
 
         entry["viewAreas"] = display.viewAreas?.takeIf { it.isNotEmpty() }

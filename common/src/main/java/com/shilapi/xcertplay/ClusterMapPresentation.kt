@@ -15,6 +15,7 @@ import android.graphics.SurfaceTexture
 import android.graphics.drawable.ColorDrawable
 import android.view.WindowManager
 import android.graphics.Point
+import android.graphics.Bitmap
 import android.hardware.display.DisplayManager
 import android.os.Bundle
 import android.util.Log
@@ -32,6 +33,7 @@ import com.shilapi.xcertplay.airplay.CarPlayClusterDisplay
 import com.shilapi.xcertplay.host.R
 import com.shilapi.xcertplay.hud.BydLaneGuidance
 import com.shilapi.xcertplay.hud.ClusterTurnGuidance
+import com.shilapi.xcertplay.media.ScreenStreamGeometry
 
 /**
  * Shows CarPlay's instrument-cluster stream on a BYD cluster projection display.
@@ -51,6 +53,7 @@ internal class ClusterMapPresentation(
      * host; null on every other mode, where the card view is never created.
      */
     private val onCardSurface: (Surface?) -> Unit = {},
+    private val onCardDebug: (String) -> Unit = {},
     private val navOnlyCards: Boolean = false,
     /**
      * The "pure Apple cluster" branch (2026-10-24): the 111 stream is requested with the
@@ -60,6 +63,8 @@ internal class ClusterMapPresentation(
      * Selected via the "cluster picture source" setting (Content.FLY_CARD).
      */
     private val flyCard: Boolean = false,
+    /** Only MAP_WITH_CUSTOM_CARD owns the locally drawn cards. */
+    private val customCards: Boolean = true,
 ) : Presentation(context, display) {
     private var waitingLabel: TextView? = null
     /**
@@ -77,6 +82,8 @@ internal class ClusterMapPresentation(
     private var genericTextureView: TextureView? = null
     private var navTextureView: TextureView? = null
     private var cardTextureView: TextureView? = null
+    /** Clips the full decoded buffer to the phone-reported crop rectangle. */
+    private var cardContainer: FrameLayout? = null
     /** Root the card window is attached to while it exists (FLY_CARD only). */
     private var rootView: FrameLayout? = null
     /** The instruction-card stream is up right now (the phone is sending frames). */
@@ -84,6 +91,13 @@ internal class ClusterMapPresentation(
     /** Current decoded picture size of the instruction-card stream, in its own pixels. */
     private var cardVideoWidth = CarPlayClusterDisplay.CARD_WIDTH_PIXELS
     private var cardVideoHeight = CarPlayClusterDisplay.CARD_HEIGHT_PIXELS
+    /** Full decoded buffer; the window shows only [cardCropWidth] x [cardCropHeight]. */
+    private var cardStreamWidth = CarPlayClusterDisplay.CARD_WIDTH_PIXELS
+    private var cardStreamHeight = CarPlayClusterDisplay.CARD_HEIGHT_PIXELS
+    private var cardCropLeft = 0
+    private var cardCropTop = 0
+    private var cardCropWidth = CarPlayClusterDisplay.CARD_WIDTH_PIXELS
+    private var cardCropHeight = CarPlayClusterDisplay.CARD_HEIGHT_PIXELS
     /** Panel coordinates the card window was last laid out at, i.e. AFTER the clamp (FLY_CARD). */
     private var cardWindowLeft = CARD_LEFT_PX
     private var cardWindowTop = CARD_TOP_PX
@@ -106,6 +120,8 @@ internal class ClusterMapPresentation(
     /** Last mode requested by the host, kept even while the TextureViews are still being created. */
     private var desiredMirror = AirPlayPersistence.loadClusterMirrorMain(context)
     private var lastTurnGuidance: ClusterTurnGuidance? = null
+    private var lastLanes: BydLaneGuidance? = null
+    private var lastJunction: Bitmap? = null
     private var lastEtaGuidance: ClusterTurnGuidance? = null
 
     // Per-frame cost killers: card show/hide switches and the fronted-card set are cached.
@@ -408,8 +424,8 @@ internal class ClusterMapPresentation(
         // Turn card: nav-only stream only. iOS's own instruction box is the whole picture of the
         // mirror stream, and a second card on top of it was exactly the "glass box" confusion.
         // FLY_CARD never draws this card: Apple's instruction-card WINDOW carries the turns there.
-        if (!flyCard && !mirrorMode && turnCardView == null && turnCardVisibleCache) {
-            turnCardView = ClusterTurnCardView(context).apply { visibility = View.GONE }
+        if (customCards && !mirrorMode && turnCardView == null && turnCardVisibleCache) {
+            turnCardView = ClusterTurnCardView(context, onCardDebug).apply { visibility = View.GONE }
             root.addView(turnCardView, FrameLayout.LayoutParams(-1, -1))
             // A rebuilt card starts at its own defaults, so restore the driver's saved geometry
             // before it can draw.
@@ -420,6 +436,8 @@ internal class ClusterMapPresentation(
             )
             turnCardView?.setBackgroundAlpha(AirPlayPersistence.loadClusterCardAlpha(context, "turn"))
             turnCardView?.setGuidance(lastTurnGuidance)
+            turnCardView?.setLanes(lastLanes)
+            turnCardView?.setJunctionImage(lastJunction)
         }
         // ETA card: both modes (A2). The host feeds setEtaGuidance() in either mode.
         if (etaCardView == null && (cardVisibleCache["eta"] ?: true)) {
@@ -551,11 +569,14 @@ internal class ClusterMapPresentation(
     private fun createCardWindow() {
         val root = rootView ?: return
         if (cardTextureView != null) return
+        val container = FrameLayout(context)
+        container.clipChildren = true
+        container.clipToOutline = true
         val cardView = TextureView(context)
         cardView.surfaceTextureListener = object : TextureView.SurfaceTextureListener {
             override fun onSurfaceTextureAvailable(texture: SurfaceTexture, width: Int, height: Int) {
                 Log.i(TAG, "cluster card surface created")
-                texture.setDefaultBufferSize(cardVideoWidth, cardVideoHeight)
+                texture.setDefaultBufferSize(cardStreamWidth, cardStreamHeight)
                 cardOutputSurface = Surface(texture).also(onCardSurface)
             }
 
@@ -572,20 +593,29 @@ internal class ClusterMapPresentation(
             }
         }
         cardTextureView = cardView
-        // Rounded corners (field request 2026-10-24): the stream itself arrives as a square
-        // rectangle and the driver found that ugly, so the window clips it. Still nothing of ours
-        // is drawn inside the picture - this only shapes its outer edge.
-        cardView.outlineProvider = object : ViewOutlineProvider() {
+        cardContainer = container
+        // The decoded buffer is larger than the card's real content. Lay the full buffer out with
+        // a negative offset inside a container of the crop's size; the container clips the rest.
+        container.addView(
+            cardView,
+            FrameLayout.LayoutParams(cardStreamWidth, cardStreamHeight).apply {
+                leftMargin = -cardCropLeft
+                topMargin = -cardCropTop
+            },
+        )
+        container.outlineProvider = object : ViewOutlineProvider() {
             override fun getOutline(view: View, outline: Outline) {
-                val width = if (view.width > 0) view.width else cardVideoWidth
-                val height = if (view.height > 0) view.height else cardVideoHeight
-                outline.setRoundRect(0, 0, width, height, CARD_CORNER_RADIUS_PX)
+                outline.setRoundRect(0, 0, view.width, view.height, CARD_CORNER_RADIUS_PX)
             }
         }
-        cardView.clipToOutline = true
-        root.addView(cardView, cardWindowParams())
+        root.addView(container, cardWindowParams())
         applyCardWindowVisibility()
-        Log.i(TAG, "cluster card window created ${cardVideoWidth}x$cardVideoHeight at $cardWindowLeft,$cardWindowTop")
+        Log.i(
+            TAG,
+            "cluster card window created buffer=${cardStreamWidth}x$cardStreamHeight " +
+                "crop=${cardCropLeft},${cardCropTop} ${cardCropWidth}x$cardCropHeight " +
+                "at $cardWindowLeft,$cardWindowTop",
+        )
     }
 
     /**
@@ -597,44 +627,64 @@ internal class ClusterMapPresentation(
      */
     private fun applyCardWindowVisibility() {
         if (!flyCard) return
-        cardTextureView?.visibility = if (mirrorMode) View.GONE else View.VISIBLE
+        cardContainer?.visibility = if (mirrorMode) View.GONE else View.VISIBLE
     }
 
     /** Drops the window and its surface; the host releases the decoder with it. */
     private fun destroyCardWindow() {
-        val view = cardTextureView ?: return
+        val container = cardContainer ?: return
+        cardContainer = null
         cardTextureView = null
-        (view.parent as? android.view.ViewGroup)?.removeView(view)
+        (container.parent as? android.view.ViewGroup)?.removeView(container)
         Log.i(TAG, "cluster card window destroyed")
     }
 
     /**
-     * The instruction-card stream reported its real decoded picture size.
+     * The phone-reported decoded buffer and crop rectangle.
      *
-     * The window follows it, 1:1, with no scaling: the card is shown exactly as the phone sends
-     * it. Fires once per codec from the video output format's crop rectangle
-     * (AndroidMediaSink.onScreenStreamOutputSize).
+     * The buffer is not resized; only the crop rectangle is shown, and the card window is sized to
+     * that crop. Fires from the codec's output format (AndroidMediaSink.onScreenStreamOutputSize).
      */
-    fun setCardVideoSize(width: Int, height: Int) {
-        if (width <= 0 || height <= 0) return
-        if (width == cardVideoWidth && height == cardVideoHeight) return
-        cardVideoWidth = width
-        cardVideoHeight = height
-        val view = cardTextureView ?: return
-        view.surfaceTexture?.setDefaultBufferSize(width, height)
-        // A different picture size moves the clamp ceiling as well, so the position is resolved
-        // again from the saved (x, y) instead of reusing the previous layout.
-        view.layoutParams = cardWindowParams()
+    fun setCardVideoGeometry(geometry: ScreenStreamGeometry) {
+        if (geometry.streamWidth <= 0 || geometry.streamHeight <= 0) return
+        if (geometry.cropWidth <= 0 || geometry.cropHeight <= 0) return
+        if (geometry.streamWidth == cardStreamWidth &&
+            geometry.streamHeight == cardStreamHeight &&
+            geometry.cropLeft == cardCropLeft &&
+            geometry.cropTop == cardCropTop &&
+            geometry.cropWidth == cardCropWidth &&
+            geometry.cropHeight == cardCropHeight
+        ) {
+            return
+        }
+        cardStreamWidth = geometry.streamWidth
+        cardStreamHeight = geometry.streamHeight
+        cardCropLeft = geometry.cropLeft
+        cardCropTop = geometry.cropTop
+        cardCropWidth = geometry.cropWidth
+        cardCropHeight = geometry.cropHeight
+        cardVideoWidth = cardCropWidth
+        cardVideoHeight = cardCropHeight
+        val texture = cardTextureView
+        if (texture != null) {
+            texture.surfaceTexture?.setDefaultBufferSize(cardStreamWidth, cardStreamHeight)
+            texture.layoutParams = FrameLayout.LayoutParams(cardStreamWidth, cardStreamHeight).apply {
+                leftMargin = -cardCropLeft
+                topMargin = -cardCropTop
+            }
+        }
+        cardContainer?.layoutParams = cardWindowParams()
         Log.i(
             TAG,
-            "cluster card picture ${width}x$height window=${cardVideoWidth}x$cardVideoHeight " +
-                "at $cardWindowLeft,$cardWindowTop",
+            "cluster card buffer=${cardStreamWidth}x$cardStreamHeight " +
+                "crop=${cardCropLeft},${cardCropTop} ${cardCropWidth}x$cardCropHeight " +
+                "window at $cardWindowLeft,$cardWindowTop",
         )
     }
 
     /** Live card window frame on the panel: left, top, width, height. Null when not created. */
     fun cardWindowRect(): IntArray? {
-        val view = cardTextureView ?: return null
+        val view = cardContainer ?: return null
         return intArrayOf(view.left, view.top, view.width, view.height)
     }
 
@@ -655,7 +705,7 @@ internal class ClusterMapPresentation(
         // corrects an out-of-bounds saved value, and that has to keep working while no window
         // exists (a coordinate saved before the first stream must not stay impossible).
         val params = cardWindowParams()
-        val view = cardTextureView ?: return
+        val view = cardContainer ?: return
         val applied = view.layoutParams as? FrameLayout.LayoutParams
         // The host reaches this from applyClusterTurnOverlay(), which the guidance/ETA tick drives
         // once per second. Assigning layoutParams requests a layout pass of the whole window, and
@@ -828,6 +878,21 @@ internal class ClusterMapPresentation(
         if (navOnlyCards) applyCardsVisibility()
         // The card window lives only while there is guidance to draw (FLY_CARD).
         updateCardWindow()
+    }
+
+    /**
+     * Lane guidance from iAP2 0x5204, drawn under our own turn card (MAP_WITH_CUSTOM_CARD).
+     * null hides the strip; the FLY_CARD window and the combined stream are untouched.
+     */
+    fun setLaneGuidance(lanes: BydLaneGuidance?) {
+        lastLanes = lanes
+        turnCardView?.setLanes(lanes)
+    }
+
+    /** Junction view for the self-drawn card; null removes that row and shrinks the card. */
+    fun setTurnCardJunction(bitmap: Bitmap?) {
+        lastJunction = bitmap
+        turnCardView?.setJunctionImage(bitmap)
     }
 
     fun setEtaGuidance(guidance: ClusterTurnGuidance?) {

@@ -109,6 +109,7 @@ object AirPlayPersistence {
     private const val KEY_CLUSTER_CARD_CONTENT_TOP = "cluster_card_content_top_px"
     /** Which cluster content the iPhone streams: Apple's own views, or our map plus cards. */
     private const val KEY_CLUSTER_CONTENT = "cluster_content"
+    private const val KEY_CLUSTER_CARD_DIAGNOSTICS = "cluster_card_diagnostics"
     private const val KEY_CLUSTER_SONG_MAX_CHARS = "cluster_song_max_chars"
     private const val KEY_CLUSTER_SONG_CARD_ALPHA = "cluster_song_card_alpha"
     private const val KEY_CLUSTER_SONG_SHOW_ARTWORK = "cluster_song_show_artwork"
@@ -820,6 +821,24 @@ object AirPlayPersistence {
         context.getSharedPreferences(PREFS, Context.MODE_PRIVATE)
             .edit()
             .putString(KEY_CLUSTER_CONTENT, content.name)
+            .apply()
+    }
+
+    /**
+     * Diagnostic (field request 2026-10-29): declare the instruction-card display at the
+     * panel's own size and dump the card stream as raw H.264 during navigation.
+     *
+     * Off by default. Only FLY_CARD (Apple's dual-stream navigation) uses a card display, so
+     * this changes nothing in the other modes. Enabling it forces a reconnect: /info is read
+     * once per session, and the phone only opens the card stream at the new size then.
+     */
+    fun loadClusterCardDiagnostics(context: Context): Boolean =
+        context.getSharedPreferences(PREFS, Context.MODE_PRIVATE)
+            .getBoolean(KEY_CLUSTER_CARD_DIAGNOSTICS, false)
+
+    fun saveClusterCardDiagnostics(context: Context, enabled: Boolean) {
+        context.getSharedPreferences(PREFS, Context.MODE_PRIVATE).edit()
+            .putBoolean(KEY_CLUSTER_CARD_DIAGNOSTICS, enabled)
             .apply()
     }
 

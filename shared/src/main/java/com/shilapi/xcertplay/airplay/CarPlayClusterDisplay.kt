@@ -35,13 +35,11 @@ object CarPlayClusterDisplay {
          */
         MAP(MAP_URL),
         /**
-         * The 风清速连 layout as TWO streams (WWDC19 session 252: "multiple streams can be set up
-         * to display different types of content from CarPlay within the instrument cluster"):
-         * the map display requests the plain map URL (no iOS glass card inside it), and a second,
-         * small cluster display requests [CARD_URL], which DiPlay renders in a small window at
-         * the panel's upper-left. The map and the car marker keep the centred safe area, so the
-         * card window and the map content sit independently - unlike the single-stream attempts,
-         * where moving the card also moved the whole map.
+         * The separate map + instruction-card layout as TWO streams (WWDC19 session 252:
+         * "multiple streams can be set up to display different types of content from CarPlay
+         * within the instrument cluster"): the map display requests the plain map URL (no iOS
+         * glass card inside it), and a second, small cluster display requests [CARD_URL], which
+         * DiPlay renders in a small window at the panel's upper-left.
          *
          * Uses the map URL so the map stream itself stays card-free; the turn card comes only
          * from the instruction-card stream.
@@ -138,16 +136,18 @@ object CarPlayClusterDisplay {
         widthPixels: Int = CARD_WIDTH_PIXELS,
         heightPixels: Int = CARD_HEIGHT_PIXELS,
         fps: Int = FPS,
+        physicalWidthMm: Int = DEFAULT_CARD_WIDTH_PHYSICAL_MM,
     ): AirPlayDisplayConfig {
         val width = roundTo8(widthPixels.toDouble())
         val height = roundTo8(heightPixels.toDouble())
+        val physicalMm = physicalWidthMm.coerceIn(1, 2000)
         return AirPlayDisplayConfig(
             widthPixels = width,
             heightPixels = height,
-            // A reported physical size keeps the aspect maths in displayEntry consistent; Apple
-            // ignores it on the cluster (see the map display).
-            widthPhysicalMm = CARD_WIDTH_PHYSICAL_MM,
-            heightPhysicalMm = Math.round(CARD_WIDTH_PHYSICAL_MM * height.toDouble() / width).toInt(),
+            // Driver-typed physical width (settings, default 96 mm). heightPhysical follows the
+            // canvas aspect so the physical rectangle and the pixel rectangle agree.
+            widthPhysicalMm = physicalMm,
+            heightPhysicalMm = Math.round(physicalMm * height.toDouble() / width).toInt(),
             fps = fps,
             primaryInputDevice = 0,
             features = 0,
@@ -156,24 +156,22 @@ object CarPlayClusterDisplay {
     }
 
     /**
-     * Panel size of the instruction-card stream, decoded 1:1 into the window at the dashboard's
-     * upper-left.
-     *
-     * The canvas is card-SHAPED on purpose (2.4:1, not the near-square 480x400 it was at first):
-     * iOS lays the card out for the whole screen it is given, so a square canvas left a large
-     * empty area under the card, which showed up as a black slab on the dashboard. With a canvas
-     * that matches the card's own proportions the picture the phone sends IS the card.
+     * Apple's instruction-card display. The native canvas is 480x200, but iOS 27.2 compresses
+     * the card type inside that small canvas, which is why the turn card text came out tiny
+     * (see the 27.2 regression). Advertising a 2x canvas (960x480) gives the phone room to draw
+     * normal type; the real content rectangle comes back as the codec output crop and the
+     * presentation shows only that crop (cardWindowParams), so the card renders at a readable
+     * size. The custom-card mode (MAP_WITH_CUSTOM_CARD) draws its own card independently of this
+     * AirPlay display.
      */
-    const val CARD_WIDTH_PIXELS = 480
-    const val CARD_HEIGHT_PIXELS = 200
+    const val CARD_WIDTH_PIXELS = 960
+    const val CARD_HEIGHT_PIXELS = 480
 
     /**
-     * Physical width reported for the instruction-card display.
-     *
-     * A reported physical size keeps the aspect maths in displayEntry consistent; Apple ignores
-     * it on the cluster (see the map display).
+     * Default physical width reported for the instruction-card display: 96 mm at 480x200 is about
+     * 127 ppi. The settings page lets the driver type another value; heightPhysical is derived.
      */
-    private const val CARD_WIDTH_PHYSICAL_MM = 96
+    const val DEFAULT_CARD_WIDTH_PHYSICAL_MM = 96
 
     private const val WIDTH_PHYSICAL_MM = 292 // a 12.3-inch 8:3 cluster panel; Apple Maps ignores it here
     private const val FPS = 30

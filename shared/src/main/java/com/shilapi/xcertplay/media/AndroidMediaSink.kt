@@ -33,6 +33,16 @@ import java.util.concurrent.atomic.AtomicInteger
 import java.util.concurrent.atomic.AtomicLong
 import java.util.concurrent.TimeUnit
 
+/** Decoded screen picture: full coded buffer plus the crop rectangle the phone reports. */
+data class ScreenStreamGeometry(
+    val streamWidth: Int,
+    val streamHeight: Int,
+    val cropLeft: Int,
+    val cropTop: Int,
+    val cropWidth: Int,
+    val cropHeight: Int,
+)
+
 /** AudioTrack's attributes getter is only available from Android 10. */
 internal fun audioTrackAttributesForFocus(track: AudioTrack, configured: AudioAttributes): AudioAttributes =
     if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.Q) track.audioAttributes else configured
@@ -106,7 +116,10 @@ internal class AudioFocusCoordinator(
         // A track that appears while the music is ducked starts at that same level, so it cannot
         // play loud under a prompt. Prompts and calls are never attenuated this way.
         if (channel == AudioChannel.MEDIA) {
-            runCatching { track.setStereoVolume(appliedVolume, appliedVolume) }
+            // Track volume stays at full; ducking is applied once in the PCM path (applyMediaGain)
+            // so the configured percent is linear instead of squared. Some head units pin the track
+            // at 100 % and ignore setStereoVolume anyway, so the PCM scaling is the reliable path.
+            runCatching { track.setStereoVolume(1.0f, 1.0f) }
         }
     }
 
@@ -162,7 +175,10 @@ internal class AudioFocusCoordinator(
         // call's audio must never be attenuated.
         val media = active.entries.filter { it.value.channel == AudioChannel.MEDIA }
         runCatching { report("Audio: duck gain=$volume mediaTracks=${media.size}/${active.size}") }
-        media.forEach { (track, _) -> runCatching { track.setStereoVolume(volume, volume) } }
+        // Ducking is applied once, in the PCM path (applyMediaGain), so the configured percent is
+        // linear rather than squared. Keep the track volume at full; relying on setStereoVolume here
+        // would stack a second attenuation on top of the PCM gain (regression from 6a09fc23).
+        media.forEach { (track, _) -> runCatching { track.setStereoVolume(1.0f, 1.0f) } }
     }
 
     /**
@@ -284,7 +300,7 @@ class AndroidMediaSink(
      * from the output format's crop rectangle. The instruction-card stream (112) uses it to size
      * its dashboard window by the stream's own aspect instead of a guessed panel percentage.
      */
-    onScreenStreamOutputSize: ((Int, Int, Int) -> Unit)? = null,
+    onScreenStreamOutputSize: ((Int, ScreenStreamGeometry) -> Unit)? = null,
     private val mediaBufferMillis: Int = MediaAudioBuffer.DEFAULT_MILLIS,
     private val onAudioDiagnostic: (String) -> Unit = {},
     /** True while any music ("media") audio stream is running; called from media threads. */
@@ -293,6 +309,19 @@ class AndroidMediaSink(
     private val onNavigationGuidanceChanged: (Boolean) -> Unit = {},
     /** Music level (percent) while a prompt plays or the phone asks us to duck. */
     private val navDuckPercent: () -> Int = { AudioFocusCoordinator.DEFAULT_DUCK_PERCENT },
+    /** Diagnostic: every decoded screen stream's Annex B access unit (type, bytes). */
+    private val onVideoFrameAnnexB: ((Int, ByteArray) -> Unit)? = null,
+    /** Diagnostic: the stream's SPS/PPS as Annex B (type, bytes), once per VideoConfig. */
+    private val onVideoConfigAnnexB: ((Int, ByteArray) -> Unit)? = null,
+    /**
+     * Diagnostic: streams captured but NOT decoded.
+     *
+     * Three simultaneous 1920x720 AVC decoders exceed this MTK head unit: the third configure()
+     * throws IllegalArgumentException, and every recovery retries it, stalling the main screen.
+     * The instruction-card diagnostic only needs the bitstream, so no decoder and no card window
+     * are created for it; the H.264 file stays complete.
+     */
+    private val captureOnlyTypes: Set<Int> = emptySet(),
 ) : MediaSink {
     private val appContext = context?.applicationContext
     private val audioManager = appContext?.getSystemService(AudioManager::class.java)
@@ -499,7 +528,7 @@ class AndroidMediaSink(
      * Installs the real-picture-size reporter on an ALREADY created sink (a reused background
      * session builds its sink before this activity attaches).
      */
-    fun setScreenStreamOutputSizeListener(listener: ((Int, Int, Int) -> Unit)?) {
+    fun setScreenStreamOutputSizeListener(listener: ((Int, ScreenStreamGeometry) -> Unit)?) {
         screenStreamOutputSize = listener
     }
 
@@ -510,11 +539,43 @@ class AndroidMediaSink(
     override fun onVideoConfig(type: Int, codecData: ByteArray) {
         val codec = pendingVideoCodec[type] ?: VideoCodec.H264
         lastVideoConfig[type] = codec to codecData
+        val annexB = annexBParameterSets(codec, codecData)
+        if (annexB.isNotEmpty()) onVideoConfigAnnexB?.invoke(type, annexB)
+        if (type in captureOnlyTypes) return
         videoDecoder(type).configure(codec, codecData)
         mirrorDecoders(type).forEach { it.configure(codec, codecData) }
     }
 
+    /**
+     * Diagnostic header: SPS/PPS with Annex B start codes.
+     *
+     * CarPlay's VideoConfig is an avcC/hvcC record, not length-prefixed NALs, so
+     * [MediaCodecSupport.toAnnexB] would return an empty array and the dump would start with an
+     * IDR without parameter sets (not independently playable).
+     */
+    private fun annexBParameterSets(codec: VideoCodec, codecData: ByteArray): ByteArray {
+        if (codec == VideoCodec.H265) return MediaCodecSupport.hevcCodecSpecificData(codecData)
+        val (sps, pps) = MediaCodecSupport.avcParameterSets(codecData)
+        if (sps.isEmpty() && pps.isEmpty()) return ByteArray(0)
+        val output = java.io.ByteArrayOutputStream()
+        for (parameterSet in listOf(sps, pps)) {
+            if (parameterSet.isEmpty()) continue
+            output.write(byteArrayOf(0, 0, 0, 1))
+            output.write(parameterSet)
+        }
+        return output.toByteArray()
+    }
+
+    /** Diagnostic: the Annex B SPS/PPS for a stream, if its VideoConfig has arrived. */
+    fun latestVideoConfig(type: Int): Pair<VideoCodec, ByteArray>? =
+        lastVideoConfig[type]?.let { (codec, data) -> codec to annexBParameterSets(codec, data) }
+
     override fun onVideoFrame(type: Int, naluBytes: ByteArray) {
+        if (type in captureOnlyTypes) {
+            val annexB = MediaCodecSupport.toAnnexB(naluBytes)
+            if (annexB.isNotEmpty()) onVideoFrameAnnexB?.invoke(type, annexB)
+            return
+        }
         videoDecoder(type).submit(naluBytes)
         mirrorDecoders(type).forEach { it.submit(naluBytes) }
     }
@@ -631,7 +692,7 @@ class AndroidMediaSink(
      * navigation stream as the active volume target. On units that route steering-wheel
      * keys by audio focus this makes them adjust guidance volume during prompts.
      */
-    private var navigationFocusRequest: Any? = null
+    @Volatile private var navigationFocusRequest: Any? = null
 
     private fun requestNavigationFocus() {
         val manager = audioManager ?: return
@@ -653,16 +714,20 @@ class AndroidMediaSink(
         if (result == AudioManager.AUDIOFOCUS_REQUEST_GRANTED) {
             navigationFocusRequest = request
             Log.i("DiPlay-NavFocus", "navigation focus granted (usage routing)")
+            onAudioDiagnostic("Audio: nav focus granted (prompt PCM)")
         } else {
             Log.w("DiPlay-NavFocus", "navigation focus denied result=$result")
+            onAudioDiagnostic("Audio: nav focus denied result=$result")
         }
     }
 
     private fun abandonNavigationFocus() {
         val manager = audioManager ?: return
         if (Build.VERSION.SDK_INT < Build.VERSION_CODES.O) return
+        val had = navigationFocusRequest != null
         navigationFocusRequest?.let { manager.abandonAudioFocusRequest(it as android.media.AudioFocusRequest) }
         navigationFocusRequest = null
+        if (had) onAudioDiagnostic("Audio: nav focus released")
     }
 
     override fun onMicrophoneStarted(id: AudioStreamId, config: MicrophoneConfig) {
@@ -947,6 +1012,7 @@ class AndroidMediaSink(
         }
         // Leaving the session must not leave the car quiet: the head unit may have lowered the
         // music for a call and would keep that level after we are gone.
+        abandonNavigationFocus()
         audioFocusCoordinator.resetPlaybackVolume("sink closed")
     }
 
@@ -962,7 +1028,8 @@ class AndroidMediaSink(
         requestKeyFrame = { requestVideoRecovery(type) },
         report = { videoDiagnosticHandlers[type]?.invoke(it) },
         statsLabel = statsLabel,
-        onOutputSize = { w, h -> screenStreamOutputSize?.invoke(type, w, h) },
+        onOutputSize = { geometry -> screenStreamOutputSize?.invoke(type, geometry) },
+        onAccessUnit = onVideoFrameAnnexB?.let { callback -> { bytes -> callback(type, bytes) } },
     )
 
     @Synchronized
@@ -996,7 +1063,9 @@ private class VideoDecoder(
     private val report: (String) -> Unit,
     statsLabel: String? = null,
     /** Fires once per codec with the crop rectangle's real picture size (coded may be padded). */
-    private val onOutputSize: ((Int, Int) -> Unit)? = null,
+    private val onOutputSize: ((ScreenStreamGeometry) -> Unit)? = null,
+    /** Diagnostic tap: every Annex B access unit before it is queued to the decoder. */
+    private val onAccessUnit: ((ByteArray) -> Unit)? = null,
 ) : Closeable {
     private val queue = VideoDecodeQueue()
     @Volatile private var running = true
@@ -1247,6 +1316,7 @@ private class VideoDecoder(
         val config = lastConfig ?: return
         if (outputSurface == null) return
         if (annexB.isEmpty()) { recover("invalid video access unit"); return }
+        onAccessUnit?.invoke(annexB)
         if (!referenceChain.accepts(annexB, config.codec)) {
             requestKeyFrameIfDue()
             return
@@ -1391,7 +1461,16 @@ private class VideoDecoder(
         if (realWidth <= 0 || realHeight <= 0) return
         outputSizeReported = true
         report("video output size ${realWidth}x${realHeight}")
-        onOutputSize?.invoke(realWidth, realHeight)
+        onOutputSize?.invoke(
+            ScreenStreamGeometry(
+                streamWidth = codedWidth,
+                streamHeight = codedHeight,
+                cropLeft = left,
+                cropTop = top,
+                cropWidth = realWidth,
+                cropHeight = realHeight,
+            ),
+        )
     }
 
     private fun reportFailure(context: String, error: Throwable) {

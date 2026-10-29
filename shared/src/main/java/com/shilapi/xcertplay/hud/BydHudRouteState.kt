@@ -31,18 +31,40 @@ internal enum class BydHudRouteChange {
 }
 
 /**
- * Lane guidance decoded from 0x5204 LaneGuidanceInfoUpdate (Apple CPLaneGuidance).
- * [lanes] holds one bitmask per lane (in road order, left to right); each bit selects a
- * permitted direction: bit0 straight, bit1 left, bit2 right, bit3 slight-left, bit4
- * slight-right, bit5 sharp-left, bit6 sharp-right, bit7 U-turn. [currentLane] is the
- * driver's current lane index or -1. The iAP2 wire layout is undocumented: this decoder
- * uses the layout Apple's own accessory stack is known to emit (0x01 lane count, 0x02
- * current lane, 0x03 lane-arrow byte array) and the raw TLV trace stays in the log so a
- * wrong guess is always recoverable from a real capture.
+ * One lane from the iAP2 0x5204 LaneInformations payload.
+ *
+ * Wire layout (verified against the MHI2Q hook's `rgd_tlv.h`, which was checked against
+ * accessoryd 23G71): each lane has an index/position, a status (0 not good, 1 good,
+ * 2 preferred), repeated angle values and an optional highlighted angle. Angles are signed
+ * degrees; 1000 is the "unknown" sentinel and must never become a turn.
+ */
+data class BydLane(
+    val position: Int,
+    val status: Int,
+    val angles: List<Int> = emptyList(),
+    val highlight: Int? = null,
+) {
+    /** Highlighted angle wins; otherwise the first real angle. */
+    val primaryAngle: Int?
+        get() = highlight?.takeIf { isValidAngle(it) } ?: angles.firstOrNull { isValidAngle(it) }
+
+    val preferred: Boolean
+        get() = status == 2 || highlight?.let { isValidAngle(it) } == true
+
+    companion object {
+        fun isValidAngle(angle: Int): Boolean = angle in -180..180
+    }
+}
+
+/**
+ * The lane event selected by 0x5201's CurrentLaneGuidanceIndex.
+ * [currentLane] is a list index (the preferred lane), not the iOS event index.
  */
 data class BydLaneGuidance(
-    val lanes: List<Int>,
+    val lanes: List<BydLane>,
     val currentLane: Int = -1,
+    val showing: Boolean = true,
+    val eventIndex: Int = -1,
 )
 
 /** Decodes the iAP2 route-guidance subset needed by the BYD windshield HUD and cluster. */
@@ -63,7 +85,11 @@ internal class BydHudRouteState(
     private var remainingMeters: Long? = null
     private var emptyListSinceNs: Long? = null
     private var lastRouteUpdateNs: Long? = null
-    private var laneGuidance: BydLaneGuidance? = null
+    /** Lane events keyed by iOS's lane-guidance index; 0x5204 can arrive before 0x5201 selects it. */
+    private val laneEvents = mutableMapOf<Int, List<BydLane>>()
+    private var laneGuidanceIndex = -1
+    private var laneGuidanceTotal = 0
+    private var laneGuidanceShowing = false
     private var lastLaneUpdateNs: Long? = null
 
     fun accept(messageId: Int, payload: ByteArray): BydHudRouteChange {
@@ -76,11 +102,17 @@ internal class BydHudRouteState(
         }
     }
 
-    /** Current lane guidance, or null when stale / never received. */
+    /** Current lane guidance, or null when stale / hidden / never received. */
     fun currentLanes(): BydLaneGuidance? {
         val updated = lastLaneUpdateNs ?: return null
         if (nanoTime() - updated >= staleRouteNs) return null
-        return laneGuidance
+        if (!laneGuidanceShowing) return null
+        val index = laneGuidanceIndex
+        if (index < 0) return null
+        val lanes = laneEvents[index] ?: return null
+        if (lanes.isEmpty()) return null
+        val preferred = lanes.indexOfFirst { it.status == 2 || it.highlight?.let { a -> BydLane.isValidAngle(a) } == true }
+        return BydLaneGuidance(lanes, preferred, true, index)
     }
 
     fun current(): BydHudGuidance? {
@@ -138,7 +170,10 @@ internal class BydHudRouteState(
         remainingMeters = null
         emptyListSinceNs = null
         lastRouteUpdateNs = null
-        laneGuidance = null
+        laneEvents.clear()
+        laneGuidanceIndex = -1
+        laneGuidanceTotal = 0
+        laneGuidanceShowing = false
         lastLaneUpdateNs = null
         maneuvers.clear()
         return wasActive
@@ -187,6 +222,9 @@ internal class BydHudRouteState(
         var state: Int? = null
         var distance: Int? = null
         var firstManeuver: Int? = null
+        var laneIndex: Int? = null
+        var laneTotal: Int? = null
+        var laneShowing: Int? = null
         var listPresent = false
         forEachTlv(data) { type, value, valueLength ->
             when {
@@ -205,6 +243,26 @@ internal class BydHudRouteState(
                     listPresent = true
                     if (valueLength >= 2) firstManeuver = u16(data, value)
                 }
+                // 0x5201 selects which cached 0x5204 lane event is current.
+                type == 0x10 && valueLength >= 2 -> laneIndex = u16(data, value)
+                type == 0x11 && valueLength >= 2 -> laneTotal = u16(data, value)
+                type == 0x12 && valueLength >= 1 -> laneShowing = data[value].toInt() and 0xff
+            }
+        }
+
+        var laneChanged = false
+        laneIndex?.let {
+            if (laneGuidanceIndex != it) {
+                laneGuidanceIndex = it
+                laneChanged = true
+            }
+        }
+        laneTotal?.let { laneGuidanceTotal = it }
+        laneShowing?.let {
+            val showing = it != 0
+            if (laneGuidanceShowing != showing) {
+                laneGuidanceShowing = showing
+                laneChanged = true
             }
         }
 
@@ -226,7 +284,11 @@ internal class BydHudRouteState(
             routeActive = true
         }
         if (distance != null) distanceMeters = distance!!.coerceAtLeast(0)
-        return if (current() != null) BydHudRouteChange.GUIDANCE else BydHudRouteChange.NONE
+        return if (laneChanged || current() != null || currentLanes() != null) {
+            BydHudRouteChange.GUIDANCE
+        } else {
+            BydHudRouteChange.NONE
+        }
     }
 
     private fun parseManeuverUpdate(data: ByteArray): BydHudRouteChange {
@@ -255,33 +317,74 @@ internal class BydHudRouteState(
     }
 
     /**
-     * Experimental decoder for 0x5204. Apple's iAP2 layout for lane guidance is not public;
-     * the layout used here is what Apple's accessory stack is observed to emit: 0x01 = lane
-     * count (u8), 0x02 = current lane index (u8), 0x03 = one direction bitmask byte per lane
-     * (road order, left to right). The raw TLV trace is always logged as well, so a wrong
-     * guess is correctable from the capture without another field trip.
+     * 0x5204 LaneGuidanceInformation.
+     *
+     * Outer TLVs: 0x0001 = lane-guidance event index, 0x0002 = LaneInformations.
+     * Inside 0x0002, each lane is: 0x0000 index/position, 0x0001 status,
+     * 0x0002 repeated angles, 0x0003 highlighted angle.
+     *
+     * This follows the MHI2Q hook's verified `rgd_tlv.h` layout, not the earlier
+     * count/current/bitmask guess. A 0x5204 may arrive before the 0x5201 that selects
+     * its event, so every event is cached until CurrentLaneGuidanceIndex names it.
      */
     private fun parseLaneUpdate(data: ByteArray): BydHudRouteChange {
-        lastLaneUpdateNs = nanoTime()
-        var laneCount = -1
-        var currentLane = -1
-        var arrows: ByteArray? = null
+        var eventIndex = -1
+        var lanes: List<BydLane> = emptyList()
         forEachTlv(data) { type, value, valueLength ->
             when (type) {
-                0x01 -> if (valueLength >= 1) laneCount = data[value].toInt() and 0xff
-                0x02 -> if (valueLength >= 1) currentLane = data[value].toInt() and 0xff
-                0x03 -> arrows = data.copyOfRange(value, value + valueLength)
+                0x0001 -> if (valueLength >= 2) eventIndex = u16(data, value)
+                0x0002 -> lanes = parseLaneInformations(data, value, valueLength)
             }
         }
-        if (laneCount in 1..12 && arrows != null && arrows.size >= laneCount) {
-            laneGuidance = BydLaneGuidance(
-                arrows.take(laneCount).map { it.toInt() and 0xff },
-                currentLane,
-            )
-            return BydHudRouteChange.GUIDANCE
+        if (lanes.isEmpty()) return BydHudRouteChange.NONE
+        val index = if (eventIndex >= 0) eventIndex else laneGuidanceIndex
+        if (index < 0) return BydHudRouteChange.NONE
+        lastLaneUpdateNs = nanoTime()
+        laneEvents[index] = lanes.take(MAX_LANES)
+        if (laneEvents.size > MAX_LANE_EVENTS) {
+            val oldest = laneEvents.keys.filter { it != laneGuidanceIndex }.minOrNull()
+            if (oldest != null) laneEvents.remove(oldest)
         }
-        laneGuidance = null
-        return BydHudRouteChange.NONE
+        return BydHudRouteChange.GUIDANCE
+    }
+
+    private fun parseLaneInformations(data: ByteArray, start: Int, length: Int): List<BydLane> {
+        val result = mutableListOf<BydLane>()
+        var index: Int? = null
+        var status = 0
+        var angles = mutableListOf<Int>()
+        var highlight: Int? = null
+
+        fun flush() {
+            val position = index ?: result.size
+            result += BydLane(position, status, angles.toList(), highlight)
+            index = null
+            status = 0
+            angles = mutableListOf()
+            highlight = null
+        }
+
+        forEachTlvRange(data, start, length) { id, value, valueLength ->
+            when (id) {
+                0x0000 -> {
+                    if (index != null) flush()
+                    if (valueLength >= 2) index = u16(data, value)
+                }
+                0x0001 -> if (valueLength >= 1) status = data[value].toInt() and 0xff
+                0x0002 -> {
+                    angles = mutableListOf()
+                    var offset = value
+                    val end = value + valueLength
+                    while (offset + 1 < end) {
+                        angles += s16(data, offset)
+                        offset += 2
+                    }
+                }
+                0x0003 -> if (valueLength >= 2) highlight = s16(data, value)
+            }
+        }
+        if (index != null || angles.isNotEmpty() || status != 0) flush()
+        return result
     }
 
     private inline fun forEachTlv(data: ByteArray, block: (Int, Int, Int) -> Unit) {
@@ -290,6 +393,22 @@ internal class BydHudRouteState(
             val length = u16(data, offset)
             block(u16(data, offset + 2), offset + TLV_HEADER_BYTES, length - TLV_HEADER_BYTES)
             offset += length
+        }
+    }
+
+    private inline fun forEachTlvRange(
+        data: ByteArray,
+        start: Int,
+        length: Int,
+        block: (Int, Int, Int) -> Unit,
+    ) {
+        var offset = start
+        val end = (start + length).coerceAtMost(data.size)
+        while (offset + TLV_HEADER_BYTES <= end) {
+            val total = u16(data, offset)
+            if (total < TLV_HEADER_BYTES || offset + total > end) return
+            block(u16(data, offset + 2), offset + TLV_HEADER_BYTES, total - TLV_HEADER_BYTES)
+            offset += total
         }
     }
 
@@ -306,6 +425,8 @@ internal class BydHudRouteState(
 
     private fun u16(data: ByteArray, offset: Int): Int =
         ((data[offset].toInt() and 0xff) shl 8) or (data[offset + 1].toInt() and 0xff)
+
+    private fun s16(data: ByteArray, offset: Int): Int = u16(data, offset).toShort().toInt()
 
     private fun u32(data: ByteArray, offset: Int): Long =
         ((data[offset].toLong() and 0xff) shl 24) or
@@ -345,6 +466,8 @@ internal class BydHudRouteState(
         const val ROUTE_GUIDANCE_MANEUVER_UPDATE = 0x5202
         const val LANE_GUIDANCE_INFO_UPDATE = 0x5204
         private const val TLV_HEADER_BYTES = 4
+        private const val MAX_LANES = 8
+        private const val MAX_LANE_EVENTS = 32
         private const val STALE_ROUTE_NS = 30_000_000_000L
         private const val EMPTY_LIST_HIDE_NS = 3_000_000_000L
     }

@@ -383,6 +383,8 @@
     <string name="cluster_content_flycard">Apple full navigation</string>
     <string name="cluster_content_apple_combined">Apple map + card (one stream)</string>
     <string name="cluster_content_hint">All are pictures the phone sends; switching reconnects, because the URL is fixed when the window is built.</string>
+    <string name="cluster_card_diagnostics">Diagnostic: full-panel card + raw H.264</string>
+    <string name="cluster_card_diagnostics_desc">Only for \'Apple full navigation\' (the separate card stream). Declares the card display at the panel size (e.g. 1920x720) and reconnects. On every navigation start the card\'s raw H.264 is saved to the log folder as card-112-TIME.h264 for offline playback.</string>
     <string name="cluster_card_song_max_chars">Song card maximum characters</string>
     <string name="cluster_card_song_max_chars_desc">Each line is sized to this many characters: shorter text keeps the full width, longer text wraps to the next line.</string>
     <string name="cluster_card_song_artwork">Show album artwork</string>

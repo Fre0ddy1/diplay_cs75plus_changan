@@ -380,6 +380,8 @@
     <string name="cluster_content_flycard">Apple 完整导航</string>
     <string name="cluster_content_apple_combined">Apple 地图+卡片（单流）</string>
     <string name="cluster_content_hint">各来源都是手机推过来的画面；切换会自动重连，因为地址在建窗口时就定死了。</string>
+    <string name="cluster_card_diagnostics">诊断：卡片流按仪表全尺寸并录制 H.264</string>
+    <string name="cluster_card_diagnostics_desc">仅“Apple 完整导航（双流）”生效。开启后卡片显示按仪表尺寸（如 1920×720）声明并自动重连；每次开始导航时把卡片流的原始 H.264 保存到日志目录，文件名为 card-112-时间.h264，可离线播放。</string>
     <string name="cluster_card_song_max_chars">歌曲卡最大字数</string>
     <string name="cluster_card_song_max_chars_desc">每行按这里的字数排版：不足也保留同样宽度，超出的字换到下一行。</string>
     <string name="cluster_card_song_artwork">显示专辑封面</string>
