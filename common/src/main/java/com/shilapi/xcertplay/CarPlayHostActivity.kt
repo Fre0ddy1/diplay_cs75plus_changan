@@ -2164,13 +2164,27 @@ class CarPlayHostActivity : ComponentActivity() {
             return true
         }
 
-        // Steering-wheel media keys are forwarded to CarPlay just below (forCarPlayWindow ->
-        // controller.sendMediaButton) and consumed there, so a single press controls CarPlay music
-        // immediately - no need to start playback or trigger Siri first. The old "media belongs to
-        // the car Bluetooth" swallow left the keys with the car's own media app, which cannot
-        // drive CarPlay's audio and therefore did nothing until CarPlay music was already playing
-        // (field report 2026-10-29). Forwarding + consuming also avoids the double-action the
-        // earlier A2DP check caused, because the key no longer reaches both sinks.
+        // Media belongs to the head unit's Bluetooth, so the CarPlay window must not claim the
+        // wheel's media keys. This must depend ONLY on the switch: music is rendered inside
+        // CarPlay, so AudioManager.isBluetoothA2dpOn is normally false even though the head unit's
+        // own media app receives the wheel key. The old A2DP check therefore let the key through
+        // to both the car and the iPhone, skipping two tracks per press (field 2026-10-24).
+        // Consuming it here keeps it away from CarPlay; the head unit's own key routing still
+        // delivers it to its media app. Voice keys are handled above and stay live - Siri must
+        // still open.
+        if (activeAirPlaySession != null &&
+            CarPlayVideo.activity == null &&
+            isWheelMediaKey(event.keyCode) &&
+            AirPlayPersistence.loadMediaViaCarBluetooth(this)
+        ) {
+            if (event.action == KeyEvent.ACTION_DOWN && event.repeatCount == 0) {
+                appendLog(
+                    "Media: wheel key ${KeyEvent.keyCodeToString(event.keyCode)} blocked " +
+                        "(media belongs to the car Bluetooth)",
+                )
+            }
+            return true
+        }
 
         // Steering-wheel next/previous, claimed by the CarPlay screen itself. The head unit
         // gives these keys to whichever window is in front, so claiming them here is what
@@ -4368,10 +4382,10 @@ class CarPlayHostActivity : ComponentActivity() {
         // The instruction-card display is advertised ONLY in FLY_CARD mode. Declaring the panel
         // (a full 1920x720) made the iPhone stream a full-screen card that covered the dashboard
         // (field 2026-10-26 18:52: stream 1920x720, drawn 1920x720 at 0,0), so it stays a
-        // dedicated small display. Its canvas is 960x480 (2x the native 480x200) so iOS 27.2 draws
-        // normal type instead of compressing it into a tiny 480x200 card; the real content
-        // rectangle comes back as the codec output crop and the window shows only that crop
-        // (cardWindowParams), so the card renders at a readable size.
+        // dedicated small display at the card's native 480x200. Enlarging the canvas (960x480,
+        // then 960x400) only produced a bigger window with more whitespace; iOS 27.2 keeps the
+        // type tiny either way, so the size is back to native and the type is left to a later iOS
+        // release (driver, tested repeatedly, 2026-10-29).
         val cardDisplay = if (CarPlayClusterDisplay.isFlyCard(AirPlayPersistence.loadClusterContent(this))) {
             CarPlayClusterDisplay.cardConfig().also {
                 appendLog(

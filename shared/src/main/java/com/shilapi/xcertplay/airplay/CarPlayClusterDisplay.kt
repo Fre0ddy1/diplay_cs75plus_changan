@@ -156,23 +156,19 @@ object CarPlayClusterDisplay {
     }
 
     /**
-     * Apple's instruction-card display. The native card canvas is 480x200 (a 2.4:1 panel), but
-     * iOS 27.2 compresses the card type inside that small canvas, which is why the turn card text
-     * came out tiny (the 27.2 regression). Advertising a 2x canvas gives the phone room to draw
-     * normal type.
+     * Apple's instruction-card display, negotiated at the card's native 480x200.
      *
-     * The canvas MUST keep the card's native 2.4:1 aspect: a 960x480 (2:1) canvas letterboxed the
-     * 2.4:1 card, leaving black bars top and bottom inside the 960x480 window the iPhone streams
-     * (the codec crop is the whole frame, so the window was sized to the full canvas - field
-     * report 2026-10-29: "window 960x480, lots of whitespace"). 960x400 is exactly 2x of 480x200
-     * (2.4:1), so the iPhone fills it with no letterbox and the card renders at a readable size
-     * with the window sized to 960x400 instead of 960x480.
+     * iOS 27.2 draws the turn-card type tiny inside this canvas. Enlarging the negotiated canvas
+     * (960x480, then 960x400 to keep the 2.4:1 aspect) did widen the window but never fixed the
+     * type: the phone keeps drawing the card at its own small layout, so the result was a large
+     * window full of whitespace (driver, tested repeatedly, 2026-10-29). The setting is therefore
+     * back to the native size and the tiny type is left to a later iOS release.
      *
      * The custom-card mode (MAP_WITH_CUSTOM_CARD) draws its own card independently of this AirPlay
      * display.
      */
-    const val CARD_WIDTH_PIXELS = 960
-    const val CARD_HEIGHT_PIXELS = 400
+    const val CARD_WIDTH_PIXELS = 480
+    const val CARD_HEIGHT_PIXELS = 200
 
     /**
      * Default physical width reported for the instruction-card display: 96 mm at 480x200 is about

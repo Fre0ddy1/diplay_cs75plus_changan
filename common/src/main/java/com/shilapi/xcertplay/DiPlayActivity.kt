@@ -38,6 +38,7 @@ import androidx.core.view.WindowCompat
 import androidx.core.view.WindowInsetsCompat
 import androidx.core.view.WindowInsetsControllerCompat
 import com.shilapi.xcertplay.adb.LocalAdb
+import com.shilapi.xcertplay.media.AndroidMediaSink
 import com.shilapi.xcertplay.airplay.CarPlayClusterDisplay
 import com.shilapi.xcertplay.compat.closeCompat
 import com.shilapi.xcertplay.hud.BydAdbAccess
@@ -1856,7 +1857,8 @@ class DiPlayActivity : ComponentActivity() {
 
     /**
      * How far the music drops while a navigation prompt plays. Media tracks only, so a call is
-     * never attenuated; the value is read when the next CarPlay session opens.
+     * never attenuated. The value is read per prompt and re-applied to the live sink as soon as
+     * the slider moves, so a change no longer needs a reconnect.
      */
     private fun navDuckPercentControl(parent: LinearLayout) {
         val current = AirPlayPersistence.loadNavDuckPercent(this)
@@ -1880,6 +1882,9 @@ class DiPlayActivity : ComponentActivity() {
                     value.text = getString(R.string.nav_duck_percent_value, percent)
                     if (fromUser) {
                         AirPlayPersistence.saveNavDuckPercent(this@DiPlayActivity, percent)
+                        // Re-apply on the live sink so the new level is heard at once instead of
+                        // only after the next prompt or a reconnect (field report 2026-10-29).
+                        AndroidMediaSink.refreshDuckLevels()
                     }
                 }
                 override fun onStartTrackingTouch(seek: SeekBar?) = Unit

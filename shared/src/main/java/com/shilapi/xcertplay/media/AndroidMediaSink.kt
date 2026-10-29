@@ -74,14 +74,6 @@ internal class AudioFocusCoordinator(
     private var timedDucking = false
     /** Set for as long as a navigation prompt is playing; we observe this exactly. */
     private var guidanceDucking = false
-    /**
-     * True after the head unit took focus transiently (AUDIOFOCUS_LOSS_TRANSIENT /
-     * _CAN_DUCK) and never followed with a GAIN callback. BYD's firmware ducks our MEDIA
-     * track on a transient loss during a navigation prompt and, without a later gain event,
-     * leaves it ducked for the rest of the drive - the "fixed ducking the slider cannot fix"
-     * a driver reported (2026-10-29). reassertFocus() lifts it once the prompt ends.
-     */
-    private var transientLossSeen = false
     // Our own duck is only ever meant to bridge a short prompt, so it undoes itself. The head unit
     // does not always send AUDIOFOCUS_GAIN when the interrupting audio ends, and without this the
     // music stayed at 20 % for the rest of the drive - field report: "it turned the media volume
@@ -91,7 +83,6 @@ internal class AudioFocusCoordinator(
         synchronized(this@AudioFocusCoordinator) {
             timedDucking = false
             applyDuckVolume()
-            reassertFocus()
         }
     }
     private val listener = AudioManager.OnAudioFocusChangeListener { change ->
@@ -100,25 +91,16 @@ internal class AudioFocusCoordinator(
             when (change) {
                 AudioManager.AUDIOFOCUS_LOSS_TRANSIENT_CAN_DUCK -> {
                     timedDucking = true
-                    transientLossSeen = true
                     applyDuckVolume()
                     volumeHandler.removeCallbacks(unduckRunnable)
                     volumeHandler.postDelayed(unduckRunnable, DUCK_HOLD_MS)
                 }
-                AudioManager.AUDIOFOCUS_LOSS_TRANSIENT -> {
-                    // The head unit ducked our track on a transient loss (e.g. a navigation
-                    // prompt) but our own duck is driven by the guidance paths; remember the
-                    // loss so reassertFocus() can lift the mixer duck once the prompt ends.
-                    transientLossSeen = true
-                    runCatching { report("Audio: transient focus loss seen") }
-                }
                 AudioManager.AUDIOFOCUS_GAIN -> {
                     volumeHandler.removeCallbacks(unduckRunnable)
                     timedDucking = false
-                    transientLossSeen = false
                     applyDuckVolume()
                 }
-                // Keep CarPlay audio running on permanent loss. Some head units
+                // Keep CarPlay audio running on permanent or transient loss. Some head units
                 // do not send a later gain callback after taking focus back.
             }
         }
@@ -134,10 +116,7 @@ internal class AudioFocusCoordinator(
         // A track that appears while the music is ducked starts at that same level, so it cannot
         // play loud under a prompt. Prompts and calls are never attenuated this way.
         if (channel == AudioChannel.MEDIA) {
-            // Track volume stays at full; ducking is applied once in the PCM path (applyMediaGain)
-            // so the configured percent is linear instead of squared. Some head units pin the track
-            // at 100 % and ignore setStereoVolume anyway, so the PCM scaling is the reliable path.
-            runCatching { track.setStereoVolume(1.0f, 1.0f) }
+            runCatching { track.setStereoVolume(appliedVolume, appliedVolume) }
         }
     }
 
@@ -193,10 +172,7 @@ internal class AudioFocusCoordinator(
         // call's audio must never be attenuated.
         val media = active.entries.filter { it.value.channel == AudioChannel.MEDIA }
         runCatching { report("Audio: duck gain=$volume mediaTracks=${media.size}/${active.size}") }
-        // Ducking is applied once, in the PCM path (applyMediaGain), so the configured percent is
-        // linear rather than squared. Keep the track volume at full; relying on setStereoVolume here
-        // would stack a second attenuation on top of the PCM gain (regression from 6a09fc23).
-        media.forEach { (track, _) -> runCatching { track.setStereoVolume(1.0f, 1.0f) } }
+        media.forEach { (track, _) -> runCatching { track.setStereoVolume(volume, volume) } }
     }
 
     /**
@@ -254,7 +230,6 @@ internal class AudioFocusCoordinator(
             volumeHandler.removeCallbacks(unduckRunnable)
             timedDucking = false
             applyDuckVolume()
-            reassertFocus()
         }
     }
 
@@ -268,9 +243,6 @@ internal class AudioFocusCoordinator(
             if (guidanceDucking == active) return
             guidanceDucking = active
             applyDuckVolume()
-            // When the prompt ends, lift any mixer duck the head unit left behind on a transient
-            // focus loss (BYD leaves it ducked without a gain callback - 2026-10-29).
-            if (!active) reassertFocus()
         }
     }
 
@@ -281,37 +253,15 @@ internal class AudioFocusCoordinator(
     }
 
     /**
-     * Re-requests the MEDIA focus we already hold so the head unit re-runs its duck evaluation
-     * and restores our track volume.
+     * Re-applies the current duck level from the live setting.
      *
-     * BYD's firmware ducks our MEDIA track on a transient focus loss during a navigation prompt
-     * and, absent a later gain callback, leaves it ducked for the rest of the drive - the
-     * "fixed ducking the slider cannot fix" a driver reported (2026-10-29). Re-requesting the
-     * focus we should be holding makes the unit lift that duck. Only acts when a transient loss
-     * was actually observed, and only for a MEDIA primary, so it is a no-op in the normal case.
+     * The duck percent is read per prompt, but a change made WHILE a prompt is playing (or while
+     * the head unit holds a duck) used to wait for the next prompt - the driver saw "the setting
+     * only takes effect after reconnecting" (field report 2026-10-29). The settings page calls
+     * this through AndroidMediaSink.refreshDuckLevels() so the new level is heard at once.
      */
-    private fun reassertFocus() {
-        synchronized(this) {
-            if (!enabled || !transientLossSeen) return
-            val primary = active.values.maxByOrNull { it.channel.focusPriority() } ?: return
-            if (primary.channel != AudioChannel.MEDIA) return
-            transientLossSeen = false
-            // Abandon and re-request so the head unit re-evaluates and restores our volume.
-            manager?.let { request?.abandon(it) }
-            request = null
-            requestedChannel = null
-            val next = AudioFocusRequestCompat(
-                AudioManager.AUDIOFOCUS_GAIN,
-                primary.attributes,
-                listener,
-                Handler(Looper.getMainLooper()),
-            )
-            request = next
-            requestedChannel = AudioChannel.MEDIA
-            val result = manager?.let(next::request)
-            Log.i(TAG, "Audio: focus re-asserted channel=MEDIA granted=$result")
-            runCatching { report("Audio: focus re-asserted channel=MEDIA granted=$result") }
-        }
+    fun refreshDuckLevel() {
+        synchronized(this) { applyDuckVolume() }
     }
 
     private fun AudioChannel.focusPriority(): Int = when (this) {
@@ -379,6 +329,21 @@ class AndroidMediaSink(
      */
     private val captureOnlyTypes: Set<Int> = emptySet(),
 ) : MediaSink {
+    companion object {
+        /** Live sinks, so a settings change can re-apply the duck without a reconnect. */
+        private val liveSinks = java.util.concurrent.CopyOnWriteArrayList<AndroidMediaSink>()
+
+        /** Re-applies the navigation-duck level on every live sink (settings changed). */
+        fun refreshDuckLevels() {
+            liveSinks.forEach { runCatching { it.refreshDuckLevel() } }
+        }
+    }
+
+    /** Re-applies the duck level so a setting change is heard at once, without reconnecting. */
+    fun refreshDuckLevel() {
+        audioFocusCoordinator.refreshDuckLevel()
+    }
+
     private val appContext = context?.applicationContext
     private val audioManager = appContext?.getSystemService(AudioManager::class.java)
     private val audioFocusCoordinator = AudioFocusCoordinator(
@@ -387,6 +352,12 @@ class AndroidMediaSink(
         navDuckPercent,
         onAudioDiagnostic,
     )
+
+    init {
+        // Registered after the coordinator exists, so refreshDuckLevels() can never race its init.
+        liveSinks.add(this)
+    }
+
     private val screenStateLock = Any()
     private val activeScreenTypes = mutableSetOf<Int>()
     private val defaultSurface = surface
@@ -1033,6 +1004,7 @@ class AndroidMediaSink(
         audioRenderers.values.filter { it.channel() == AudioChannel.MEDIA }
 
     fun close() {
+        liveSinks.remove(this)
         closedForPoll = true
         audioModeHandler.removeCallbacks(audioModePoll)
         synchronized(screenStateLock) {
