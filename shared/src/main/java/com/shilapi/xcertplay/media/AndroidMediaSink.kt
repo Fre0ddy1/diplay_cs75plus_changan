@@ -74,20 +74,6 @@ internal class AudioFocusCoordinator(
     private var timedDucking = false
     /** Set for as long as a navigation prompt is playing; we observe this exactly. */
     private var guidanceDucking = false
-    /**
-     * True after the head unit took focus transiently (AUDIOFOCUS_LOSS_TRANSIENT /
-     * _CAN_DUCK) and did not follow with a GAIN callback. BYD/Changan firmware lowers our MEDIA
-     * track on that loss and, without a later gain event, leaves it ducked - so at a 100 % setting
-     * the driver still heard quiet music (field 2026-10-29). While set, onCarDuckLocked() puts the
-     * track back to full and re-asserts the focus we should hold.
-     */
-    private var transientLossSeen = false
-    /** A focus re-assert is already scheduled; never stack them. */
-    private var reassertPending = false
-    /** How many times we have re-asserted in this loss episode; capped so a stubborn unit cannot
-     *  make us thrash the focus (and glitch the music) once every second. Reset on GAIN, on a new
-     *  media stream, and by the guard below. */
-    private var reassertAttempts = 0
     // Our own duck is only ever meant to bridge a short prompt, so it undoes itself. The head unit
     // does not always send AUDIOFOCUS_GAIN when the interrupting audio ends, and without this the
     // music stayed at 20 % for the rest of the drive - field report: "it turned the media volume
@@ -100,13 +86,19 @@ internal class AudioFocusCoordinator(
         }
     }
     /**
-     * Undoes a duck the head unit applied to our music track. Delayed so it does not fight the
-     * prompt that caused the loss, and fired once per loss event.
+     * Gives the focus request back once no track is left.
+     *
+     * Delayed on purpose: every track change makes the phone tear its media stream down and set up
+     * a new one about 100 ms later, and abandoning the focus in that gap is two extra focus
+     * transitions per song - this head unit answers a fresh request with a transient loss. Cancelled
+     * by [acquire] and by a new request.
      */
-    private val reassertRunnable = Runnable {
+    private val abandonRunnable = Runnable {
         synchronized(this@AudioFocusCoordinator) {
-            reassertPending = false
-            reassertFocusLocked()
+            if (active.isNotEmpty()) return@synchronized
+            manager?.let { request?.abandon(it) }
+            request = null
+            requestedChannel = null
         }
     }
     private val listener = AudioManager.OnAudioFocusChangeListener { change ->
@@ -115,27 +107,26 @@ internal class AudioFocusCoordinator(
             when (change) {
                 AudioManager.AUDIOFOCUS_LOSS_TRANSIENT_CAN_DUCK -> {
                     timedDucking = true
-                    onCarDuckLocked(restoreTrackVolume = false)
                     applyDuckVolume()
                     volumeHandler.removeCallbacks(unduckRunnable)
                     volumeHandler.postDelayed(unduckRunnable, DUCK_HOLD_MS)
                 }
-                AudioManager.AUDIOFOCUS_LOSS_TRANSIENT -> {
-                    // The unit lowered our media track when it took focus; put it back to full and
-                    // re-assert our focus, so the setting alone decides the music level.
-                    onCarDuckLocked(restoreTrackVolume = true)
-                }
                 AudioManager.AUDIOFOCUS_GAIN -> {
                     volumeHandler.removeCallbacks(unduckRunnable)
-                    volumeHandler.removeCallbacks(reassertRunnable)
-                    reassertPending = false
-                    transientLossSeen = false
-                    reassertAttempts = 0
                     timedDucking = false
                     applyDuckVolume()
                 }
-                // Keep CarPlay audio running on permanent loss. Some head units do not send a
-                // later gain callback after taking focus back.
+                // Keep CarPlay audio running on permanent or transient loss. Some head units do
+                // not send a later gain callback after taking focus back.
+                //
+                // A transient loss is left alone on purpose. An earlier build answered it by
+                // abandoning and re-requesting the MEDIA focus, so the unit would lift whatever
+                // attenuation it had applied. That made this head unit's own media player the
+                // focus owner instead: it took focus back ~200 ms after every request, and the
+                // iPhone paused two or three seconds into every stream - from the wheel, from the
+                // CarPlay screen and from the phone itself (field 2026-10-29 22:13: five stream
+                // teardowns in two minutes, against none on the build before it). Do not
+                // re-assert focus here.
             }
         }
     }
@@ -143,6 +134,9 @@ internal class AudioFocusCoordinator(
     @Synchronized
     fun acquire(track: AudioTrack, channel: AudioChannel, attributes: AudioAttributes) {
         if (channel == AudioChannel.NAVIGATION) return
+        // A track arriving cancels a pending abandon: the stream that just ended is the one being
+        // replaced, and holding the request through the swap keeps the unit's focus stable.
+        volumeHandler.removeCallbacks(abandonRunnable)
         active[track] = Entry(channel, attributes)
         // Ducking is independent of holding focus: that is a separate switch, and a driver who
         // turned it off still expects a prompt to lower the music.
@@ -158,7 +152,18 @@ internal class AudioFocusCoordinator(
 
     @Synchronized
     fun release(track: AudioTrack) {
-        if (active.remove(track) != null && enabled) refreshRequest()
+        if (active.remove(track) == null) return
+        if (active.isNotEmpty()) {
+            if (enabled) refreshRequest()
+            return
+        }
+        // Every track change makes the phone tear the media stream down and set up a new one ~100 ms
+        // later. Abandoning the focus in between and requesting it again is two extra focus
+        // transitions per song, and this head unit reacts to each one (it answers a request with a
+        // transient loss). Keep the request through the gap; only a real disconnect lets it go.
+        if (!enabled) return
+        volumeHandler.removeCallbacks(abandonRunnable)
+        volumeHandler.postDelayed(abandonRunnable, ABANDON_DELAY_MS)
     }
 
     /**
@@ -194,15 +199,6 @@ internal class AudioFocusCoordinator(
         val next = AudioFocusRequestCompat(gain, primary.attributes, listener, Handler(Looper.getMainLooper()))
         request = next
         requestedChannel = primary.channel
-        if (primary.channel == AudioChannel.MEDIA) {
-            // A brand-new media request is a new episode: the unit re-evaluates our focus right
-            // after it (field 2026-10-29 21:53:45 - a new stream, then LOSS_TRANSIENT 120 ms
-            // later), so let the recovery work run again from the top.
-            volumeHandler.removeCallbacks(reassertRunnable)
-            reassertPending = false
-            transientLossSeen = false
-            reassertAttempts = 0
-        }
         val result = manager?.let(next::request)
         val line = "Audio: focus requested channel=${primary.channel} gain=$gain granted=$result activeTracks=${active.size}"
         Log.i(TAG, line)
@@ -245,10 +241,6 @@ internal class AudioFocusCoordinator(
     fun resetPlaybackVolume(reason: String) {
         synchronized(this) {
             volumeHandler.removeCallbacks(unduckRunnable)
-            volumeHandler.removeCallbacks(reassertRunnable)
-            reassertPending = false
-            transientLossSeen = false
-            reassertAttempts = 0
             timedDucking = false
             guidanceDucking = false
             appliedVolume = FULL_VOLUME
@@ -316,59 +308,6 @@ internal class AudioFocusCoordinator(
         synchronized(this) { applyDuckVolume() }
     }
 
-    /**
-     * The head unit took our MEDIA focus (CAN_DUCK or a transient loss): put the track back to
-     * full and schedule a focus re-assert, so the unit lifts the duck it applied. Without this a
-     * 100 % setting still sounded ducked, because the unit's own attenuation was never restored
-     * (field 2026-10-29 21:53:45: focus change=-2 with no later GAIN, and the music stayed quiet
-     * for the rest of the drive).
-     *
-     * The attempts are capped and their delay grows, so a unit that keeps answering with another
-     * loss cannot make us abandon and re-request the focus in a loop.
-     */
-    private fun onCarDuckLocked(restoreTrackVolume: Boolean) {
-        transientLossSeen = true
-        if (restoreTrackVolume) {
-            // Our own level lives in the PCM path now, so the track is normally already full; this
-            // is for the unit's own per-track duck, which only a write can undo.
-            active.entries.filter { it.value.channel == AudioChannel.MEDIA }
-                .forEach { (track, _) -> runCatching { track.setStereoVolume(FULL_VOLUME, FULL_VOLUME) } }
-        }
-        if (reassertPending || reassertAttempts >= REASSERT_DELAYS_MS.size) return
-        val delay = REASSERT_DELAYS_MS[reassertAttempts]
-        reassertAttempts++
-        reassertPending = true
-        volumeHandler.removeCallbacks(reassertRunnable)
-        volumeHandler.postDelayed(reassertRunnable, delay)
-    }
-
-    /**
-     * Abandons and re-requests the MEDIA focus we should hold, so the head unit re-runs its duck
-     * evaluation and restores our track. Only a MEDIA primary; a no-op in the normal case.
-     */
-    private fun reassertFocusLocked() {
-        if (!enabled || !transientLossSeen) return
-        val primary = active.values.maxByOrNull { it.channel.focusPriority() } ?: return
-        if (primary.channel != AudioChannel.MEDIA) return
-        // Never fight a call: the unit's phone audio owns focus then, and taking it back would cut
-        // the call the driver is on.
-        if (active.values.any { it.channel == AudioChannel.PHONE }) return
-        manager?.let { request?.abandon(it) }
-        request = null
-        requestedChannel = null
-        val next = AudioFocusRequestCompat(
-            AudioManager.AUDIOFOCUS_GAIN,
-            primary.attributes,
-            listener,
-            Handler(Looper.getMainLooper()),
-        )
-        request = next
-        requestedChannel = AudioChannel.MEDIA
-        val result = manager?.let(next::request)
-        Log.i(TAG, "Audio: focus re-asserted channel=MEDIA granted=$result")
-        runCatching { report("Audio: focus re-asserted channel=MEDIA granted=$result") }
-    }
-
     private fun AudioChannel.focusPriority(): Int = when (this) {
         AudioChannel.MEDIA -> 3
         AudioChannel.PHONE -> 2
@@ -384,12 +323,8 @@ internal class AudioFocusCoordinator(
         const val DEFAULT_DUCK_PERCENT = 60
         /** How long our own duck survives without a restore callback from the head unit. */
         const val DUCK_HOLD_MS = 12_000L
-        /**
-         * Delays before undoing a head-unit duck, one per attempt. The first is short so it does
-         * not fight the prompt that caused the loss; the next ones back off, so a unit that keeps
-         * re-taking focus is left alone instead of being fought once a second.
-         */
-        val REASSERT_DELAYS_MS = longArrayOf(1_200L, 4_000L, 10_000L)
+        /** How long a focus request outlives its last track, so a track swap does not flicker it. */
+        const val ABANDON_DELAY_MS = 1_500L
     }
 }
 
@@ -777,11 +712,26 @@ class AndroidMediaSink(
         audioRenderers.remove(id)?.close()
         updateMediaAudio(id, false)
         updateNavigationAudio(id, null, false)
+        // Who stopped the music matters more than that it stopped: the phone pauses on its own
+        // here, and the head unit's state at that instant separates the causes - a call
+        // (mode != 0), the car's Bluetooth taking the media back (a2dp/sco on), or neither, which
+        // leaves the phone itself (field 2026-10-29: music paused 2-3 s into every stream).
+        if (wasMedia) reportMediaStopped(id)
         // A call or announcement stream ending is the moment the music has to be back at full
         // level. The mode poll cannot be trusted for this head unit: it never reports a call at all
         // (no "call detected" line in a whole day of logs), so a level the call lowered used to
         // survive until the next reconnect.
         if (!wasMedia) audioFocusCoordinator.resetPlaybackVolume("非媒体流结束 $id")
+    }
+
+    private fun reportMediaStopped(id: AudioStreamId) {
+        val manager = audioManager ?: return
+        val snapshot = runCatching {
+            "mode=${manager.mode} music=${manager.getStreamVolume(AudioManager.STREAM_MUSIC)}" +
+                " musicActive=${manager.isMusicActive} a2dp=${manager.isBluetoothA2dpOn}" +
+                " sco=${manager.isBluetoothScoOn}"
+        }.getOrDefault("unavailable")
+        onAudioDiagnostic("Audio: media stream stopped $id $snapshot")
     }
 
     private fun updateMediaAudio(id: AudioStreamId, active: Boolean) {
