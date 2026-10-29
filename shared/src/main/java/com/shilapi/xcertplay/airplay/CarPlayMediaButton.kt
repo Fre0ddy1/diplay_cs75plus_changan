@@ -82,10 +82,9 @@ object CarPlayMediaButton {
      * makes the wheel change tracks without the accessibility service, which a head unit with no ADB
      * cannot turn on.
      *
-     * Play/pause is claimed as well. Leaving it to the car only works where the car's own player is
-     * the media source; here the music is rendered inside CarPlay, so the car had nothing to pause
-     * and the key did nothing at all until the driver started playback on the iPhone first (field
-     * 2026-10-29 21:53: every press logged as "blocked", playback only started from the phone).
+     * Only next and previous are claimed. Play/pause is left alone: the head unit's own player acts
+     * on the same press through its own key routing, and a forwarded toggle next to it made the
+     * iPhone pause straight after every play and skip two tracks per press (field 2026-10-29 22:31).
      * Nothing is claimed outside a CarPlay session, or during a call, where the car's own call
      * handling is what the driver expects from these keys.
      */
@@ -98,13 +97,6 @@ object CarPlayMediaButton {
         return when (keyCode) {
             KeyEvent.KEYCODE_MEDIA_NEXT -> NEXT
             KeyEvent.KEYCODE_MEDIA_PREVIOUS -> PREVIOUS
-            // The wheel sends the toggle on this unit; PLAY/PAUSE cover firmwares that send the
-            // split codes, and the two vendor codes cover ones that never rewrite them.
-            KeyEvent.KEYCODE_MEDIA_PLAY,
-            KeyEvent.KEYCODE_MEDIA_PAUSE,
-            KeyEvent.KEYCODE_MEDIA_PLAY_PAUSE,
-            KEYCODE_BYD_AUTO_MEDIA_PLAY_PAUSE,
-            KEYCODE_BYD_AUTO_MEDIA_PLAY_PAUSE_DILINK3 -> PLAY_PAUSE
             else -> null
         }
     }

@@ -2164,13 +2164,33 @@ class CarPlayHostActivity : ComponentActivity() {
             return true
         }
 
-        // Steering-wheel media keys are forwarded to CarPlay just below (forCarPlayWindow ->
-        // controller.sendMediaButton) and consumed there. Swallowing them here left them with the
-        // car's own media app, which cannot drive CarPlay's audio: after connecting, the wheel did
-        // nothing until the driver first started playback on the iPhone (field 2026-10-29 21:53 -
-        // every key logged as "blocked", and a forwarding build logged "-> CarPlay sent=true").
-        // Forwarding lets one press control CarPlay at once; the key is consumed either way, so it
-        // does not reach both sinks.
+        // Media belongs to the head unit's Bluetooth, so the CarPlay window must not claim the
+        // wheel's media keys. This must depend ONLY on the switch: music is rendered inside
+        // CarPlay, so AudioManager.isBluetoothA2dpOn is normally false even though the head unit's
+        // own media app receives the wheel key. The old A2DP check therefore let the key through
+        // to both the car and the iPhone, skipping two tracks per press (field 2026-10-24).
+        // Consuming it here keeps it away from CarPlay; the head unit's own key routing still
+        // delivers it to its media app. Voice keys are handled above and stay live - Siri must
+        // still open.
+        //
+        // Forwarding these keys to CarPlay instead was tried twice and failed twice on this unit
+        // (field 2026-10-29): besides the double handling above, every forwarded press woke the
+        // head unit's own player, which grabbed the audio focus and paused the iPhone - music died
+        // seconds after every play, from the wheel, from CarPlay and from the phone alike. The
+        // swallow is the stable half; do not forward while that player reacts to wheel keys.
+        if (activeAirPlaySession != null &&
+            CarPlayVideo.activity == null &&
+            isWheelMediaKey(event.keyCode) &&
+            AirPlayPersistence.loadMediaViaCarBluetooth(this)
+        ) {
+            if (event.action == KeyEvent.ACTION_DOWN && event.repeatCount == 0) {
+                appendLog(
+                    "Media: wheel key ${KeyEvent.keyCodeToString(event.keyCode)} blocked " +
+                        "(media belongs to the car Bluetooth)",
+                )
+            }
+            return true
+        }
 
         // Steering-wheel next/previous, claimed by the CarPlay screen itself. The head unit
         // gives these keys to whichever window is in front, so claiming them here is what
