@@ -74,6 +74,20 @@ internal class AudioFocusCoordinator(
     private var timedDucking = false
     /** Set for as long as a navigation prompt is playing; we observe this exactly. */
     private var guidanceDucking = false
+    /**
+     * True after the head unit took focus transiently (AUDIOFOCUS_LOSS_TRANSIENT /
+     * _CAN_DUCK) and did not follow with a GAIN callback. BYD/Changan firmware lowers our MEDIA
+     * track on that loss and, without a later gain event, leaves it ducked - so at a 100 % setting
+     * the driver still heard quiet music (field 2026-10-29). While set, onCarDuckLocked() puts the
+     * track back to full and re-asserts the focus we should hold.
+     */
+    private var transientLossSeen = false
+    /** A focus re-assert is already scheduled; never stack them. */
+    private var reassertPending = false
+    /** How many times we have re-asserted in this loss episode; capped so a stubborn unit cannot
+     *  make us thrash the focus (and glitch the music) once every second. Reset on GAIN, on a new
+     *  media stream, and by the guard below. */
+    private var reassertAttempts = 0
     // Our own duck is only ever meant to bridge a short prompt, so it undoes itself. The head unit
     // does not always send AUDIOFOCUS_GAIN when the interrupting audio ends, and without this the
     // music stayed at 20 % for the rest of the drive - field report: "it turned the media volume
@@ -85,23 +99,43 @@ internal class AudioFocusCoordinator(
             applyDuckVolume()
         }
     }
+    /**
+     * Undoes a duck the head unit applied to our music track. Delayed so it does not fight the
+     * prompt that caused the loss, and fired once per loss event.
+     */
+    private val reassertRunnable = Runnable {
+        synchronized(this@AudioFocusCoordinator) {
+            reassertPending = false
+            reassertFocusLocked()
+        }
+    }
     private val listener = AudioManager.OnAudioFocusChangeListener { change ->
         synchronized(this) {
             runCatching { report("Audio: focus change=$change activeTracks=${active.size}") }
             when (change) {
                 AudioManager.AUDIOFOCUS_LOSS_TRANSIENT_CAN_DUCK -> {
                     timedDucking = true
+                    onCarDuckLocked(restoreTrackVolume = false)
                     applyDuckVolume()
                     volumeHandler.removeCallbacks(unduckRunnable)
                     volumeHandler.postDelayed(unduckRunnable, DUCK_HOLD_MS)
                 }
+                AudioManager.AUDIOFOCUS_LOSS_TRANSIENT -> {
+                    // The unit lowered our media track when it took focus; put it back to full and
+                    // re-assert our focus, so the setting alone decides the music level.
+                    onCarDuckLocked(restoreTrackVolume = true)
+                }
                 AudioManager.AUDIOFOCUS_GAIN -> {
                     volumeHandler.removeCallbacks(unduckRunnable)
+                    volumeHandler.removeCallbacks(reassertRunnable)
+                    reassertPending = false
+                    transientLossSeen = false
+                    reassertAttempts = 0
                     timedDucking = false
                     applyDuckVolume()
                 }
-                // Keep CarPlay audio running on permanent or transient loss. Some head units
-                // do not send a later gain callback after taking focus back.
+                // Keep CarPlay audio running on permanent loss. Some head units do not send a
+                // later gain callback after taking focus back.
             }
         }
     }
@@ -116,7 +150,9 @@ internal class AudioFocusCoordinator(
         // A track that appears while the music is ducked starts at that same level, so it cannot
         // play loud under a prompt. Prompts and calls are never attenuated this way.
         if (channel == AudioChannel.MEDIA) {
-            runCatching { track.setStereoVolume(appliedVolume, appliedVolume) }
+            // Track volume stays at full; the duck is applied once, in the PCM path, so the
+            // configured percent is linear and changing it never glitches the live track.
+            runCatching { track.setStereoVolume(FULL_VOLUME, FULL_VOLUME) }
         }
     }
 
@@ -158,6 +194,15 @@ internal class AudioFocusCoordinator(
         val next = AudioFocusRequestCompat(gain, primary.attributes, listener, Handler(Looper.getMainLooper()))
         request = next
         requestedChannel = primary.channel
+        if (primary.channel == AudioChannel.MEDIA) {
+            // A brand-new media request is a new episode: the unit re-evaluates our focus right
+            // after it (field 2026-10-29 21:53:45 - a new stream, then LOSS_TRANSIENT 120 ms
+            // later), so let the recovery work run again from the top.
+            volumeHandler.removeCallbacks(reassertRunnable)
+            reassertPending = false
+            transientLossSeen = false
+            reassertAttempts = 0
+        }
         val result = manager?.let(next::request)
         val line = "Audio: focus requested channel=${primary.channel} gain=$gain granted=$result activeTracks=${active.size}"
         Log.i(TAG, line)
@@ -172,7 +217,10 @@ internal class AudioFocusCoordinator(
         // call's audio must never be attenuated.
         val media = active.entries.filter { it.value.channel == AudioChannel.MEDIA }
         runCatching { report("Audio: duck gain=$volume mediaTracks=${media.size}/${active.size}") }
-        media.forEach { (track, _) -> runCatching { track.setStereoVolume(volume, volume) } }
+        // The PCM path (applyMediaGain) is the ONLY attenuation we apply: moving the track's own
+        // volume on a live track glitches the music on this head unit (field 2026-10-29: "music
+        // stutters once"), and stacking it on the PCM gain would make the configured percent
+        // nonlinear (60 % -> 0.36). Track volume stays at full.
     }
 
     /**
@@ -197,6 +245,10 @@ internal class AudioFocusCoordinator(
     fun resetPlaybackVolume(reason: String) {
         synchronized(this) {
             volumeHandler.removeCallbacks(unduckRunnable)
+            volumeHandler.removeCallbacks(reassertRunnable)
+            reassertPending = false
+            transientLossSeen = false
+            reassertAttempts = 0
             timedDucking = false
             guidanceDucking = false
             appliedVolume = FULL_VOLUME
@@ -264,6 +316,59 @@ internal class AudioFocusCoordinator(
         synchronized(this) { applyDuckVolume() }
     }
 
+    /**
+     * The head unit took our MEDIA focus (CAN_DUCK or a transient loss): put the track back to
+     * full and schedule a focus re-assert, so the unit lifts the duck it applied. Without this a
+     * 100 % setting still sounded ducked, because the unit's own attenuation was never restored
+     * (field 2026-10-29 21:53:45: focus change=-2 with no later GAIN, and the music stayed quiet
+     * for the rest of the drive).
+     *
+     * The attempts are capped and their delay grows, so a unit that keeps answering with another
+     * loss cannot make us abandon and re-request the focus in a loop.
+     */
+    private fun onCarDuckLocked(restoreTrackVolume: Boolean) {
+        transientLossSeen = true
+        if (restoreTrackVolume) {
+            // Our own level lives in the PCM path now, so the track is normally already full; this
+            // is for the unit's own per-track duck, which only a write can undo.
+            active.entries.filter { it.value.channel == AudioChannel.MEDIA }
+                .forEach { (track, _) -> runCatching { track.setStereoVolume(FULL_VOLUME, FULL_VOLUME) } }
+        }
+        if (reassertPending || reassertAttempts >= REASSERT_DELAYS_MS.size) return
+        val delay = REASSERT_DELAYS_MS[reassertAttempts]
+        reassertAttempts++
+        reassertPending = true
+        volumeHandler.removeCallbacks(reassertRunnable)
+        volumeHandler.postDelayed(reassertRunnable, delay)
+    }
+
+    /**
+     * Abandons and re-requests the MEDIA focus we should hold, so the head unit re-runs its duck
+     * evaluation and restores our track. Only a MEDIA primary; a no-op in the normal case.
+     */
+    private fun reassertFocusLocked() {
+        if (!enabled || !transientLossSeen) return
+        val primary = active.values.maxByOrNull { it.channel.focusPriority() } ?: return
+        if (primary.channel != AudioChannel.MEDIA) return
+        // Never fight a call: the unit's phone audio owns focus then, and taking it back would cut
+        // the call the driver is on.
+        if (active.values.any { it.channel == AudioChannel.PHONE }) return
+        manager?.let { request?.abandon(it) }
+        request = null
+        requestedChannel = null
+        val next = AudioFocusRequestCompat(
+            AudioManager.AUDIOFOCUS_GAIN,
+            primary.attributes,
+            listener,
+            Handler(Looper.getMainLooper()),
+        )
+        request = next
+        requestedChannel = AudioChannel.MEDIA
+        val result = manager?.let(next::request)
+        Log.i(TAG, "Audio: focus re-asserted channel=MEDIA granted=$result")
+        runCatching { report("Audio: focus re-asserted channel=MEDIA granted=$result") }
+    }
+
     private fun AudioChannel.focusPriority(): Int = when (this) {
         AudioChannel.MEDIA -> 3
         AudioChannel.PHONE -> 2
@@ -279,6 +384,12 @@ internal class AudioFocusCoordinator(
         const val DEFAULT_DUCK_PERCENT = 60
         /** How long our own duck survives without a restore callback from the head unit. */
         const val DUCK_HOLD_MS = 12_000L
+        /**
+         * Delays before undoing a head-unit duck, one per attempt. The first is short so it does
+         * not fight the prompt that caused the loss; the next ones back off, so a unit that keeps
+         * re-taking focus is left alone instead of being fought once a second.
+         */
+        val REASSERT_DELAYS_MS = longArrayOf(1_200L, 4_000L, 10_000L)
     }
 }
 
@@ -1581,6 +1692,8 @@ private class AudioRenderer(
     private var prebufferBytes = 0
     private var startThresholdBytes = 0
     private var fadeApplied = false
+    /** Gain written into the previous music buffer, so a change ramps instead of stepping. */
+    private var lastMediaGain = 1f
     private var droppedPacketsLogged = false
     private var firstAacPayloadLogged = false
     private var firstOpusShortPacketLogged = false
@@ -2164,14 +2277,24 @@ private class AudioRenderer(
      */
     private fun applyMediaGain(data: ByteArray, offset: Int, length: Int) {
         val gain = audioFocusCoordinator.currentMediaGain()
-        if (gain >= 0.999f) return
-        var i = offset
+        val from = lastMediaGain
+        // A level change is applied as a ramp across one buffer instead of a step at its edge, so
+        // moving the setting while music plays never clicks (field 2026-10-29: the old build moved
+        // the track volume twice in 50 ms and the music stuttered).
+        if (gain >= 0.999f && from >= 0.999f) return
         val end = offset + (length / 2) * 2
+        val samples = (end - offset) / 2
+        if (samples <= 0) return
+        lastMediaGain = gain
+        val step = (gain - from) / samples
+        var applied = from
+        var i = offset
         while (i < end) {
             val sample = (data[i + 1].toInt() shl 8) or (data[i].toInt() and 0xFF)
-            val scaled = (sample * gain).toInt().coerceIn(-32768, 32767)
+            val scaled = (sample * applied).toInt().coerceIn(-32768, 32767)
             data[i] = scaled.toByte()
             data[i + 1] = (scaled shr 8).toByte()
+            applied += step
             i += 2
         }
     }
