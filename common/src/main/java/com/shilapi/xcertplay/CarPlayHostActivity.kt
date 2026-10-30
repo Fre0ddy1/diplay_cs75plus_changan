@@ -553,20 +553,26 @@ class CarPlayHostActivity : ComponentActivity() {
     // head-unit is not showing.
     private var clusterExtScreenReleased = false
     /**
-     * True when this session's two wire type-111 streams arrived in the opposite order, so the
-     * card window received the panel-sized map stream and the map view the card stream.
+     * Which wire type-111 stream each cluster view is bound to right now.
      *
-     * Only set when BOTH streams' reported sizes agree on the reversal (one small, one panel-
-     * sized). A single callback is not enough: a decoder can report the previous/default
-     * 1920x720 for one frame before its real 480x200 config lands (field 2026-10-28 13:23).
+     * Both cluster streams are type 111 on the wire and only their display uuid tells them apart.
+     * iOS does not promise which one it opens first, and it re-opens both the moment navigation
+     * starts - in an order that was seen reversed (field 2026-10-30 18:56: card stream first,
+     * panel-sized map stream second). So the binding is decided by the decoded picture size - the
+     * panel-sized stream draws the map, the 480x208 one draws the card - and it is re-decided on
+     * every size report. A one-shot "swapped" flag could only ever be right once: when the guess
+     * was wrong, or when the phone re-opened the streams afterwards, nothing corrected it and the
+     * card window stayed empty for the rest of the session.
      */
-    @Volatile private var clusterStreamsSwapped = false
-    /** Last decoded size of stream 111 (the map normally, the card when the setup is reversed). */
+    @Volatile private var navBoundType = SCREEN_TYPE_ALT
+    @Volatile private var cardBoundType = SCREEN_TYPE_ALT_CARD
+    /** Last decoded size of stream 111. Only used to tell the two type-111 streams apart. */
     @Volatile private var lastAltStreamSize: Pair<Int, Int>? = null
-    /** Last decoded size of stream 112 (the card normally, the map when reversed). */
+    /** Last decoded size of stream 112. Only used to tell the two type-111 streams apart. */
     @Volatile private var lastCardStreamSize: Pair<Int, Int>? = null
-    /** Last full geometry of stream 111, so the card view can reuse its crop after a swap. */
+    /** Last geometry of each stream, so the card window can be sized from the right one after a rebind. */
     @Volatile private var lastAltGeometry: com.shilapi.xcertplay.media.ScreenStreamGeometry? = null
+    @Volatile private var lastCardGeometry: com.shilapi.xcertplay.media.ScreenStreamGeometry? = null
     /** The start-up channel watcher; the only component allowed to send the activation sequence. */
     private var watcherThread: Thread? = null
     /** Last channel state the watcher sampled. Every swipe decision reads this, not incall. */
@@ -1894,9 +1900,9 @@ class CarPlayHostActivity : ComponentActivity() {
         if (navClusterSurface === surface) return
         val old = navClusterSurface
         navClusterSurface = surface
-        // After a confirmed reversed type-111 setup this view is fed by the stream the phone
-        // labelled "card" (112), so the binding follows the swap.
-        val type = if (clusterStreamsSwapped) SCREEN_TYPE_ALT_CARD else SCREEN_TYPE_ALT
+        // The binding can move after this (reconcileClusterStreamBindings), so it is read at
+        // attach time rather than derived from a session-wide flag.
+        val type = navBoundType
         if (surface != null) {
             sink?.setSurface(type, surface)
         } else if (old != null) {
@@ -1914,8 +1920,8 @@ class CarPlayHostActivity : ComponentActivity() {
         if (cardClusterSurface === surface) return
         val old = cardClusterSurface
         cardClusterSurface = surface
-        // Mirror of onClusterNavSurface: a confirmed reversal feeds the card view from stream 111.
-        val type = if (clusterStreamsSwapped) SCREEN_TYPE_ALT else SCREEN_TYPE_ALT_CARD
+        // Mirror of onClusterNavSurface: whichever stream currently holds the small picture.
+        val type = cardBoundType
         if (surface != null) {
             sink?.setSurface(type, surface)
         } else if (old != null) {
@@ -1926,15 +1932,10 @@ class CarPlayHostActivity : ComponentActivity() {
     /**
      * Routes a cluster stream's decoded size.
      *
-     * The two wire type-111 streams (map + instruction card) are told apart by uuid normally. When
-     * the phone omits it, the SETUP order decides and can arrive reversed. The reversal is only
-     * acted on when BOTH streams' sizes agree: a panel-sized 112 next to a card-sized 111. A
-     * single callback is not proof - a decoder can report 1920x720 for one frame before its real
-     * 480x200 config arrives (field 2026-10-28 13:23, which a size-only check misread as a swap).
-     *
-     * A panel-sized "card" is never laid out as the card window: either the reversal is confirmed
-     * (the card size then comes from stream 111) or the transient is ignored and the real card
-     * size follows.
+     * The two wire type-111 streams (map + instruction card) are told apart by uuid when the phone
+     * sends one; when it does not, the SETUP order is all that is left and iOS does not promise it.
+     * The picture size is the one thing that keeps reporting the truth, so the view binding is
+     * reconciled against it on every report (see [reconcileClusterStreamBindings]).
      *
      * Called on a media thread; window work is posted to the UI thread downstream.
      */
@@ -1942,40 +1943,85 @@ class CarPlayHostActivity : ComponentActivity() {
         type: Int,
         geometry: com.shilapi.xcertplay.media.ScreenStreamGeometry,
     ) {
-        val width = geometry.cropWidth
-        val height = geometry.cropHeight
-        if (type == SCREEN_TYPE_ALT) {
-            lastAltStreamSize = width to height
-            lastAltGeometry = geometry
-            if (clusterStreamsSwapped) {
-                onClusterCardVideoSize(geometry)
-            } else {
-                maybeSwapClusterStreams()
+        when (type) {
+            SCREEN_TYPE_ALT -> {
+                lastAltStreamSize = geometry.cropWidth to geometry.cropHeight
+                lastAltGeometry = geometry
             }
-            return
+            SCREEN_TYPE_ALT_CARD -> {
+                lastCardStreamSize = geometry.cropWidth to geometry.cropHeight
+                lastCardGeometry = geometry
+            }
+            else -> return
         }
-        if (type != SCREEN_TYPE_ALT_CARD) return
-        lastCardStreamSize = width to height
-        if (clusterStreamsSwapped) return
-        maybeSwapClusterStreams()
-        if (clusterStreamsSwapped) return
-        if (looksLikePanelSize(width, height)) {
-            // Transient/default size until the real card config lands; never draw it full-panel.
-            return
-        }
-        onClusterCardVideoSize(geometry)
+        reconcileClusterStreamBindings(type)
     }
 
-    /** Swaps only when one stream is panel-sized and the other is card-sized. */
-    private fun maybeSwapClusterStreams() {
-        if (clusterStreamsSwapped) return
-        val alt = lastAltStreamSize ?: return
-        val card = lastCardStreamSize ?: return
-        if (looksLikePanelSize(card.first, card.second) &&
-            !looksLikePanelSize(alt.first, alt.second)
-        ) {
-            swapClusterStreams(card.first, card.second)
+    /**
+     * Keeps each cluster view on the stream that actually carries its picture.
+     *
+     * Both streams are type 111, and the phone re-opens both when navigation starts - in an order
+     * it does not promise (field 2026-10-30 18:56: card stream first, panel-sized map second).
+     * Deciding the binding once by SETUP order, as the previous one-shot "swapped" flag did, left
+     * the wrong answer in place for the rest of the session; reconciling against the sizes makes
+     * the binding self-correcting instead, and it needs no opinion about the order at all.
+     *
+     * A panel-sized stream is never laid out as the card window, so a decoder that reports the
+     * canvas size for one frame before its real 480x200 crop lands (field 2026-10-28 13:23) cannot
+     * blow the window up.
+     */
+    private fun reconcileClusterStreamBindings(type: Int) {
+        val alt = lastAltStreamSize
+        val card = lastCardStreamSize
+        var rebound = false
+        // Both sides must be known and different: one callback alone is not proof.
+        if (alt != null && card != null && alt != card) {
+            val altPanel = looksLikePanelSize(alt.first, alt.second)
+            val cardPanel = looksLikePanelSize(card.first, card.second)
+            if (altPanel != cardPanel) {
+                rebound = bindClusterMapStream(if (altPanel) SCREEN_TYPE_ALT else SCREEN_TYPE_ALT_CARD)
+            }
         }
+        // The card window is laid out from whichever stream is bound to it - including straight
+        // after a rebind, where the card stream itself may never report its size again.
+        val cardType = cardBoundType
+        if (!rebound && type != cardType) return
+        val cardGeometry = (if (cardType == SCREEN_TYPE_ALT) lastAltGeometry else lastCardGeometry)
+            ?: return
+        if (looksLikePanelSize(cardGeometry.cropWidth, cardGeometry.cropHeight)) return
+        onClusterCardVideoSize(cardGeometry)
+    }
+
+    /**
+     * Binds the map view to [mapType] and the card view to the other cluster stream.
+     *
+     * The surfaces are re-attached, not swapped blindly: the sink maps a stream type to a surface,
+     * so setting both types again is what moves the two pictures. A forced keyframe follows, which
+     * is also what pulls the phone's map renderer out of its "planning route" placeholder.
+     *
+     * @return true when the binding actually changed.
+     */
+    private fun bindClusterMapStream(mapType: Int): Boolean {
+        val cardType = if (mapType == SCREEN_TYPE_ALT) SCREEN_TYPE_ALT_CARD else SCREEN_TYPE_ALT
+        if (navBoundType == mapType && cardBoundType == cardType) return false
+        navBoundType = mapType
+        cardBoundType = cardType
+        val alt = lastAltStreamSize
+        val card = lastCardStreamSize
+        appendLog(
+            "Cluster: map picture is on stream ${if (mapType == SCREEN_TYPE_ALT) 111 else 112} " +
+                "(111=${alt?.first}x${alt?.second} 112=${card?.first}x${card?.second}); " +
+                "rebinding map/card views",
+        )
+        mainHandler.post {
+            val nav = navClusterSurface
+            val cardSurface = cardClusterSurface
+            if (nav != null) sink?.setSurface(mapType, nav)
+            if (cardSurface != null) sink?.setSurface(cardType, cardSurface)
+            clusterUiReasserted = false
+            mainHandler.postDelayed({ controller?.forceClusterKeyFrames("rebind") }, 200L)
+        }
+        return true
     }
 
     /** The 08:28 baseline has no capture-only path; the diagnostic experiment is retired. */
@@ -1987,33 +2033,6 @@ class CarPlayHostActivity : ComponentActivity() {
         val panelHeight = watcherHeight
         if (panelWidth <= 0 || panelHeight <= 0) return false
         return width >= panelWidth * 3 / 4 && height >= panelHeight * 3 / 4
-    }
-
-    /**
-     * Stream 112 carries the map and 111 the card: swap which view each decoder draws into, and
-     * size the card window from stream 111. Logged, so a field report shows the correction.
-     */
-    private fun swapClusterStreams(mapWidth: Int, mapHeight: Int) {
-        clusterStreamsSwapped = true
-        appendLog(
-            "Cluster: 112 is ${mapWidth}x$mapHeight (panel-sized) while 111 is the card; " +
-                "type-111 routing was reversed, swapping 111/112 surfaces",
-        )
-        mainHandler.post {
-            val nav = navClusterSurface
-            val card = cardClusterSurface
-            if (nav != null) sink?.setSurface(SCREEN_TYPE_ALT_CARD, nav)
-            if (card != null) sink?.setSurface(SCREEN_TYPE_ALT, card)
-            clusterUiReasserted = false
-            // New surfaces wait for a keyframe; without one the swapped views stay black until
-            // navigation happens to produce an IDR. Force both without touching the card page.
-            mainHandler.postDelayed({ controller?.forceClusterKeyFrames("swap") }, 200L)
-        }
-        lastAltGeometry?.let { geometry ->
-            if (!looksLikePanelSize(geometry.cropWidth, geometry.cropHeight)) {
-                onClusterCardVideoSize(geometry)
-            }
-        }
     }
 
     /**
@@ -5228,6 +5247,12 @@ class CarPlayHostActivity : ComponentActivity() {
         // already keeps a new stack from being built, and the rebuild the window falls back to
         // happens on the far side of it (startWarmReconnectWindow).
         clusterUiReasserted = false
+        // A new session re-opens both type-111 streams, so the sizes that decided last session's
+        // binding must not be compared against the new pictures. The binding itself is kept: the
+        // surfaces are still attached, and the first size report of each stream corrects it if the
+        // phone changed the order.
+        lastAltStreamSize = null
+        lastCardStreamSize = null
         val controllerGeneration = restartGeneration
         val config = createRuntimeConfig()
         val airPlayConfig = createAirPlayConfig(size)

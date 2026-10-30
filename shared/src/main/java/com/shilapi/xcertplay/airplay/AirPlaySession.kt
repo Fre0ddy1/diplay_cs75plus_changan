@@ -668,18 +668,38 @@ class AirPlaySession(
      * ([AirPlayInfoPlist.ALT_UUID]) or the instruction-card display ([AirPlayInfoPlist.CARD_UUID]).
      *
      * The SETUP body carries the display's uuid only in some iOS builds; when it does, that is
-     * authoritative. Otherwise the phone sets the screens up in /info display order (map first,
-     * then the card), so the first 111 of a session is the map and the next one is the card.
-     * A TEARDOWN resets the count, so a re-SETUP after a drop starts the order again.
+     * authoritative. Otherwise the only thing left is the SETUP order, and iOS does not promise it:
+     * both displays were declared map-first, yet the phone opened the card display first when
+     * navigation started (field 2026-10-30 18:56). So the order here is a first guess only - the
+     * receiver re-decides the view binding from the decoded picture size on every size report
+     * (CarPlayHostActivity.reconcileClusterStreamBindings) and can move it back.
      */
-    private fun routeAltScreen(stream: Map<String, Any?>): Int = when (string(stream["uuid"])?.uppercase()) {
-        AirPlayInfoPlist.ALT_UUID -> STREAM_TYPE_ALT_SCREEN
-        AirPlayInfoPlist.CARD_UUID -> STREAM_TYPE_ALT_CARD
-        else -> if (STREAM_TYPE_ALT_SCREEN in activeStreams && STREAM_TYPE_ALT_CARD !in activeStreams) {
-            STREAM_TYPE_ALT_CARD
-        } else {
-            STREAM_TYPE_ALT_SCREEN
+    private fun routeAltScreen(stream: Map<String, Any?>): Int {
+        val raw = string(stream["uuid"])
+        when (raw.uppercase()) {
+            AirPlayInfoPlist.ALT_UUID -> {
+                debugLog("airplay alt stream uuid=our map display")
+                return STREAM_TYPE_ALT_SCREEN
+            }
+            AirPlayInfoPlist.CARD_UUID -> {
+                debugLog("airplay alt stream uuid=our card display")
+                return STREAM_TYPE_ALT_CARD
+            }
         }
+        val routed =
+            if (STREAM_TYPE_ALT_SCREEN in activeStreams && STREAM_TYPE_ALT_CARD !in activeStreams) {
+                STREAM_TYPE_ALT_CARD
+            } else {
+                STREAM_TYPE_ALT_SCREEN
+            }
+        // Whether the phone sent one of our uuids decides if the order matters at all: "absent"
+        // means we are guessing from SETUP order, "not-ours" means it named a display we never
+        // declared. Both are worth seeing in a field log instead of inferring it from behaviour.
+        debugLog(
+            "airplay alt stream uuid=${if (raw.isBlank()) "absent" else "not-ours"} " +
+                "routed=$routed (SETUP order decides)",
+        )
+        return routed
     }
 
     /** Short rendering of a modesChanged body. Never uses "payload=", which the report strips. */
