@@ -111,6 +111,16 @@ object AirPlayPersistence {
     /** Which cluster content the iPhone streams: Apple's own views, or our map plus cards. */
     private const val KEY_CLUSTER_CONTENT = "cluster_content"
     private const val KEY_CLUSTER_CARD_DIAGNOSTICS = "cluster_card_diagnostics"
+
+    /**
+     * Instruction-card safe area, as a percentage of the card canvas's short edge. 0 keeps the
+     * declaration the app has always sent (the whole canvas is safe). A positive value insets the
+     * card safe area, which - measured on the car 2026-10-30 - makes iOS lay the card out inside
+     * that rectangle instead of drawing it tiny; the card window then crops that rectangle and
+     * scales it up to its own size. Negative values are NOT offered: iOS refuses the session when
+     * the safe area leaves the canvas (field 2026-10-30, no connection at all).
+     */
+    private const val KEY_CLUSTER_CARD_SAFE_INSET_PCT = "cluster_card_safe_inset_pct"
     private const val KEY_CLUSTER_SONG_MAX_CHARS = "cluster_song_max_chars"
     private const val KEY_CLUSTER_SONG_CARD_ALPHA = "cluster_song_card_alpha"
     private const val KEY_CLUSTER_SONG_SHOW_ARTWORK = "cluster_song_show_artwork"
@@ -858,6 +868,24 @@ object AirPlayPersistence {
             .putBoolean(KEY_CLUSTER_CARD_DIAGNOSTICS, enabled)
             .apply()
     }
+
+    /**
+     * Card safe-area inset in percent of the canvas's short edge; negative pushes it outside the
+     * canvas. Read when /info is built, so a change lands on the next connection.
+     */
+    fun loadClusterCardSafeInsetPct(context: Context): Int =
+        context.getSharedPreferences(PREFS, Context.MODE_PRIVATE)
+            .getInt(KEY_CLUSTER_CARD_SAFE_INSET_PCT, 0)
+            .coerceIn(CLUSTER_CARD_SAFE_INSET_PCT_RANGE)
+
+    fun saveClusterCardSafeInsetPct(context: Context, pct: Int) {
+        context.getSharedPreferences(PREFS, Context.MODE_PRIVATE).edit()
+            .putInt(KEY_CLUSTER_CARD_SAFE_INSET_PCT, pct.coerceIn(CLUSTER_CARD_SAFE_INSET_PCT_RANGE))
+            .apply()
+    }
+
+    /** 0 keeps the old declaration; 1-50 insets the safe area (iOS refuses negative values). */
+    val CLUSTER_CARD_SAFE_INSET_PCT_RANGE = 0..50
 
     /** Fingers for the swipe-down that opens settings; some head units reserve three. */
     fun loadSettingsGestureFingers(context: Context): Int =

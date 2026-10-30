@@ -4388,15 +4388,23 @@ class CarPlayHostActivity : ComponentActivity() {
         // The instruction-card display is advertised ONLY in FLY_CARD mode. Declaring the panel
         // (a full 1920x720) made the iPhone stream a full-screen card that covered the dashboard
         // (field 2026-10-26 18:52: stream 1920x720, drawn 1920x720 at 0,0), so it stays a
-        // dedicated small display at the card's native 480x200. Enlarging the canvas (960x480,
-        // then 960x400) only produced a bigger window with more whitespace; iOS 27.2 keeps the
-        // type tiny either way, so the size is back to native and the type is left to a later iOS
-        // release (driver, tested repeatedly, 2026-10-29).
+        // dedicated small display. Enlarging the canvas alone (960x480, then 960x400) only
+        // produced a bigger window with more whitespace - iOS 27.2 kept the type tiny either way
+        // (driver, tested repeatedly, 2026-10-29). What finally moved the card's size was the
+        // safe-area inset (2026-10-30), so the canvas now grows TOGETHER with the safe rectangle
+        // via CARD_CANVAS_SCALE and the window shows the result 1:1 instead of upscaling it.
         val cardDisplay = if (CarPlayClusterDisplay.isFlyCard(AirPlayPersistence.loadClusterContent(this))) {
-            CarPlayClusterDisplay.cardConfig().also {
+            val cardSafeInsetPct =
+                AirPlayPersistence.loadClusterCardSafeInsetPct(this)
+            CarPlayClusterDisplay.cardConfig(
+                safeInsetPct = cardSafeInsetPct,
+                canvasScale = CarPlayClusterDisplay.CARD_CANVAS_SCALE,
+            ).also {
                 appendLog(
                     "Cluster card display: canvas=${it.widthPixels}x${it.heightPixels} " +
+                        "canvasScale=${CarPlayClusterDisplay.CARD_CANVAS_SCALE} " +
                         "physical=${it.widthPhysicalMm}x${it.heightPhysicalMm}mm " +
+                        "safeInsetPct=$cardSafeInsetPct safeArea=${it.safeArea} " +
                         "url=${it.initialUrl}",
                 )
             }
