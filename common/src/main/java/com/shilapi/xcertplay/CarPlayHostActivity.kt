@@ -478,10 +478,14 @@ class CarPlayHostActivity : ComponentActivity() {
     private var restartGeneration = 0
     /** One re-assert per session, after the cluster streams are up (quick-reconnect placeholder). */
     private var clusterUiReasserted = false
-    /** When the previous AirPlay session ended, to enforce a gap before a quick reconnect. */
-    private var lastSessionEndedAt = 0L
-    /** True while a too-quick reconnect is waiting out [MIN_RECONNECT_GAP_MS]. */
-    private var startDeferred = false
+    /**
+     * True while the wireless stack is deliberately left up after a session ended, waiting for the
+     * phone to reconnect to it. Cleared either by the phone coming back or by the window elapsing
+     * into a full rebuild.
+     */
+    private var warmReconnectPending = false
+    /** When that wait started, so the log can say how long the phone took to come back. */
+    private var warmReconnectStartedAt = 0L
     private var reconnectScheduled = false
     private var sessionLog: SessionLogFile? = null
     /** Diagnostic card H.264 dump; only alive between a navigation start and its end. */
@@ -611,6 +615,8 @@ class CarPlayHostActivity : ComponentActivity() {
     private val disconnectReleaseFallbackMs = 120_000L
     private val hideDashboardAfterDisconnect = Runnable { hideDashboardForDisconnect() }
     private val releaseDashboardAfterLongLoss = Runnable { releaseDashboardForDisconnect() }
+    /** Fires when the warm window elapsed without the phone coming back: a full rebuild. */
+    private val warmReconnectTimeout = Runnable { onWarmReconnectExpired() }
 
     private var gestureStartX = 0f
     private var gestureStartY = 0f
@@ -2325,6 +2331,7 @@ class CarPlayHostActivity : ComponentActivity() {
         runCatching { repaintExecutor.shutdownNow() }
         mainHandler.removeCallbacks(hideDashboardAfterDisconnect)
         mainHandler.removeCallbacks(releaseDashboardAfterLongLoss)
+        cancelWarmReconnectWindow()
         // Leaving only hides the window: no broadcast, no activation. The channel is left as the
         // head unit has it, so a relaunch finds the same state the watcher sampled.
         if (isFinishing && clusterPresentation != null) {
@@ -4960,6 +4967,15 @@ class CarPlayHostActivity : ComponentActivity() {
                         return@runOnUiThread
                     }
                     mainHandler.removeCallbacks(airPlayStallHint)
+                    // The phone redialled us inside the warm window: the session that just ended
+                    // is replaced by a live one on the very same stack, so the pending rebuild is
+                    // cancelled and nothing is torn down (see startWarmReconnectWindow).
+                    if (warmReconnectPending) {
+                        val waited = android.os.SystemClock.elapsedRealtime() - warmReconnectStartedAt
+                        warmReconnectPending = false
+                        mainHandler.removeCallbacks(warmReconnectTimeout)
+                        appendLog("Warm reconnect: the phone came back after ${waited}ms, stack kept")
+                    }
                     activeAirPlaySession = session
                     CarPlayBackgroundSession.active = true
                     // A new session is NOT proof that the dashboard picture is back: iAP2 comes up
@@ -5002,7 +5018,6 @@ class CarPlayHostActivity : ComponentActivity() {
                     stopCardH264Recording("session ended")
                     if (activeAirPlaySession === session) activeAirPlaySession = null
                     CarPlayBackgroundSession.active = false
-                    lastSessionEndedAt = SystemClock.elapsedRealtime()
                     // A new session is a new connection: allow auto-project to fire again after
                     // any reconnect. restartCarPlay() also resets these, but some reconnect paths
                     // early-return before that reset (handshakeReset/menuOpen), which would leave
@@ -5035,8 +5050,13 @@ class CarPlayHostActivity : ComponentActivity() {
                         return@runOnUiThread
                     }
                     setConnectionStage(getString(R.string.carplay_session_ended_reconnecting))
-                    appendLog("AirPlay session ended; reconnecting from scratch")
-                    reconnectAfterLoss("AirPlay session ended")
+                    // Do not tear the stack down on the spot. The wifi link, the AirPlay listener
+                    // and the Bonjour record are all still up, so the phone can redial the
+                    // accessory it is paired with and come back in a second or two with no new
+                    // iAP2 handshake - and a warm return is what keeps it off its "only the
+                    // navigation page is supported" cluster page. Only a phone that stays away
+                    // for the whole window needs the full rebuild.
+                    startWarmReconnectWindow("AirPlay session ended")
                 }
             }
 
@@ -5201,28 +5221,10 @@ class CarPlayHostActivity : ComponentActivity() {
     private fun startCarPlay(size: DisplaySize) {
         if (CarPlayBackgroundSession.hasSession() && !CarPlayBackgroundSession.isOwner(this)) return
         if (shuttingDown.get() || menuOpen || handshakeResetInProgress || controller != null) return
-        // A reconnect a few seconds after a drop leaves the iPhone's cluster page stale (the
-        // "only the navigation page is supported on the instrument cluster" page, rendered either
-        // in the card window or across the panel). Waiting at least MIN_RECONNECT_GAP_MS after the
-        // previous session ended avoids it; field test: 3 s reproduced, 10-20 s did not.
-        val sinceEnd = if (lastSessionEndedAt == 0L) Long.MAX_VALUE
-        else SystemClock.elapsedRealtime() - lastSessionEndedAt
-        if (sinceEnd in 0 until MIN_RECONNECT_GAP_MS) {
-            if (!startDeferred) {
-                startDeferred = true
-                val waitMs = MIN_RECONNECT_GAP_MS - sinceEnd
-                appendLog(
-                    "Quick reconnect: waiting ${waitMs}ms before the new session " +
-                        "(last one ended ${sinceEnd}ms ago)",
-                )
-                mainHandler.postDelayed({
-                    startDeferred = false
-                    startCarPlay(size)
-                }, waitMs)
-            }
-            return
-        }
-        startDeferred = false
+        // No artificial gap between sessions here any more. A reconnect is gated by the warm
+        // window instead: while it is open the controller is still alive, so the guard above
+        // already keeps a new stack from being built, and the rebuild the window falls back to
+        // happens on the far side of it (startWarmReconnectWindow).
         clusterUiReasserted = false
         val controllerGeneration = restartGeneration
         val config = createRuntimeConfig()
@@ -5543,6 +5545,48 @@ class CarPlayHostActivity : ComponentActivity() {
         startCarPlay(size)
     }
 
+    /**
+     * Leaves the running wireless stack alone after a session ended, giving the already-paired
+     * phone a chance to redial into it.
+     *
+     * A drop was previously answered with a plain timer to [restartCarPlay], which closes the
+     * controller first: the hotspot, the Bonjour record and the AirPlay listener all go away, so
+     * the phone can only come back through a cold join - and a cold join is what leaves it showing
+     * its "only the navigation page is supported" cluster page, plus the 2 s delay + ~3 s teardown
+     * + 10 s guard made every recovery take ten seconds. Keeping the stack up costs nothing while
+     * the window is open, and the phone was measured coming back within 2-3 s.
+     */
+    private fun startWarmReconnectWindow(reason: String) {
+        if (shuttingDown.get()) return
+        warmReconnectPending = true
+        warmReconnectStartedAt = android.os.SystemClock.elapsedRealtime()
+        appendLog(
+            "$reason; holding the stack for ${WARM_RECONNECT_WINDOW_MS}ms so the phone can redial " +
+                "instead of rejoining cold",
+        )
+        mainHandler.removeCallbacks(warmReconnectTimeout)
+        mainHandler.postDelayed(warmReconnectTimeout, WARM_RECONNECT_WINDOW_MS)
+    }
+
+    /** True when the warm window was open, i.e. a pending rebuild was called off. */
+    private fun cancelWarmReconnectWindow(): Boolean {
+        val wasPending = warmReconnectPending
+        warmReconnectPending = false
+        mainHandler.removeCallbacks(warmReconnectTimeout)
+        return wasPending
+    }
+
+    private fun onWarmReconnectExpired() {
+        if (!warmReconnectPending) return
+        warmReconnectPending = false
+        if (shuttingDown.get() || menuOpen || handshakeResetInProgress) return
+        appendLog(
+            "Warm reconnect: the phone stayed away for ${WARM_RECONNECT_WINDOW_MS}ms; " +
+                "rebuilding the stack",
+        )
+        restartCarPlay("Reconnecting after a dropped session")
+    }
+
     private fun reconnectAfterLoss(reason: String) {
         // Only the owner of the background session may restart it. When no session has ever
         // been stored (owner == null), this activity is the only live host, so it may proceed.
@@ -5563,6 +5607,7 @@ class CarPlayHostActivity : ComponentActivity() {
         }
         reconnectAttempts += 1
         appendLog("$reason; retrying in ${delayMillis}ms")
+        val scheduledAt = android.os.SystemClock.elapsedRealtime()
         mainHandler.postDelayed(
             {
                 reconnectScheduled = false
@@ -5572,6 +5617,21 @@ class CarPlayHostActivity : ComponentActivity() {
                     handshakeResetInProgress ||
                     generation != restartGeneration
                 ) {
+                    return@postDelayed
+                }
+                // A warm window opened after this retry was scheduled (the session-end path owns
+                // the reconnect now): the whole point of it is to leave the stack alone, so a
+                // rebuild here would only pre-empt it.
+                if (warmReconnectPending) {
+                    appendLog("$reason; warm reconnect window is open, leaving the stack alone")
+                    return@postDelayed
+                }
+                // The phone may have come back by itself while this retry was waiting (a transport
+                // error is not proof that the session is gone). Wiping a working session costs the
+                // driver the whole rebuild, so a session that started after this was scheduled
+                // wins.
+                if (activeAirPlaySession != null && sessionStartedAtElapsedMs > scheduledAt) {
+                    appendLog("$reason; the phone came back first, cancelling the rebuild")
                     return@postDelayed
                 }
                 restartCarPlay("Reconnecting after $reason")
@@ -5584,6 +5644,9 @@ class CarPlayHostActivity : ComponentActivity() {
     private fun restartCarPlay(reason: String) {
         if (!CarPlayBackgroundSession.isOwner(this) && CarPlayBackgroundSession.hasSession()) return
         if (shuttingDown.get() || menuOpen || handshakeResetInProgress) return
+        // Any pending warm window is settled here: this is the rebuild it would have fallen back
+        // to, so its timer must not fire a second one.
+        cancelWarmReconnectWindow()
         // The cluster picture source is fixed when the dashboard window is built (CarPlay only
         // learns the URL through the window's display config), and the restart below deliberately
         // keeps that window alive so stream 111 is not re-activated. So a source change would keep
@@ -7238,8 +7301,17 @@ class CarPlayHostActivity : ComponentActivity() {
         const val DISPLAY_CHANGE_DEBOUNCE_MILLIS = 500L
         const val CONFIGURATION_POLL_INTERVAL_MILLIS = 2_000L
         const val RECONNECT_DELAY_MILLIS = 2_000L
-        /** Minimum gap after a session ends before a new one starts (quick-reconnect placeholder). */
-        const val MIN_RECONNECT_GAP_MS = 10_000L
+        /**
+         * How long the wireless stack stays up after a session ends, waiting for the phone to
+         * reconnect to it.
+         *
+         * The phone re-dials the accessory it is already paired with; tearing the hotspot and the
+         * Bonjour advertisement down first turns that into a cold join, and a cold join is what
+         * leaves the iPhone showing its "only the navigation page is supported" cluster page. Six
+         * seconds is long enough for the warm return we measured (field 2026-10-30: the phone is
+         * back in 2-3 s) and short enough that a true loss still rebuilds quickly.
+         */
+        const val WARM_RECONNECT_WINDOW_MS = 6_000L
         const val IAP_TUNNEL_RECONNECT_DELAY_MILLIS = 15_000L
         const val CONTROLLER_CLOSE_TIMEOUT_MILLIS = 4_000L
         /** How long the panel waits for AirPlay before naming the iPhone-side fix. */
@@ -7250,8 +7322,6 @@ class CarPlayHostActivity : ComponentActivity() {
         const val GESTURE_MIN_FINGERS = 3
         /**
          * How long the volume keys stay on the guidance stream after a prompt starts. A prompt is
-        /** Minimum gap after a session ends; below it the iPhone keeps its stale cluster page. */
-        const val MIN_RECONNECT_GAP_MS = 10_000L
          * a few seconds; the navigation stream on this head unit can stay open much longer, and
          * routing the keys for that whole time leaves the driver unable to change the music.
          */
