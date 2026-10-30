@@ -48,6 +48,11 @@ internal object ChanganProjectionBridge {
             .also { handler.postDelayed(it, StartupFullscreenPolicy.SETTLE_MS) }
     }
 
+    fun layoutConfirmed(layout: ProjectionLayout) = onMain {
+        reconfirming = false // The current source request can confirm before the delayed retry.
+        layoutRequested(layout)
+    }
+
     fun layoutRequested(layout: ProjectionLayout) = onMain {
         // A retained value delivered before our first request cannot acknowledge that request.
         if (reconfirming && policy.attempts == 0 && layout == ProjectionLayout.FULLSCREEN) return@onMain

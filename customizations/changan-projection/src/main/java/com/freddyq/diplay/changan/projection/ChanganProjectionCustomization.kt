@@ -37,6 +37,7 @@ class ChanganProjectionCustomization : VehicleCustomization {
         return true
     }
     override fun onProjectionLayoutRequested(layout: ProjectionLayout) = ChanganProjectionBridge.layoutRequested(layout)
+    override fun onProjectionLayoutConfirmed(layout: ProjectionLayout) = ChanganProjectionBridge.layoutConfirmed(layout)
     override fun onProjectionContentReady(context: Context, window: Any, control: ProjectionContentControl) {
         if (environment.prerequisiteWaiting) return
         if (ChanganProjectionSettings.enabled(context)) contentRecovery.frameReady(window,

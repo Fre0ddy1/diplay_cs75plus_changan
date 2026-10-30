@@ -35,6 +35,7 @@ class InCallContentHandoffTest {
     private var oldCallbacks = emptyMap<Int,Int>()
     private var oldExtensions = emptyList<VehicleCustomization>()
     private val controls = mutableListOf<ProjectionControl>()
+    private var onSourceWrite: (() -> Unit)? = null
     private val callbacks get() = ReflectionHelpers.getStaticField<MutableMap<Int,Int>>(InCallClusterBridge::class.java,"lastCallbackValue")
     private val extensions get() = ReflectionHelpers.getField<MutableList<VehicleCustomization>>(VehicleCustomizations,"extensions")
     private fun field(name:String,value:Any?) = ReflectionHelpers.setStaticField(InCallClusterBridge::class.java,name,value)
@@ -46,6 +47,7 @@ class InCallContentHandoffTest {
             val values=mutableListOf<Int>()
             if(code in setOf(1,2,8,21)) repeat(if(code==1 || code==2) 1 else 2) { values+=data.readInt() }
             calls+=code to values
+            if (code == 2 && values == listOf(1)) onSourceWrite?.invoke()
             reply?.writeNoException()
             reply?.writeInt(1)
             return true
@@ -98,7 +100,7 @@ class InCallContentHandoffTest {
         callbacks.clear()
         callbacks.putAll(oldCallbacks)
     }
-    private fun reply(code:Int,value:Int) {
+    private fun reply(code:Int,value:Int,dispatch:Boolean=true) {
         val callback=ReflectionHelpers.getStaticField<IBinder>(InCallClusterBridge::class.java,"navigateCallback")
         val data=Parcel.obtain()
         val result=Parcel.obtain()
@@ -108,7 +110,7 @@ class InCallContentHandoffTest {
             assertTrue(callback.transact(code,data,result,0))
             result.readException()
         } finally { data.recycle(); result.recycle() }
-        idle(0)
+        if (dispatch) idle(0)
     }
 
     private fun frameReady(window:Any) {
@@ -225,10 +227,12 @@ class InCallContentHandoffTest {
         field("projectingListener",{ value:Boolean -> if(value) confirmed++ })
         val window=Any()
         InCallClusterBridge.observeCallback(app,window)
-        frameReady(window); idle(1600)
+        // Cached replies belong before the actual source request. Fresh replies after it
+        // are precisely the valid early pair seen on the car, not stale fullscreen values.
+        frameReady(window); idle(1499)
         reply(1,3); reply(2,3)
         assertEquals(0,confirmed)
-        idle(1500)
+        idle(101)
         reply(2,3)
         assertEquals(0,confirmed)
         reply(1,3)
@@ -237,6 +241,90 @@ class InCallContentHandoffTest {
         idle(30000)
         assertEquals(attempts,fullscreenAttempts())
         assertEquals(1,sourceAcknowledgements())
+    }
+
+    @Test fun sourceRepliesBeforeDelayedFullscreenRequestRevealCurrentWindowOnce() {
+        var confirmed=0
+        field("projectingListener",{ value:Boolean -> if(value) confirmed++ })
+        val window=Any()
+        InCallClusterBridge.observeCallback(app,window)
+        frameReady(window); idle(1600)
+        assertEquals(1,sourceAcknowledgements())
+        assertEquals(0,fullscreenAttempts())
+        reply(1,3); reply(2,3)
+        assertEquals("the source request's own pair must reveal its current window",1,confirmed)
+        idle(30000) // An idempotent later setMode(3) need not produce another callback.
+        assertEquals(0,fullscreenAttempts())
+        assertEquals(1,confirmed)
+        assertEquals(1,sourceAcknowledgements())
+    }
+
+    @Test fun layoutRetryPreservesFreshPartialSourceConfirmation() {
+        var confirmed=0
+        field("projectingListener",{ value:Boolean -> if(value) confirmed++ })
+        val window=Any()
+        InCallClusterBridge.observeCallback(app,window)
+        frameReady(window); idle(1600)
+        reply(1,3)
+        assertEquals(0,confirmed)
+        idle(1500)
+        assertEquals(1,fullscreenAttempts())
+        reply(2,3)
+        assertEquals("retrying the same request must not erase a fresh layout reply",1,confirmed)
+        idle(30000)
+        assertEquals(1,fullscreenAttempts())
+    }
+
+    @Test fun oneSourceReplyCannotRevealWindowAndRecoveryRemainsBounded() {
+        callbacks[2]=3 // A cached open value must not complete the fresh layout reply.
+        var confirmed=0
+        field("projectingListener",{ value:Boolean -> if(value) confirmed++ })
+        val window=Any()
+        InCallClusterBridge.observeCallback(app,window)
+        frameReady(window); idle(1600)
+        reply(1,3)
+        idle(60000)
+        assertEquals(0,confirmed)
+        assertEquals(3,fullscreenAttempts())
+        assertFalse(InCallClusterBridge.reportsProjecting())
+    }
+
+    @Test fun dismissedWindowRejectsQueuedSourceConfirmation() {
+        var confirmed=0
+        field("projectingListener",{ value:Boolean -> if(value) confirmed++ })
+        val window=Any()
+        InCallClusterBridge.observeCallback(app,window)
+        frameReady(window); idle(1600)
+        reply(1,3,dispatch=false); reply(2,3,dispatch=false)
+        InCallClusterBridge.forgetContentWindow(window)
+        InCallClusterBridge.observeCallback(app,Any())
+        idle(30000)
+        assertEquals(0,confirmed)
+    }
+
+    @Test fun contradictorySourceRepliesCannotCompleteAnOldPartialPair() {
+        var confirmed=0
+        field("projectingListener",{ value:Boolean -> if(value) confirmed++ })
+        val window=Any()
+        InCallClusterBridge.observeCallback(app,window)
+        frameReady(window); idle(1600)
+        reply(1,3); reply(2,0); reply(1,1); reply(2,3)
+        assertEquals(0,confirmed)
+        reply(1,3)
+        assertEquals(1,confirmed)
+    }
+
+    @Test fun synchronousSourceRepliesAreAcceptedBeforeDelayedLayoutRetry() {
+        var confirmed=0
+        field("projectingListener",{ value:Boolean -> if(value) confirmed++ })
+        onSourceWrite = { reply(1,3,dispatch=false); reply(2,3,dispatch=false) }
+        val window=Any()
+        InCallClusterBridge.observeCallback(app,window)
+        frameReady(window); idle(1600)
+        assertEquals(1,sourceAcknowledgements())
+        assertEquals(1,confirmed)
+        idle(30000)
+        assertEquals(0,fullscreenAttempts())
     }
 
     @Test fun expiredContentControlCannotInvalidateReplacementWindow() {

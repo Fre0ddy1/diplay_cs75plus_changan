@@ -29,6 +29,8 @@ interface VehicleCustomization {
     /** A new window is using a retained channel and requires fresh confirmation. */
     fun onProjectionResumed(context: Context, control: ProjectionControl): Boolean = false
     fun onProjectionLayoutRequested(layout: ProjectionLayout) {}
+    /** A fresh reply pair verified against the current source/layout request, not cached state. */
+    fun onProjectionLayoutConfirmed(layout: ProjectionLayout) = onProjectionLayoutRequested(layout)
     fun onProjectionContentReady(context: Context, window: Any, control: ProjectionContentControl) {}
     fun onProjectionContentLost(window: Any) {}
     fun onProjectionManualControl() {}
@@ -155,6 +157,7 @@ open class VehicleCustomizationRegistry {
         return handled
     }
     fun onProjectionLayoutRequested(layout: ProjectionLayout) = dispatch { it.onProjectionLayoutRequested(layout) }
+    fun onProjectionLayoutConfirmed(layout: ProjectionLayout) = dispatch { it.onProjectionLayoutConfirmed(layout) }
     fun onProjectionContentReady(context: Context, window: Any, control: ProjectionContentControl) =
         dispatch { it.onProjectionContentReady(context.applicationContext, window, control) }
     fun onProjectionContentLost(window: Any) = dispatch { it.onProjectionContentLost(window) }

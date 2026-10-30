@@ -94,6 +94,8 @@ class VehicleCustomizationRegistryTest {
         registry.onProjectionManualControl()
         registry.onProjectionReleased()
         assertEquals(listOf("start=true","layout=CARD","manual","released"),events)
+        registry.onProjectionLayoutConfirmed(ProjectionLayout.FULLSCREEN)
+        assertEquals(listOf("start=true","layout=CARD","manual","released","layout=FULLSCREEN"),events)
     }
 
     @Test fun `one projection extension failure does not suppress the following extension`() {
@@ -107,6 +109,9 @@ class VehicleCustomizationRegistryTest {
             override fun onProjectionLayoutRequested(layout: ProjectionLayout) { seen = true }
         })
         registry.onProjectionLayoutRequested(ProjectionLayout.FULLSCREEN)
+        assertTrue(seen)
+        seen = false
+        registry.onProjectionLayoutConfirmed(ProjectionLayout.FULLSCREEN)
         assertTrue(seen)
     }
 

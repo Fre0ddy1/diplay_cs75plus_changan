@@ -431,18 +431,19 @@ object InCallClusterBridge {
         resumeOpenSeen = false
     }
 
+    /** One request boundary per confirmation; retries keep replies to the same source request. */
+    private fun armConfirmation(gen: Int) = synchronized(confirmationLock) {
+        if (gen == generation && resumeGeneration == gen && resumeRequestSerial == Long.MAX_VALUE) {
+            resumeRequestSerial = callbackSerial
+        }
+    }
+
     /** Rebind a bounded confirmation to the current vendor generation and its actual owner. */
     private fun confirmationControl(gen: Int, currentOwner: () -> Boolean): ProjectionControl =
         object : ProjectionControl {
             override fun requestLayout(layout: ProjectionLayout): Boolean {
                 if (gen != generation || !currentOwner()) return false
-                synchronized(confirmationLock) {
-                    if (resumeGeneration == gen) {
-                        resumeRequestSerial = callbackSerial
-                        resumeFullSeen = false
-                        resumeOpenSeen = false
-                    }
-                }
+                armConfirmation(gen)
                 return projectionControl.requestLayout(layout)
             }
             override fun invalidateConfirmation() {
@@ -545,7 +546,7 @@ object InCallClusterBridge {
                     if (confirmation.confirmed) mainHandler.post {
                         if (callbackGeneration == generation && openState) {
                             logSeq(generation, "fresh fullscreen and channel confirmed serial=${confirmation.serial}")
-                            VehicleCustomizations.onProjectionLayoutRequested(ProjectionLayout.FULLSCREEN)
+                            VehicleCustomizations.onProjectionLayoutConfirmed(ProjectionLayout.FULLSCREEN)
                             runCatching { projectingListener?.invoke(true) }
                         }
                     }
@@ -742,6 +743,9 @@ object InCallClusterBridge {
             synchronized(confirmationLock) { resumeGeneration = null }
             VehicleCustomizations.onProjectionStarted(context.applicationContext, true, scoped)
         }
+        // This sequence itself requests layout/source and may synchronously return the pair.
+        // Arm before its first write, not at the later bounded layout retry (car log 2026-10-30).
+        armConfirmation(gen)
         logSeq(generation, "current video window ready; dispatch actual content source handoff")
         runFullOpenSequence(keepFullscreen = lastCallbackValue[1] == 3, onDispatched = onDispatched)
     }
