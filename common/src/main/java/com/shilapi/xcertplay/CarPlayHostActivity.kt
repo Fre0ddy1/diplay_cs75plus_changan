@@ -2196,10 +2196,8 @@ class CarPlayHostActivity : ComponentActivity() {
         // stream. The stream's own start/stop edge is not enough: on this head unit the navigation
         // stream can stay open for minutes after a prompt, and keys routed that whole time adjust
         // the guidance level instead of the music (field report 2026-10-20). Only PCM written to
-        // the guidance track counts.
-        //
-        // With "no CarPlay audio" on there is no stream and no PCM at all, so this block stays out
-        // of the way: that mode claims the navigation channel for the whole session instead.
+        // the guidance track counts. Same signal as guidanceVolumePoll, so the window the keys are
+        // routed through and the window this handler acts on never disagree.
         if (navigationGuidanceActive && sink?.navigationAudioActive() == true &&
             event.action == KeyEvent.ACTION_DOWN &&
             event.repeatCount == 0 &&
@@ -2404,6 +2402,7 @@ class CarPlayHostActivity : ComponentActivity() {
         }
         mainHandler.removeCallbacks(refreshTurnOverlay)
         mainHandler.removeCallbacks(checkVideoFreeze)
+        mainHandler.removeCallbacks(guidanceVolumePoll)
         runCatching { repaintExecutor.shutdownNow() }
         mainHandler.removeCallbacks(hideDashboardAfterDisconnect)
         mainHandler.removeCallbacks(releaseDashboardAfterLongLoss)
@@ -4715,49 +4714,64 @@ class CarPlayHostActivity : ComponentActivity() {
      * While navigation guidance is playing, route the volume keys to the configured
      * navigation channel so the steering-wheel keys adjust guidance volume instead of
      * always adjusting media. Restores media routing when guidance stops.
+     *
+     * True from the navigation stream's start edge to its stop edge. That edge alone is not the
+     * prompt: on this head unit the stream stays open far longer than one announcement, so what
+     * decides the routing is the guidance PCM below, not this flag.
      */
     @Volatile private var navigationGuidanceActive = false
 
-    /**
-     * Ends the guidance volume window.
-     *
-     * The flag comes from the navigation stream's start/stop edges, and on this head unit that
-     * stream can stay open far longer than a prompt - the driver was left unable to raise the
-     * music for minutes because every volume key was routed to guidance, which also made the
-     * guidance volume itself drift down (field report 2026-10-20). A prompt is seconds long, so
-     * the routing is only trusted for this window and then handed back to media on its own.
-     */
-    private var guidanceWindowArmed = false
+    /** What the volume keys are currently pointed at, so the poll only acts on a change. */
+    private var guidanceKeysOnNavigation = false
 
-    private val endGuidanceVolumeWindow = Runnable {
-        if (isDestroyed || isFinishing) return@Runnable
-        guidanceWindowArmed = false
-        if (!navigationGuidanceActive) return@Runnable
-        navigationGuidanceActive = false
-        setVolumeControlStream(AudioManager.STREAM_MUSIC)
-        appendLog("Volume control stream: media（导航音量窗口结束，恢复媒体音量键）")
+    /**
+     * Follows the guidance PCM instead of a fixed window.
+     *
+     * This used to be a 12 s window armed on the stream's start edge, and both halves were wrong
+     * in the field: the window expired mid-drive and never re-armed while that same stream stayed
+     * open, so every later announcement was left adjusting media (2026-10-20: keys stuck the other
+     * way round for minutes), and a prompt shorter than the window still paid the full 12 s. The
+     * PCM is the honest signal - [AndroidMediaSink.navigationAudioActive] is true only while
+     * decoded guidance frames keep arriving, so a prompt ends the routing 2.5 s after its last
+     * frame and the next prompt claims it again.
+     */
+    // An object rather than a lambda: it re-posts itself, and a self-referencing lambda in an
+    // initializer is a recursive type for the compiler.
+    private val guidanceVolumePoll: Runnable = object : Runnable {
+        override fun run() {
+            if (isDestroyed || isFinishing) return
+            // The stream stays open for the whole drive, so the poll must keep running past any
+            // single prompt and hand the keys back and forth as prompts come and go.
+            if (!navigationGuidanceActive) return
+            val audible = sink?.navigationAudioActive() == true
+            if (audible != guidanceKeysOnNavigation) {
+                guidanceKeysOnNavigation = audible
+                if (audible) {
+                    val navChannel = AirPlayPersistence.loadNavigationAudioChannel(this@CarPlayHostActivity)
+                    setVolumeControlStream(navChannel)
+                    appendLog("Volume control stream: navigation($navChannel)（播报中）")
+                } else {
+                    setVolumeControlStream(AudioManager.STREAM_MUSIC)
+                    appendLog("Volume control stream: media（播报结束，恢复媒体音量键）")
+                }
+            }
+            mainHandler.postDelayed(this, GUIDANCE_VOLUME_POLL_MS)
+        }
     }
 
     private fun onNavigationGuidanceChanged(active: Boolean) {
         navigationGuidanceActive = active
         runOnUiThread {
             if (isDestroyed || isFinishing) return@runOnUiThread
-            val navChannel = AirPlayPersistence.loadNavigationAudioChannel(this)
-            if (active && navChannel > 0) {
-                setVolumeControlStream(navChannel)
-                appendLog("Volume control stream: navigation($navChannel)")
-                // Armed once per prompt burst: restarting the window on every start edge let a
-                // stream that keeps flapping hold the keys on guidance indefinitely.
-                if (!guidanceWindowArmed) {
-                    guidanceWindowArmed = true
-                    mainHandler.postDelayed(endGuidanceVolumeWindow, GUIDANCE_VOLUME_WINDOW_MS)
-                }
-            } else {
-                guidanceWindowArmed = false
-                mainHandler.removeCallbacks(endGuidanceVolumeWindow)
+            mainHandler.removeCallbacks(guidanceVolumePoll)
+            if (!active) {
+                guidanceKeysOnNavigation = false
                 setVolumeControlStream(AudioManager.STREAM_MUSIC)
                 appendLog("Volume control stream: media")
+                return@runOnUiThread
             }
+            // First check runs immediately so the very first prompt is routed without a delay.
+            guidanceVolumePoll.run()
         }
     }
 
@@ -7407,7 +7421,8 @@ class CarPlayHostActivity : ComponentActivity() {
          * a prompt is seconds long and the stream can stay open for minutes, so any fixed window
          * either cuts a long prompt short or holds the keys after the prompt ended.
          */
-        const val GUIDANCE_VOLUME_WINDOW_MS = 12_000L
+        /** How often the guidance PCM is checked while the navigation stream is up. */
+        const val GUIDANCE_VOLUME_POLL_MS = 1_000L
         /** Re-assert budget for a card stream the phone keeps sending panel-sized. */
         const val CARD_REASSERT_GAP_MS = 5_000L
         const val CARD_REASSERT_MAX_TRIES = 3
