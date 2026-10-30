@@ -17,8 +17,9 @@ object AirPlayInfoPlist {
     private const val DISPLAY_FEATURE_KNOBS = 0x02
     private const val DISPLAY_FEATURE_HIGH_FIDELITY_TOUCH = 0x08
     private const val CARPLAY_FEATURES = 0x615653aee2L
-    private const val CARPLAY_AUDIO_FEATURES = 0x10004540a00L
-    private val CARPLAY_FEATURES_NO_AUDIO = CARPLAY_FEATURES and CARPLAY_AUDIO_FEATURES.inv()
+    // The audio bits inside it are 0x10004540a00. They are always advertised now, even when this
+    // receiver plays nothing, because a phone that is told there is no audio never opens a
+    // guidance stream - and that stream is what tells us a prompt is playing.
 
     private const val RESOURCE_SCREEN = 1
     private const val RESOURCE_AUDIO = 2
@@ -50,9 +51,16 @@ object AirPlayInfoPlist {
         ),
     )
 
-    /** Discovery and /info must describe the same receiver capabilities. */
-    fun features(config: AirPlayConfig): Long =
-        if (config.disableAudioOutput) CARPLAY_FEATURES_NO_AUDIO else CARPLAY_FEATURES
+    /**
+     * Discovery and /info must describe the same receiver capabilities.
+     *
+     * Audio is advertised even when this receiver plays nothing: the phone only opens an audio
+     * stream to a receiver that claims one, and the stream's own metadata (`audioType`) is the
+     * only signal that says a guidance prompt has started or ended. A receiver that advertises
+     * no audio never learns that, so "keep CarPlay silent but still route the volume keys to the
+     * navigation channel during a prompt" needs the claim without the playback.
+     */
+    fun features(@Suppress("UNUSED_PARAMETER") config: AirPlayConfig): Long = CARPLAY_FEATURES
 
     fun build(config: AirPlayConfig): Map<String, Any?> {
         val displays = arrayListOf<Any?>(
@@ -76,12 +84,12 @@ object AirPlayInfoPlist {
             "rightHandDrive" to config.rightHandDrive,
             "keepAliveLowPower" to false,
             "keepAliveSendStatsAsBody" to false,
-            "modes" to modes(audioEnabled = !config.disableAudioOutput),
+            "modes" to modes(audioEnabled = true),
         )
-        if (!config.disableAudioOutput) {
-            info["audioLatencies"] = audioLatencies()
-            info["audioFormats"] = audioFormats(config.entertainmentSampleRate, config.microphone)
-        }
+        // Declared unconditionally: see features(). Whether the audio is rendered or dropped is
+        // decided by the sink, not by what the phone is told to send.
+        info["audioLatencies"] = audioLatencies()
+        info["audioFormats"] = audioFormats(config.entertainmentSampleRate, config.microphone)
         info["extendedFeatures"] = listOf("vocoderInfo", "enhancedRequestCarUI")
         info["displays"] = displays
         info["hidDevices"] = listOf(

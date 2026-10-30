@@ -2171,12 +2171,12 @@ class CarPlayHostActivity : ComponentActivity() {
             val navChannel = AirPlayPersistence.loadNavigationAudioChannel(this)
             val audio = getSystemService(AudioManager::class.java)
             val before = volumeLevels(audio, navChannel)
-            // While navigation guidance is actually audible, steer the volume keys to the guidance
-            // stream. The stream's own start/stop edge is not enough: on this head unit the
-            // navigation stream can stay open for minutes after a prompt, and keys routed that
-            // whole time adjust the guidance level instead of the music (field report 2026-10-20).
-            // Only PCM written to the guidance track counts.
-            val guidance = navigationGuidanceActive && sink?.navigationAudioActive() == true
+            // Only guidance PCM counts, not the stream's open/close edge: on this head unit that
+            // stream can stay open for minutes after a prompt, and keys routed that whole time
+            // adjust guidance instead of the music (field report 2026-10-20). The stream-edge
+            // flag is deliberately not required here - when CarPlay audio is set to silent the
+            // edges no longer arrive per prompt, but the decoded PCM still does.
+            val guidance = sink?.navigationAudioActive() == true
             if (guidance) {
                 // AudioManager exposes no constant for the framework's navigation stream (14);
                 // it is the stream that stock car guidance (usage NAVIGATION_GUIDANCE) maps to.
@@ -4472,17 +4472,16 @@ class CarPlayHostActivity : ComponentActivity() {
             oemLabel = oemLabel,
             icons = listOf(loadAirPlayIcon()),
             videoInCar = com.shilapi.xcertplay.hud.BydOutputSettings.videoWhileParkedActive(this),
-            // Audio stays on CarPlay by default: the car sends a wheel media key twice - once to
-            // this app, once over Bluetooth AVRCP to the phone - and with both paths live a single
-            // press skipped two tracks. The duplicate turned out to be the key, not the audio: the
-            // "B" build of 2026-10-19 dropped the audio route instead (the earlier no-audio
-            // advertisement, now the setting below) and silenced CarPlay, moved guidance to the
-            // car's Bluetooth and cost the navigation duck and the volume-key routing for nothing.
-            // So the wheel-key switch only stops us forwarding the key, and the audio route is a
-            // separate, explicit choice: a driver whose music already plays over the car's
-            // Bluetooth can advertise no audio at all (/info drops the audio feature bits and the
-            // audio formats, so the phone never asks for a stream - it is not a refused SETUP,
-            // which is what produced 1852797029 and the 40 s retry storm).
+            // The switch no longer takes the audio capability away, it takes the playback away.
+            //
+            // Advertising no audio at all was tried on 2026-10-19 and again on 2026-10-30: the
+            // phone then never opens a stream, so this app never learns that a guidance prompt
+            // started, and the wheel keys stay on media for the whole drive. Keeping the claim
+            // and dropping the sound instead leaves the guidance stream's `audioType` available
+            // as the prompt signal, which is what the volume-key routing and the navigation
+            // focus are driven by. The sink is put in silent mode for the same setting, so the
+            // two never disagree: this only decides what the phone is told, that decides
+            // whether a track is built.
             disableAudioOutput = AirPlayPersistence.loadCarPlayAudioDisabled(this),
         )
     }
@@ -4665,6 +4664,10 @@ class CarPlayHostActivity : ComponentActivity() {
             captureOnlyTypes = if (cardCaptureOnly) setOf(SCREEN_TYPE_ALT_CARD) else emptySet(),
             mediaChannel = AirPlayPersistence.loadMediaAudioChannel(this),
             navigationChannel = AirPlayPersistence.loadNavigationAudioChannel(this),
+            // Same switch as the advertisement above: the phone is told we take audio, and the
+            // sink builds no track for it. The guidance stream still arrives, so its start and
+            // stop edges keep driving the volume-key routing.
+            silentAudio = AirPlayPersistence.loadCarPlayAudioDisabled(this),
             navDuckPercent = { AirPlayPersistence.loadNavDuckPercent(this) },
             context = this,
             navigationStreamType = navigationStreamType,
@@ -4705,13 +4708,25 @@ class CarPlayHostActivity : ComponentActivity() {
      */
     private var guidanceWindowArmed = false
 
-    private val endGuidanceVolumeWindow = Runnable {
-        if (isDestroyed || isFinishing) return@Runnable
-        guidanceWindowArmed = false
-        if (!navigationGuidanceActive) return@Runnable
-        navigationGuidanceActive = false
-        setVolumeControlStream(AudioManager.STREAM_MUSIC)
-        appendLog("Volume control stream: media（导航音量窗口结束，恢复媒体音量键）")
+    // An object rather than a lambda: it re-posts itself, and a self-referencing lambda in an
+    // initializer is a recursive type for the compiler.
+    private val endGuidanceVolumeWindow: Runnable = object : Runnable {
+        override fun run() {
+            if (isDestroyed || isFinishing) return
+            // Still audible: extend instead of dropping the routing. A long prompt (a route
+            // announcement runs well past 12 s) keeps the keys on guidance, while a stream that
+            // merely stays open - the 2026-10-20 report of keys stuck on guidance for minutes -
+            // still falls back to media the moment the prompt itself stops.
+            if (navigationGuidanceActive && sink?.navigationAudioActive() == true) {
+                mainHandler.postDelayed(this, GUIDANCE_VOLUME_WINDOW_MS)
+                return
+            }
+            guidanceWindowArmed = false
+            if (!navigationGuidanceActive) return
+            navigationGuidanceActive = false
+            setVolumeControlStream(AudioManager.STREAM_MUSIC)
+            appendLog("Volume control stream: media（导航音量窗口结束，恢复媒体音量键）")
+        }
     }
 
     private fun onNavigationGuidanceChanged(active: Boolean) {

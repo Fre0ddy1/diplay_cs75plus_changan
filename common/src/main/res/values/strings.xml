@@ -643,9 +643,9 @@
     <string name="nav_duck_percent_hint">Music drops to this level while a prompt plays and comes back when it ends. Calls are never lowered; changes apply from the next prompt.</string>
     <string name="media_audio_via_bluetooth">Wheel media keys via car Bluetooth</string>
     <string name="media_audio_via_bluetooth_description">Only decides who answers the wheel media keys; it does not change where audio goes. When on, play/pause and track keys from the wheel are not forwarded to CarPlay and are left to the car Bluetooth (AVRCP) to control the phone, so one press is not answered twice.</string>
-    <string name="carplay_audio_disabled">Audio to car Bluetooth (no CarPlay audio)</string>
-    <string name="carplay_audio_disabled_description">DiPlay stops advertising audio, so the phone never opens an audio stream to it: music, guidance prompts and Siri all play through the car Bluetooth, with the car player, its volume and the wheel keys. The cost is that DiPlay no longer ducks the music under a prompt (the iPhone does it instead) and the guidance volume keys and the slider below stop working; music or podcasts in CarPlay may report that they cannot play. Reconnect to apply.</string>
-    <string name="carplay_audio_disabled_note">Audio is on the car Bluetooth: the iPhone ducks its own music during a prompt, so the music-level slider no longer applies. Turn the switch off and reconnect to let DiPlay play audio again.</string>
+    <string name="carplay_audio_disabled">Silent CarPlay (wheel keys follow guidance)</string>
+    <string name="carplay_audio_disabled_description">DiPlay still tells the phone it takes audio, but builds no audio output: nothing from CarPlay is played, so music and guidance stay on the car own route. The streams are kept only for their type, which is the one reliable signal that a guidance prompt is playing. During a prompt the wheel volume keys switch to the navigation channel set below, and they return to media when it ends. DiPlay no longer ducks anything. Reconnect to apply.</string>
+    <string name="carplay_audio_disabled_note">CarPlay audio is silent: the guidance stream still arrives, so the wheel volume keys move to the navigation channel while a prompt plays. The music level under a prompt no longer applies.</string>
     <string name="settings_group_frequent">Frequent</string>
     <string name="settings_group_connect">Connection</string>
     <string name="settings_group_display">Picture</string>
