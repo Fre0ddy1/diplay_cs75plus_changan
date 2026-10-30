@@ -723,32 +723,17 @@ class DiPlayActivity : ComponentActivity() {
             navigationChannelControl(card)
             // Who answers the wheel's media keys. With it on, this app swallows them so the car's
             // Bluetooth (AVRCP) controls the phone once instead of the press being handled twice.
-            // It is not an audio-route switch - see the next one for that.
             toggle(card, getString(R.string.media_audio_via_bluetooth),
                 getString(R.string.media_audio_via_bluetooth_description),
                 AirPlayPersistence.loadMediaViaCarBluetooth(this)) {
                 AirPlayPersistence.saveMediaViaCarBluetooth(this, it)
                 render()
             }
-            // The audio route itself: on (default) the phone streams music, prompts and Siri into
-            // this app, which is what the duck and the guidance volume keys are built on. Off, the
-            // receiver advertises no audio at all, so the phone keeps everything on its own route
-            // - the car's Bluetooth - and none of it passes through here.
-            val audioDisabled = AirPlayPersistence.loadCarPlayAudioDisabled(this)
-            toggle(card, getString(R.string.carplay_audio_disabled),
-                getString(R.string.carplay_audio_disabled_description), audioDisabled) { disabled ->
-                AirPlayPersistence.saveCarPlayAudioDisabled(this, disabled)
-                // /info carries the audio capability, so it only changes with a new session.
-                if (CarPlayBackgroundSession.hasSession()) connect(AirPlayPersistence.loadWirelessEnabled(this))
-                render()
-            }
-            if (audioDisabled) {
-                card.addView(label(getString(R.string.carplay_audio_disabled_note), 13, MUTED).apply {
-                    setPadding(0, dp(6), 0, dp(12))
-                })
-            } else {
-                navDuckPercentControl(card)
-            }
+            // Audio always stays on CarPlay: this app can only steer the wheel keys when it owns
+            // the stream a prompt plays on. Advertising no audio was built twice and removed twice
+            // - the phone then played everything on the car's Bluetooth media path, so the
+            // navigation channel the keys pointed at had no sound in it.
+            navDuckPercentControl(card)
         }
         activeSectionGroups = GROUP_CONNECT
         section(content, getString(R.string.location), R.drawable.ic_dp_navigation) { card ->

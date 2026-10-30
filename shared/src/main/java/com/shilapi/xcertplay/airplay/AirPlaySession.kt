@@ -511,7 +511,7 @@ class AirPlaySession(
                         "audioLatencies=${(info["audioLatencies"] as? List<*>)?.size ?: 0}",
                 )
                 // Also into the exported session log: the features bitmask / audio format count is
-                // how an audio-less advertisement (disableAudioOutput) is recognised after the fact.
+                // the first thing to look at when the phone opens no audio stream at all.
                 debugLog(
                     "airplay /info features=${info["features"]} " +
                         "audioFormats=${(info["audioFormats"] as? List<*>)?.size ?: 0} " +

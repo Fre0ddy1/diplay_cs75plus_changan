@@ -2393,7 +2393,6 @@ class CarPlayHostActivity : ComponentActivity() {
     }
 
     override fun onDestroy() {
-        releaseSessionNavigationFocus()
         if (CarPlayBackgroundSession.logger != null) CarPlayBackgroundSession.logger = null
         InCallClusterBridge.projectingListener = null
         if (clusterDisplayListenerRegistered) {
@@ -4503,18 +4502,12 @@ class CarPlayHostActivity : ComponentActivity() {
             oemLabel = oemLabel,
             icons = listOf(loadAirPlayIcon()),
             videoInCar = com.shilapi.xcertplay.hud.BydOutputSettings.videoWhileParkedActive(this),
-            // Audio stays on CarPlay by default: the car sends a wheel media key twice - once to
-            // this app, once over Bluetooth AVRCP to the phone - and with both paths live a single
-            // press skipped two tracks. The duplicate turned out to be the key, not the audio: the
-            // "B" build of 2026-10-19 dropped the audio route instead (the earlier no-audio
-            // advertisement, now the setting below) and silenced CarPlay, moved guidance to the
-            // car's Bluetooth and cost the navigation duck and the volume-key routing for nothing.
-            // So the wheel-key switch only stops us forwarding the key, and the audio route is a
-            // separate, explicit choice: a driver whose music already plays over the car's
-            // Bluetooth can advertise no audio at all (/info drops the audio feature bits and the
-            // audio formats, so the phone never asks for a stream - it is not a refused SETUP,
-            // which is what produced 1852797029 and the 40 s retry storm).
-            disableAudioOutput = AirPlayPersistence.loadCarPlayAudioDisabled(this),
+            // Audio always stays on CarPlay. Advertising no audio at all was built twice and
+            // removed twice: the phone then keeps its sound on the car's Bluetooth, where the
+            // head unit plays it on its media path, so the navigation channel the wheel keys
+            // then point at carries no sound at all (field 2026-10-30 20:55: the channel was
+            // already at 15/15 and the prompt level never moved, while media became
+            // unadjustable). The wheel-key switch only stops us forwarding the key.
         )
     }
 
@@ -4769,65 +4762,6 @@ class CarPlayHostActivity : ComponentActivity() {
     }
 
     /**
-     * 会话级导航音频焦点（"音频交给车机蓝牙"打开时）。
-     *
-     * 这一档不向 iPhone 声明音频能力，所以本机收不到任何 CarPlay 音频流，也就没有任何
-     * "正在播报"的信号可用。因此不再等播报：连接成功即把音频焦点连同音量键默认流一起
-     * 声明到设置里的导航音频流（默认 10），整场会话持有，断开时释放。这正是车机自带
-     * 高德的形态——它全程占着导航通道，音量键自然落到该通道。
-     *
-     * 焦点用旧接口按 stream 声明：AudioFocusRequest 只接受 AudioAttributes，无法指定
-     * 具体的 stream，而这里要的恰好是"某个通道"。
-     */
-    @Volatile private var sessionNavigationFocusHeld = false
-    @Volatile private var sessionNavigationFocusChannel = -1
-
-    private fun holdSessionNavigationFocus() {
-        if (!AirPlayPersistence.loadCarPlayAudioDisabled(this)) {
-            // The switch went off after a session where it was on: give the channel back.
-            releaseSessionNavigationFocus()
-            return
-        }
-        val channel = AirPlayPersistence.loadNavigationAudioChannel(this)
-        if (channel <= 0) return
-        if (sessionNavigationFocusHeld && sessionNavigationFocusChannel == channel) return
-        releaseSessionNavigationFocus()
-        setVolumeControlStream(channel)
-        val manager = getSystemService(AudioManager::class.java)
-        val request = if (manager == null) {
-            AudioManager.AUDIOFOCUS_REQUEST_FAILED
-        } else {
-            runCatching {
-                @Suppress("DEPRECATION")
-                manager.requestAudioFocus(null, channel, AudioManager.AUDIOFOCUS_GAIN)
-            }.getOrElse { error ->
-                Log.w(TAG, "session nav focus failed channel=$channel", error)
-                AudioManager.AUDIOFOCUS_REQUEST_FAILED
-            }
-        }
-        val granted = request == AudioManager.AUDIOFOCUS_REQUEST_GRANTED
-        sessionNavigationFocusHeld = granted
-        sessionNavigationFocusChannel = if (granted) channel else -1
-        appendLog(
-            "Volume control stream: navigation($channel) 全程 " +
-                "focus=${if (granted) "granted" else "denied($request)"} " +
-                volumeLevels(manager, channel),
-        )
-    }
-
-    private fun releaseSessionNavigationFocus() {
-        if (!sessionNavigationFocusHeld) return
-        sessionNavigationFocusHeld = false
-        sessionNavigationFocusChannel = -1
-        val manager = getSystemService(AudioManager::class.java)
-        runCatching {
-            @Suppress("DEPRECATION")
-            manager?.abandonAudioFocus(null)
-        }
-        appendLog("Volume control stream: navigation focus released")
-    }
-
-    /**
      * Media route snapshot taken when a session comes up.
      *
      * Written for the "first connection leaves the car's media volume at 0" report (2026-10-18),
@@ -4838,10 +4772,7 @@ class CarPlayHostActivity : ComponentActivity() {
      */
     private fun watchMediaAudioRoute() {
         val enabled = AirPlayPersistence.loadMediaViaCarBluetooth(this)
-        appendLog(
-            "媒体路由: 方向盘媒体键交给车机蓝牙=$enabled " +
-                "CarPlay不宣告音频=$enabled",
-        )
+        appendLog("媒体路由: 方向盘媒体键交给车机蓝牙=$enabled")
         if (!enabled) return
         val am = getSystemService(AudioManager::class.java) ?: return
         for (delay in listOf(0L, 2_000L, 6_000L)) {
@@ -5142,10 +5073,6 @@ class CarPlayHostActivity : ComponentActivity() {
                     lastCardReassertAtMs = 0L
                     sessionStartedAtElapsedMs = android.os.SystemClock.elapsedRealtime()
                     watchMediaAudioRoute()
-                    // "音频交给车机蓝牙" means this session carries no audio at all, so there is
-                    // no prompt to wait for: the navigation channel is claimed here, once, and
-                    // held for the whole session.
-                    holdSessionNavigationFocus()
                     maybeAutoProjectOnConnect()
                     // A connection made while navigation is already running has no transition to
                     // react to: seed the auto-switch once so it still lands on nav-only.
@@ -5164,9 +5091,6 @@ class CarPlayHostActivity : ComponentActivity() {
                     stopCardH264Recording("session ended")
                     if (activeAirPlaySession === session) activeAirPlaySession = null
                     CarPlayBackgroundSession.active = false
-                    // Before any early return below: the channel claim must not outlive the
-                    // session it was taken for.
-                    releaseSessionNavigationFocus()
                     // A new session is a new connection: allow auto-project to fire again after
                     // any reconnect. restartCarPlay() also resets these, but some reconnect paths
                     // early-return before that reset (handshakeReset/menuOpen), which would leave

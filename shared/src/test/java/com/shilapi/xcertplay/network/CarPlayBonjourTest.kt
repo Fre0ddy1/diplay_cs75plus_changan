@@ -54,14 +54,11 @@ class CarPlayBonjourTest {
         )
     }
 
-    @Test fun discoveryFeaturesAgreeWithInfoForAudioEnabledAndDisabled() {
-        for (disabled in listOf(false, true)) {
-            val receiver = config.copy(disableAudioOutput = disabled)
-            val parts = CarPlayBonjourProtocol.airPlayTxtRecords(receiver, identity).getValue("features")
-                .split(',').map { it.removePrefix("0x").toLong(16) }
-            val decoded = parts[0] or ((parts.getOrElse(1) { 0L }) shl 32)
-            assertEquals(com.shilapi.xcertplay.airplay.AirPlayInfoPlist.build(receiver)["features"], decoded)
-        }
+    @Test fun discoveryFeaturesAgreeWithInfo() {
+        val parts = CarPlayBonjourProtocol.airPlayTxtRecords(config, identity).getValue("features")
+            .split(',').map { it.removePrefix("0x").toLong(16) }
+        val decoded = parts[0] or ((parts.getOrElse(1) { 0L }) shl 32)
+        assertEquals(com.shilapi.xcertplay.airplay.AirPlayInfoPlist.build(config)["features"], decoded)
         assertEquals("0xffffffff", CarPlayBonjourProtocol.featuresTxt(0xffffffffL))
     }
 

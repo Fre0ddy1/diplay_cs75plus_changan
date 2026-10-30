@@ -137,8 +137,9 @@ class CarPlayMediaEngine(
         // commands ("疯狂切歌"), an unusable CarPlay screen and iOS reporting
         // "这项操作无法完成，发生未知错误 (1852797029)" until the session was dropped. Music audio
         // is therefore still accepted and dropped at the sink (see AndroidMediaSink), which is
-        // silent for the cabin but stable; making iOS really use A2DP needs a consistent
-        // no-audio advertisement in /info (AirPlayConfig.disableAudioOutput), not a refusal here.
+        // silent for the cabin but stable. Making iOS really use A2DP needs a consistent
+        // no-audio advertisement in /info, which cannot be combined with steering the wheel keys
+        // to the navigation channel: on the car's Bluetooth that channel carries no sound.
 
         val key = outputKey(session, stream) ?: return null
         val format = AudioStreamCodec.fromFormatBits(

@@ -62,12 +62,6 @@ object AirPlayPersistence {
      * gets working wheel keys back, which is the smaller surprise of the two).
      */
     private const val KEY_MEDIA_AUDIO_VIA_BLUETOOTH = "media_audio_via_bluetooth"
-    /**
-     * Advertise CarPlay without any audio at all (no audio feature bits, no audioFormats in
-     * /info). The phone then never opens an audio stream to this app and keeps its own route -
-     * the car's Bluetooth - for music, guidance and Siri.
-     */
-    private const val KEY_CARPLAY_AUDIO_DISABLED = "carplay_audio_disabled"
     private const val KEY_NAV_DUCK_PERCENT = "nav_duck_percent"
     private const val KEY_MEDIA_AUDIO_CHANNEL = "media_audio_channel"
     private const val KEY_NAVIGATION_AUDIO_CHANNEL = "navigation_audio_channel"
@@ -238,25 +232,6 @@ object AirPlayPersistence {
         // power cut (field 2026-10-18: "音乐走车机蓝牙未持久化" after an adb reboot).
         context.getSharedPreferences(PREFS, Context.MODE_PRIVATE).edit()
             .putBoolean(KEY_MEDIA_AUDIO_VIA_BLUETOOTH, enabled)
-            .commit()
-    }
-
-    /**
-     * True when CarPlay is advertised without audio (see [KEY_CARPLAY_AUDIO_DISABLED]).
-     *
-     * Default off: the factory behaviour is audio on CarPlay, where this app knows the volume of
-     * the guidance prompt and can duck the music under it. Turning it on hands the whole audio
-     * path to the phone and the car's Bluetooth - which is what a driver who already plays music
-     * over Bluetooth wants - at the cost of the duck, the guidance volume keys and Siri in here.
-     */
-    fun loadCarPlayAudioDisabled(context: Context): Boolean =
-        context.getSharedPreferences(PREFS, Context.MODE_PRIVATE)
-            .getBoolean(KEY_CARPLAY_AUDIO_DISABLED, false)
-
-    fun saveCarPlayAudioDisabled(context: Context, disabled: Boolean) {
-        // commit() for the same reason as above: this one is flipped right before a reconnect.
-        context.getSharedPreferences(PREFS, Context.MODE_PRIVATE).edit()
-            .putBoolean(KEY_CARPLAY_AUDIO_DISABLED, disabled)
             .commit()
     }
 
@@ -1079,8 +1054,7 @@ object AirPlayPersistence {
             "Saved audio: musicBufferMs=${loadMediaBufferMillis(context)} " +
                 "duckPercent=${loadNavDuckPercent(context)} " +
                 "audioFocus=${loadAudioFocusEnabled(context)} " +
-                "mediaViaCarBluetooth=${loadMediaViaCarBluetooth(context)} " +
-                "carplayAudioDisabled=${loadCarPlayAudioDisabled(context)}",
+                "mediaViaCarBluetooth=${loadMediaViaCarBluetooth(context)}",
         )
         appendLine(
             "Saved video: hevc=${loadHevcEnabled(context)} fps=${loadFps(context)} " +
