@@ -804,55 +804,6 @@ class DiPlayActivity : ComponentActivity() {
                 card.addView(label(getString(R.string.cluster_content_hint), 13, MUTED).apply {
                     setPadding(0, 0, 0, dp(10))
                 })
-                // 卡窗安全区（实验项，2026-10-30）：iOS 27.2 把 instructioncard 的卡画得很小。
-                // 手机是把卡画在「安全区矩形」里并缩放到填满，所以**百分比越小卡越大**：
-                // 0 = 原生 480×200（系统退回小卡，别用），10% 安全区约 484×180，30% 约 466×106，
-                // 50% 只剩 16px 一条线（实车 10:47 就是一条线）。这个百分比同时把协商画布从
-                // 480×200 基准放大同比例（10% -> 528×224）；卡窗再把安全区裁出来按高度填满，
-                // 放大倍数 = 窗口高/安全区高，所以百分比越大越糊。
-                // 负值会被手机拒绝连接，所以范围 0-50。只有 FLY_CARD 用卡窗，其他模式不受影响；
-                // /info 每会话只读一次，松手热重启才生效。
-                runCatching {
-                    val safeTitle = label(getString(R.string.cluster_card_safe_title), 16, TEXT, true)
-                    safeTitle.setPadding(0, dp(12), 0, 0)
-                    val safeValue = label(
-                        "${AirPlayPersistence.loadClusterCardSafeInsetPct(this@DiPlayActivity)} %",
-                        16, ACCENT, true,
-                    )
-                    val safeHead = LinearLayout(this).apply {
-                        orientation = LinearLayout.HORIZONTAL
-                        gravity = Gravity.CENTER_VERTICAL
-                        addView(safeTitle, LinearLayout.LayoutParams(0, -2, 1f))
-                        addView(safeValue)
-                    }
-                    card.addView(safeHead, LinearLayout.LayoutParams(ViewGroup.LayoutParams.MATCH_PARENT, ViewGroup.LayoutParams.WRAP_CONTENT))
-                    val safeSlider = SeekBar(this).apply {
-                        max = 50
-                        progress = AirPlayPersistence.loadClusterCardSafeInsetPct(this@DiPlayActivity)
-                        // Same reason as the crop slider: no setMinHeight, the ROM strips it.
-                        setOnSeekBarChangeListener(object : SeekBar.OnSeekBarChangeListener {
-                            override fun onProgressChanged(seekBar: SeekBar?, progress: Int, fromUser: Boolean) {
-                                safeValue.text = "$progress %"
-                                if (fromUser) {
-                                    AirPlayPersistence.saveClusterCardSafeInsetPct(this@DiPlayActivity, progress)
-                                }
-                            }
-
-                            override fun onStartTrackingTouch(seekBar: SeekBar?) {}
-                            override fun onStopTrackingTouch(seekBar: SeekBar?) {
-                                // Hot restart keeps the projection window and both stream surfaces,
-                                // so the head unit does not re-announce "全屏导航已开启".
-                                reconnectForClusterMap()
-                            }
-                        })
-                    }
-                    card.addView(safeSlider, LinearLayout.LayoutParams(-1, dp(44)))
-                    card.addView(label(getString(R.string.cluster_card_safe_hint), 13, MUTED).apply {
-                        setPadding(0, 0, 0, dp(10))
-                    })
-                }.onFailure { e ->
-                    clusterUiLog("卡窗安全区控件渲染失败: ${e.message ?: e.javaClass.simpleName}")
-                }
                 card.addView(button(getString(R.string.cluster_crop_adjust), false) {
                     startActivity(Intent(this, CarPlayHostActivity::class.java)
                         .putExtra("cluster_crop_controls", true).addFlags(Intent.FLAG_ACTIVITY_REORDER_TO_FRONT))

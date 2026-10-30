@@ -98,8 +98,6 @@ internal class ClusterMapPresentation(
     private var cardCropTop = 0
     private var cardCropWidth = CarPlayClusterDisplay.CARD_WIDTH_PIXELS
     private var cardCropHeight = CarPlayClusterDisplay.CARD_HEIGHT_PIXELS
-    /** Safe-area percent last applied to the card picture; -1 forces the first apply. */
-    private var cardCropScalePct = -1
     /** Panel coordinates the card window was last laid out at, i.e. AFTER the clamp (FLY_CARD). */
     private var cardWindowLeft = CARD_LEFT_PX
     private var cardWindowTop = CARD_TOP_PX
@@ -612,7 +610,6 @@ internal class ClusterMapPresentation(
         }
         root.addView(container, cardWindowParams())
         applyCardWindowVisibility()
-        applyCardCropTransform()
         Log.i(
             TAG,
             "cluster card window created buffer=${cardStreamWidth}x$cardStreamHeight " +
@@ -658,10 +655,6 @@ internal class ClusterMapPresentation(
             geometry.cropWidth == cardCropWidth &&
             geometry.cropHeight == cardCropHeight
         ) {
-            // Same picture size, but the safe-area setting may have changed since: it is a
-            // declaration the phone reads at connect time, so a reconnect re-fires this with an
-            // unchanged geometry and still has to re-apply the crop.
-            applyCardCropTransform()
             return
         }
         cardStreamWidth = geometry.streamWidth
@@ -681,70 +674,12 @@ internal class ClusterMapPresentation(
             }
         }
         cardContainer?.layoutParams = cardWindowParams()
-        applyCardCropTransform()
         Log.i(
             TAG,
             "cluster card buffer=${cardStreamWidth}x$cardStreamHeight " +
                 "crop=${cardCropLeft},${cardCropTop} ${cardCropWidth}x$cardCropHeight " +
                 "window at $cardWindowLeft,$cardWindowTop",
         )
-    }
-
-    /**
-     * 卡窗画面变换：把 safeArea 那块矩形裁出来，按高度基准等比放大填满卡窗。
-     *
-     * iOS 是把卡画在「安全区矩形」里的（2026-10-30 实车：30% 时暗像素正好从 inset 起、到
-     * 画布边 inset 止），所以矩形以外全是空的。这里把矩形裁出来放大填满窗口，卡就能占满整个
-     * 卡窗，而不是缩在角落里。
-     *
-     * 放大倍数 = 窗口高 / 矩形高，所以**百分比越大倍数越大、越糊**；协商画布也已经随同一个
-     * 百分比放大（`CarPlayClusterDisplay.cardConfig` 的 safeInsetPct），小百分比时倍数接近 1，
-     * 几乎不掉画质。0% 走老逻辑，原样 1:1 不裁不缩。
-     *
-     * 司机 2026-10-30 的规则：高度为基准、左上角对齐、超出的右边/下边裁掉。居中裁过一次，
-     * 把左上那行字裁没了，只剩一个「米」。
-     */
-    private fun applyCardCropTransform() {
-        val texture = cardTextureView ?: return
-        val pct = AirPlayPersistence.loadClusterCardSafeInsetPct(context).coerceIn(0, 50)
-        if (pct == cardCropScalePct) return
-        cardCropScalePct = pct
-        if (pct == 0) {
-            texture.setTransform(Matrix())
-            Log.i(TAG, "cluster card 1:1 (0 % safe area) window=${cardVideoWidth}x$cardVideoHeight")
-            return
-        }
-        val viewW = cardVideoWidth
-        val viewH = cardVideoHeight
-        if (viewW <= 0 || viewH <= 0) return
-        // Same arithmetic as the declaration in cardConfig(): the safe rectangle is the canvas
-        // inset by pct of its short edge on every side.
-        val shortEdge = minOf(viewW, viewH)
-        val inset = (shortEdge * pct / 100).coerceAtMost((shortEdge - 16) / 2)
-        val srcW = viewW - 2 * inset
-        val srcH = viewH - 2 * inset
-        if (srcW <= 0 || srcH <= 0) return
-        val scale = viewH.toFloat() / srcH
-        // Anchored at the rectangle's top-left: that is where the phone actually paints (measured
-        // on the 30 % screenshot the card's text sat at x 13-85 of the 360 px old rectangle, the
-        // rest empty), so the crop must start there and throw away the right/bottom overflow.
-        val dx = -inset * scale
-        val dy = -inset * scale
-        texture.setTransform(Matrix().apply {
-            setScale(scale, scale)
-            postTranslate(dx, dy)
-        })
-        Log.i(
-            TAG,
-            "cluster card crop pct=$pct inset=$inset src=${srcW}x$srcH " +
-                "scale=${"%.2f".format(scale)} window=${viewW}x$viewH buffer=${cardStreamWidth}x$cardStreamHeight",
-        )
-    }
-
-    /** Re-applies the safe-area crop after the setting changed (called from the host). */
-    fun refreshCardCropTransform() {
-        cardCropScalePct = -1
-        applyCardCropTransform()
     }
 
     /** Live card window frame on the panel: left, top, width, height. Null when not created. */

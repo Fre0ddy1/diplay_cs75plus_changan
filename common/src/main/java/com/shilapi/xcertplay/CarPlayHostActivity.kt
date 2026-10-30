@@ -562,7 +562,8 @@ class CarPlayHostActivity : ComponentActivity() {
     /** Last decoded size of stream 112 (the card normally, the map when reversed). */
     @Volatile private var lastCardStreamSize: Pair<Int, Int>? = null
     /** Last full geometry of stream 111, so the card view can reuse its crop after a swap. */
-    @Volatile private var lastAltGeometry: com.shilapi.xcertplay.media.ScreenStreamGeometry? = null    /** The start-up channel watcher; the only component allowed to send the activation sequence. */
+    @Volatile private var lastAltGeometry: com.shilapi.xcertplay.media.ScreenStreamGeometry? = null
+    /** The start-up channel watcher; the only component allowed to send the activation sequence. */
     private var watcherThread: Thread? = null
     /** Last channel state the watcher sampled. Every swipe decision reads this, not incall. */
     @Volatile private var watcherChannelOpen = false
@@ -2015,18 +2016,6 @@ class CarPlayHostActivity : ComponentActivity() {
      * FLY_CARD window is always exactly the size of the picture the phone sends.
      */
     private fun onClusterCardVideoSize(geometry: com.shilapi.xcertplay.media.ScreenStreamGeometry) {
-        // Belt and braces on top of the swap bookkeeping: a panel-sized picture is NEVER the card
-        // canvas. It means the routing is off (or the phone is mid-renegotiation), and laying it
-        // out 1:1 would cover the whole dashboard with the map - the "no navigation card" the
-        // driver saw on 2026-10-30. Ignore it until a card-sized geometry arrives; the window then
-        // simply stays hidden, which is what the mode looks like before guidance starts anyway.
-        if (looksLikePanelSize(geometry.cropWidth, geometry.cropHeight)) {
-            appendLog(
-                "Cluster card: ignoring panel-sized ${geometry.cropWidth}x${geometry.cropHeight} " +
-                    "(swapped=$clusterStreamsSwapped) - not a card canvas",
-            )
-            return
-        }
         appendLog(
             "Cluster card stream ${geometry.streamWidth}x${geometry.streamHeight} " +
                 "crop=${geometry.cropLeft},${geometry.cropTop} ${geometry.cropWidth}x${geometry.cropHeight}",
@@ -4399,20 +4388,15 @@ class CarPlayHostActivity : ComponentActivity() {
         // The instruction-card display is advertised ONLY in FLY_CARD mode. Declaring the panel
         // (a full 1920x720) made the iPhone stream a full-screen card that covered the dashboard
         // (field 2026-10-26 18:52: stream 1920x720, drawn 1920x720 at 0,0), so it stays a
-        // dedicated small display based on the native 480x200. Enlarging the canvas alone
-        // (960x480, then 960x400) only produced a bigger window with more whitespace - iOS 27.2
-        // kept the type tiny either way (driver, tested repeatedly, 2026-10-29). What finally
-        // moved the card's size was the safe-area inset (2026-10-30), so ONE percentage now does
-        // both: inset the safe area and grow the canvas by the same amount, and the window shows
-        // the result 1:1 instead of upscaling it.
+        // dedicated small display at the card's native 480x200. Enlarging the canvas (960x480,
+        // then 960x400) only produced a bigger window with more whitespace; iOS 27.2 keeps the
+        // type tiny either way, so the size is back to native and the type is left to a later iOS
+        // release (driver, tested repeatedly, 2026-10-29).
         val cardDisplay = if (CarPlayClusterDisplay.isFlyCard(AirPlayPersistence.loadClusterContent(this))) {
-            val cardSafeInsetPct =
-                AirPlayPersistence.loadClusterCardSafeInsetPct(this)
-            CarPlayClusterDisplay.cardConfig(safeInsetPct = cardSafeInsetPct).also {
+            CarPlayClusterDisplay.cardConfig().also {
                 appendLog(
                     "Cluster card display: canvas=${it.widthPixels}x${it.heightPixels} " +
                         "physical=${it.widthPhysicalMm}x${it.heightPhysicalMm}mm " +
-                        "safeInsetPct=$cardSafeInsetPct safeArea=${it.safeArea} " +
                         "url=${it.initialUrl}",
                 )
             }
@@ -5240,16 +5224,6 @@ class CarPlayHostActivity : ComponentActivity() {
         }
         startDeferred = false
         clusterUiReasserted = false
-        // A swap decision belongs to ONE session. The phone re-creates both type-111 streams on
-        // every connection and again whenever navigation starts, so a reversal seen before the
-        // drop says nothing about the new session. Keeping the flag was what made the reconnect
-        // after a navigation-start drop treat the new session's panel-sized MAP stream as the
-        // card: the card window was laid out 1920x720 over the whole dashboard and the driver saw
-        // "no navigation card" (field 2026-10-30 10:48).
-        clusterStreamsSwapped = false
-        lastAltStreamSize = null
-        lastCardStreamSize = null
-        lastAltGeometry = null
         val controllerGeneration = restartGeneration
         val config = createRuntimeConfig()
         val airPlayConfig = createAirPlayConfig(size)

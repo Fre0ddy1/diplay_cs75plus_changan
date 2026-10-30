@@ -382,8 +382,6 @@
     <string name="cluster_content_flycard">Apple 完整导航</string>
     <string name="cluster_content_apple_combined">Apple 地图+卡片（单流）</string>
     <string name="cluster_content_hint">各来源都是手机推过来的画面；切换会自动重连，因为地址在建窗口时就定死了。</string>
-    <string name="cluster_card_safe_title">卡窗安全区 %（越小卡越大）</string>
-    <string name="cluster_card_safe_hint">只影响「Apple 完整导航」的小卡窗。手机是把卡画在「安全区矩形」里的，所以百分比越小、卡越大：0 = 原生 480×200（iOS 27.2 在这里会退回小卡，别用），10% 安全区约 484×180，30% 约 466×106，50% 只剩 16px 一条线。这个百分比同时把协商画布从 480×200 放大同比例（10% → 528×224），卡窗再把安全区那块裁出来按高度填满（放大倍数 = 窗口高 ÷ 安全区高，所以百分比越大越糊）。建议 5–10%；负值连不上，松手自动重连。</string>
     <string name="cluster_card_diagnostics">诊断：卡片流按仪表全尺寸并录制 H.264</string>
     <string name="cluster_card_diagnostics_desc">仅“Apple 完整导航（双流）”生效。开启后卡片显示按仪表尺寸（如 1920×720）声明并自动重连；每次开始导航时把卡片流的原始 H.264 保存到日志目录，文件名为 card-112-时间.h264，可离线播放。</string>
     <string name="cluster_card_song_max_chars">歌曲卡最大字数</string>
