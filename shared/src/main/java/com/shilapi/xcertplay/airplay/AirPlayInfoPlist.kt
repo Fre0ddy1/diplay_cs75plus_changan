@@ -76,7 +76,7 @@ object AirPlayInfoPlist {
             "rightHandDrive" to config.rightHandDrive,
             "keepAliveLowPower" to false,
             "keepAliveSendStatsAsBody" to false,
-            "modes" to modes(),
+            "modes" to modes(audioEnabled = !config.disableAudioOutput),
         )
         if (!config.disableAudioOutput) {
             info["audioLatencies"] = audioLatencies()
@@ -120,8 +120,14 @@ object AirPlayInfoPlist {
         "unborrowConstraint" to CONSTRAINT_ANYTIME,
     )
 
-    private fun modes(): Map<String, Any?> = linkedMapOf(
-        "resources" to listOf(resource(RESOURCE_SCREEN), resource(RESOURCE_AUDIO)),
+    private fun modes(audioEnabled: Boolean): Map<String, Any?> = linkedMapOf(
+        // A receiver that advertises no audio must not list an audio resource either: the phone
+        // reads the mode description and the feature bits together, and a mode that still offers
+        // audio keeps it asking for a stream the receiver said it cannot play.
+        "resources" to listOfNotNull(
+            resource(RESOURCE_SCREEN),
+            if (audioEnabled) resource(RESOURCE_AUDIO) else null,
+        ),
         // Declared again after the A/B test of 2026-10-19: removing appStates did not shorten the
         // two-second blank before an app appears (the phone simply sends no frames while it
         // launches the app), so this stays as upstream declares it.
