@@ -122,7 +122,7 @@
 
 
 
-* 当前版本：**v0.2.22-hud-test**（versionName `0.2.22-hud-test`，versionCode 37，debug 签名，包名 `com.shihab.diplay.hudtest`）
+* 当前版本：**v0.2.23-hud-test**（versionName `0.2.23-hud-test`，versionCode 38，debug 签名，包名 `com.shihab.diplay.hudtest`）
 
 * Release 页提供编译好的 APK（`dica.apk`），可直接覆盖安装
 
