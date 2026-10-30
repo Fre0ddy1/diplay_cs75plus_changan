@@ -4663,7 +4663,8 @@ class CarPlayHostActivity : ComponentActivity() {
         object : AirPlaySessionListener {
             private val diagnosticLog = sessionLog
             private val audioResources = com.shilapi.xcertplay.airplay.CarPlayAudioResources()
-            private var resourceSession: AirPlaySession? = null
+            // A recreated page adopts a live session without another onSessionActive callback.
+            private var resourceSession: AirPlaySession? = activeAirPlaySession
 
             /**
              * The phone's own audio-interruption commands. iOS sends these when one of its sounds
@@ -4792,6 +4793,8 @@ class CarPlayHostActivity : ComponentActivity() {
                 }
             }
 
+            override val wantsTrace: Boolean get() = false
+
             override fun onDebugLog(message: String) {
                 if (DiagnosticRedactor.redact(message) == null) return
                 if (message.startsWith(CarPlayController.CONNECTION_DIAGNOSTIC_PREFIX + " ")) {
@@ -4905,6 +4908,7 @@ class CarPlayHostActivity : ComponentActivity() {
         }
         videoView?.let { updateVideoLayout(it.width, it.height) }
         val generation = restartGeneration
+        activeAirPlaySession = snapshot.controller.activeAirPlaySession()
         snapshot.controller.attachUi(
             createSessionListener(generation),
             createStatusReporter(generation),
