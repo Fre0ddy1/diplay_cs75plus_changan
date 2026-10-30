@@ -2128,6 +2128,21 @@ class CarPlayHostActivity : ComponentActivity() {
         else -> false
     }
 
+    /**
+     * `stream=level/max` for the two channels the wheel keys fight over: guidance and media.
+     *
+     * Diagnostic only. A level that does not move after [android.media.AudioManager.adjustStreamVolume]
+     * means the unit does not run that channel, and no amount of key routing can change the prompt.
+     */
+    private fun volumeLevels(audio: AudioManager?, navChannel: Int): String {
+        val manager = audio ?: return "no-audio-service"
+        fun level(stream: Int): String = runCatching {
+            "$stream=${manager.getStreamVolume(stream)}/${manager.getStreamMaxVolume(stream)}"
+        }.getOrDefault("$stream=?")
+        val guidance = if (navChannel in 1..10) navChannel else NAVIGATION_STREAM_TYPE
+        return "${level(guidance)} ${level(AudioManager.STREAM_MUSIC)}"
+    }
+
     // Hardware navigation belongs to the iPhone-rendered CarPlay UI, not Android View focus.
     override fun dispatchKeyEvent(event: KeyEvent): Boolean {
         // Which keys the head unit actually hands to this window. Wheel keys are routed per OEM
@@ -2143,25 +2158,37 @@ class CarPlayHostActivity : ComponentActivity() {
         ) {
             appendLog("Key: ${KeyEvent.keyCodeToString(event.keyCode)} (${event.keyCode})")
         }
-        // While navigation guidance is actually audible, steer the volume keys to the guidance
-        // stream. The stream's own start/stop edge is not enough: on this head unit the navigation
-        // stream can stay open for minutes after a prompt, and keys routed that whole time adjust
-        // the guidance level instead of the music (field report 2026-10-20). Only PCM written to
-        // the guidance track counts.
-        if (navigationGuidanceActive && sink?.navigationAudioActive() == true &&
-            event.action == KeyEvent.ACTION_DOWN &&
-            (event.keyCode == KeyEvent.KEYCODE_VOLUME_UP || event.keyCode == KeyEvent.KEYCODE_VOLUME_DOWN)) {
+        // Guidance-volume experiment. Whether the wheel keys reach this window at all decides the
+        // design: the stock car Amap never handles a key, it only plays guidance on the unit's
+        // navigation channel and reads that channel's volume back for its own slider, so on that
+        // unit the keys must be routed by the head unit itself. Logging both the flags and the
+        // channel levels before/after tells which side of that line this unit is on.
+        if (activeAirPlaySession != null && event.action == KeyEvent.ACTION_DOWN &&
+            event.repeatCount == 0 &&
+            (event.keyCode == KeyEvent.KEYCODE_VOLUME_UP || event.keyCode == KeyEvent.KEYCODE_VOLUME_DOWN)
+        ) {
             val dir = if (event.keyCode == KeyEvent.KEYCODE_VOLUME_UP) 1 else -1
             val navChannel = AirPlayPersistence.loadNavigationAudioChannel(this)
-            // AudioManager exposes no constant for the framework's navigation stream (14);
-            // it is the stream that stock car guidance (usage NAVIGATION_GUIDANCE) maps to.
-            val stream = if (navChannel in 1..10) navChannel else NAVIGATION_STREAM_TYPE
-            getSystemService(AudioManager::class.java)?.adjustStreamVolume(
-                stream,
-                dir,
-                AudioManager.FLAG_SHOW_UI,
+            val audio = getSystemService(AudioManager::class.java)
+            val before = volumeLevels(audio, navChannel)
+            // While navigation guidance is actually audible, steer the volume keys to the guidance
+            // stream. The stream's own start/stop edge is not enough: on this head unit the
+            // navigation stream can stay open for minutes after a prompt, and keys routed that
+            // whole time adjust the guidance level instead of the music (field report 2026-10-20).
+            // Only PCM written to the guidance track counts.
+            val guidance = navigationGuidanceActive && sink?.navigationAudioActive() == true
+            if (guidance) {
+                // AudioManager exposes no constant for the framework's navigation stream (14);
+                // it is the stream that stock car guidance (usage NAVIGATION_GUIDANCE) maps to.
+                val stream = if (navChannel in 1..10) navChannel else NAVIGATION_STREAM_TYPE
+                audio?.adjustStreamVolume(stream, dir, AudioManager.FLAG_SHOW_UI)
+            }
+            appendLog(
+                "Key: volume ${if (dir > 0) "up" else "down"} guidance=$guidance " +
+                    "navChannel=$navChannel handled=$guidance " +
+                    "before[${before}] after[${volumeLevels(audio, navChannel)}]",
             )
-            return true
+            if (guidance) return true
         }
 
         // The steering wheel's hang-up key stays with the head unit. An earlier build also sent a

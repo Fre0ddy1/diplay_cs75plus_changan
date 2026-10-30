@@ -786,12 +786,27 @@ class AndroidMediaSink(
         val manager = audioManager ?: return
         if (Build.VERSION.SDK_INT < Build.VERSION_CODES.O) return
         if (navigationFocusRequest != null) return
-        // Pure navigation usage, matching how the stock car Amap routes guidance with its
-        // "high-level audio API". A legacy stream type here would reclassify the focus as
-        // a media-like stream, which head units then fail to treat as guidance volume.
+        // Describe guidance to the head unit the way the stock car Amap does it: a legacy stream
+        // type equal to the channel the prompt actually plays on (GAdaAndroid_setStreamType is
+        // called before requestFocusSystem there). A unit that picks the volume-key target from
+        // the focus owner's stream then has the request and the prompt on the same channel.
+        //
+        // Falls back to pure usage when the configured channel is outside the stream IDs Android
+        // accepts. An earlier build used usage only, on the theory that a legacy stream would make
+        // the unit read the request as plain media; that has not held on this unit, and the
+        // stream-type variant is the one that matches the phone-side behaviour of the car's own
+        // navigation app.
+        val channel = navigationChannel
+        val legacy = channel in AudioManager.STREAM_SYSTEM..AudioManager.STREAM_ACCESSIBILITY
         val attributes = android.media.AudioAttributes.Builder()
-            .setUsage(android.media.AudioAttributes.USAGE_ASSISTANCE_NAVIGATION_GUIDANCE)
-            .setContentType(android.media.AudioAttributes.CONTENT_TYPE_SPEECH)
+            .apply {
+                if (legacy) {
+                    setLegacyStreamType(channel)
+                } else {
+                    setUsage(android.media.AudioAttributes.USAGE_ASSISTANCE_NAVIGATION_GUIDANCE)
+                    setContentType(android.media.AudioAttributes.CONTENT_TYPE_SPEECH)
+                }
+            }
             .build()
         val request = android.media.AudioFocusRequest.Builder(
             AudioManager.AUDIOFOCUS_GAIN_TRANSIENT_MAY_DUCK,
@@ -799,13 +814,22 @@ class AndroidMediaSink(
             .setAudioAttributes(attributes)
             .build()
         val result = manager.requestAudioFocus(request)
+        // The channel's own volume is part of the report: if the unit ignores the stream, the
+        // level here never moves and adjusting it from the wheel cannot change the prompt.
+        val level = if (legacy) {
+            runCatching { "vol=${manager.getStreamVolume(channel)}/${manager.getStreamMaxVolume(channel)}" }
+                .getOrDefault("vol=?")
+        } else {
+            "usage"
+        }
+        val route = if (legacy) "stream=$channel" else "usage"
         if (result == AudioManager.AUDIOFOCUS_REQUEST_GRANTED) {
             navigationFocusRequest = request
-            Log.i("DiPlay-NavFocus", "navigation focus granted (usage routing)")
-            onAudioDiagnostic("Audio: nav focus granted (prompt PCM)")
+            Log.i("DiPlay-NavFocus", "navigation focus granted ($route)")
+            onAudioDiagnostic("Audio: nav focus granted ($route) $level")
         } else {
-            Log.w("DiPlay-NavFocus", "navigation focus denied result=$result")
-            onAudioDiagnostic("Audio: nav focus denied result=$result")
+            Log.w("DiPlay-NavFocus", "navigation focus denied result=$result ($route)")
+            onAudioDiagnostic("Audio: nav focus denied result=$result ($route)")
         }
     }
 
