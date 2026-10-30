@@ -643,9 +643,9 @@
     <string name="nav_duck_percent_hint">Music drops to this level while a prompt plays and comes back when it ends. Calls are never lowered; changes apply from the next prompt.</string>
     <string name="media_audio_via_bluetooth">Wheel media keys via car Bluetooth</string>
     <string name="media_audio_via_bluetooth_description">Only decides who answers the wheel media keys; it does not change where audio goes. When on, play/pause and track keys from the wheel are not forwarded to CarPlay and are left to the car Bluetooth (AVRCP) to control the phone, so one press is not answered twice.</string>
-    <string name="carplay_audio_disabled">Silent CarPlay (wheel keys follow guidance)</string>
-    <string name="carplay_audio_disabled_description">DiPlay keeps advertising audio but builds no audio output at all: nothing from CarPlay is played, music, guidance and calls included. The streams are still received because their type is the only signal that a guidance prompt is playing. During a prompt the wheel volume keys move to the navigation channel set below and return to media when it ends. Whatever the car plays on its own route is unaffected. Reconnect to apply.</string>
-    <string name="carplay_audio_disabled_note">CarPlay is silent: the guidance stream still arrives, so the wheel volume keys move to the navigation channel while a prompt plays. The music level under a prompt no longer applies.</string>
+    <string name="carplay_audio_disabled">No CarPlay audio (wheel keys lock to navigation)</string>
+    <string name="carplay_audio_disabled_description">DiPlay advertises no audio capability, so the phone never sends music, guidance or calls here and sound stays on whatever route the phone picks - normally the car Bluetooth you are connected to. With no stream there is no prompt signal either, so nothing switches per prompt: the audio focus and the volume-key stream are claimed on the navigation channel set below (default 10) when the session comes up and held until it ends. Reconnect to apply.</string>
+    <string name="carplay_audio_disabled_note">Audio is not advertised: the wheel volume keys point at the navigation channel for the whole session and no longer fall back to media after a prompt. The music level under a prompt no longer applies.</string>
     <string name="settings_group_frequent">Frequent</string>
     <string name="settings_group_connect">Connection</string>
     <string name="settings_group_display">Picture</string>

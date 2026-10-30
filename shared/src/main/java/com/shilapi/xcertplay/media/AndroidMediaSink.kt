@@ -346,15 +346,6 @@ class AndroidMediaSink(
     private val navigationChannel: Int = 0,
     context: Context? = null,
     private val navigationStreamType: Int = AudioChannelMapper.DEFAULT_NAVIGATION_STREAM_TYPE,
-    /**
-     * Accept every audio stream the phone opens but never play a byte of it.
-     *
-     * The streams stay useful without their sound: the guidance stream's `audioType` is what
-     * says a prompt has started and ended, and that is what the volume-key routing and the
-     * navigation focus hang off. Building no AudioTrack also keeps this app out of the head
-     * unit's audio path entirely, so a car player that is already playing keeps playing.
-     */
-    private val silentAudio: Boolean = false,
     onScreenStreamActiveChanged: ((Int, Boolean) -> Unit)? = null,
     /**
      * Real decoded picture size of a screen stream (type, width, height), fired once per codec
@@ -1155,7 +1146,6 @@ class AndroidMediaSink(
             navigationChannel,
             audioFocusCoordinator,
             navigationStreamType,
-            silentAudio,
             mediaBufferMillis,
             onAudioDiagnostic,
             onNavigationFrame = { onNavigationAudioFrame() },
@@ -1638,8 +1628,6 @@ private class AudioRenderer(
     private val mediaChannel: Int,
     private val navigationChannel: Int,
     private val audioFocusCoordinator: AudioFocusCoordinator,    private val navigationStreamType: Int,
-    /** Consume the stream without a track: no sound, no focus, no head-unit audio path. */
-    private val silent: Boolean = false,
     private val mediaBufferMillis: Int,
     private val report: (String) -> Unit,
     private val onNavigationFrame: () -> Unit = {},
@@ -1755,18 +1743,10 @@ private class AudioRenderer(
                 "audioType=${format.audioType} codec=${format.codec} rate=${format.sampleRate} channels=${format.channels} " +
                 "mapping=${if (advancedAudioChannelMapping) "automotive" else "mobile"} " +
                 "mediaChannel=$mediaChannel navigationChannel=$navigationChannel focus=$audioFocusEnabled") }
-            // Guidance is still decoded: its PCM is the signal that a prompt is playing, and a
-            // prompt is seconds long. Music is not - in silent mode nobody reads a byte of it,
-            // and decoding a whole album for nothing is a cost the head unit should not pay.
-            val dropWholeStream = silent && mappedSelection().channel == AudioChannel.MEDIA
-            if (dropWholeStream) {
-                report("Audio: silent mode, media stream dropped undecoded audioType=${format.audioType}")
-            } else {
-                when (format.codec) {
-                    AudioCodecKind.AAC_LC -> configureCodec(MediaFormat.MIMETYPE_AUDIO_AAC)
-                    AudioCodecKind.OPUS -> configureCodec(MediaFormat.MIMETYPE_AUDIO_OPUS)
-                    AudioCodecKind.LPCM -> Unit
-                }
+            when (format.codec) {
+                AudioCodecKind.AAC_LC -> configureCodec(MediaFormat.MIMETYPE_AUDIO_AAC)
+                AudioCodecKind.OPUS -> configureCodec(MediaFormat.MIMETYPE_AUDIO_OPUS)
+                AudioCodecKind.LPCM -> Unit
             }
             createTrack()
             diagnosticStage = "focus"
@@ -1845,21 +1825,6 @@ private class AudioRenderer(
     }
 
     private fun createTrack() {
-        // Silent mode: no stream is rendered at all.
-        //
-        // The streams are still opened, received and (for guidance) decoded, but no AudioTrack is
-        // built, so nothing reaches the head unit's mixer and no media focus is taken from
-        // whatever is already playing. mappedChannel is still resolved here - the guidance
-        // detection and the volume-key routing key off it.
-        if (silent) {
-            mappedChannel = mappedSelection().channel
-            diagnosticStage = "silent"
-            report(
-                "Audio: silent mode channel=$mappedChannel audioType=${format.audioType} " +
-                    "-> no track, stream dropped",
-            )
-            return
-        }
         diagnosticStage = "track-buffer-size"
         val encoding = AndroidAudioFormat.ENCODING_PCM_16BIT
         val channelMask = if (format.channels >= 2) AndroidAudioFormat.CHANNEL_OUT_STEREO
@@ -2297,16 +2262,7 @@ private class AudioRenderer(
     }
 
     private fun writePcm(data: ByteArray, offset: Int = 0, length: Int = data.size) {
-        val track = track ?: run {
-            // Silent mode still decodes the stream, and decoded guidance PCM is the honest "a
-            // prompt is playing right now" signal - far better than the stream's open/close
-            // edges, which on this head unit stay open for minutes. Nothing is rendered either
-            // way, so the only thing this path must keep alive is that timestamp.
-            if (silent && mappedChannel == AudioChannel.NAVIGATION) {
-                runCatching { onNavigationFrame() }
-            }
-            return
-        }
+        val track = track ?: return
         diagnosticStage = "track-write"
         if (!firstPcmLogged && length > 0) {
             firstPcmLogged = true

@@ -718,6 +718,30 @@ class CarPlayHostActivity : ComponentActivity() {
         }.onFailure { appendLog("Cluster reassert skipped (${it.javaClass.simpleName})") }
     }
 
+    /** Re-asserts used in this session; reset on every session so a reconnect gets a fresh budget. */
+    @Volatile private var cardReassertCount = 0
+    @Volatile private var lastCardReassertAtMs = 0L
+
+    /**
+     * Asks the phone to redraw both cluster displays when the card stream arrives panel-sized.
+     *
+     * Rate-limited on purpose: each re-assert is a showUI per UUID, and iOS re-renders the card
+     * page for it. Three tries five seconds apart cover the window in which the phone finishes
+     * its own layout after a reconnect, without turning a refusal into a loop.
+     */
+    private fun requestClusterReassertIfCardIsPanelSized() {
+        if (cardReassertCount >= CARD_REASSERT_MAX_TRIES) return
+        val now = android.os.SystemClock.elapsedRealtime()
+        if (now - lastCardReassertAtMs < CARD_REASSERT_GAP_MS) return
+        lastCardReassertAtMs = now
+        cardReassertCount += 1
+        appendLog(
+            "Cluster: both type-111 streams are panel-sized; asking the phone to redraw both " +
+                "displays (${cardReassertCount}/$CARD_REASSERT_MAX_TRIES)",
+        )
+        requestClusterReassert("card stream is panel-sized")
+    }
+
     private val checkVideoFreeze = object : Runnable {
         override fun run() {
             try {
@@ -1981,6 +2005,16 @@ class CarPlayHostActivity : ComponentActivity() {
             if (altPanel != cardPanel) {
                 rebound = bindClusterMapStream(if (altPanel) SCREEN_TYPE_ALT else SCREEN_TYPE_ALT_CARD)
             }
+        } else if (alt != null && card != null && alt == card && looksLikePanelSize(alt.first, alt.second)) {
+            // Both type-111 streams carry the panel picture, so the size says nothing about which
+            // is which - and the window that shows the card ends up with a shrunken map in it.
+            // That is the iPhone redrawing the card UUID as a full screen after a quick reconnect
+            // (field 2026-10-30 20:24: the reconnect at 24.6 re-encoded both streams at 1920x720
+            // and never came back to 480x208, while the 20:26 session did after the phone laid
+            // itself out again). No local binding can fix a picture the phone sent to the wrong
+            // UUID: it has to be told to redraw each display. requestClusterReassert does exactly
+            // that, and it is rate-limited because it makes iOS re-render the card page.
+            requestClusterReassertIfCardIsPanelSized()
         }
         // The card window is laid out from whichever stream is bound to it - including straight
         // after a rebind, where the card stream itself may never report its size again.
@@ -2158,12 +2192,16 @@ class CarPlayHostActivity : ComponentActivity() {
         ) {
             appendLog("Key: ${KeyEvent.keyCodeToString(event.keyCode)} (${event.keyCode})")
         }
-        // Guidance-volume experiment. Whether the wheel keys reach this window at all decides the
-        // design: the stock car Amap never handles a key, it only plays guidance on the unit's
-        // navigation channel and reads that channel's volume back for its own slider, so on that
-        // unit the keys must be routed by the head unit itself. Logging both the flags and the
-        // channel levels before/after tells which side of that line this unit is on.
-        if (activeAirPlaySession != null && event.action == KeyEvent.ACTION_DOWN &&
+        // While navigation guidance is actually audible, steer the volume keys to the guidance
+        // stream. The stream's own start/stop edge is not enough: on this head unit the navigation
+        // stream can stay open for minutes after a prompt, and keys routed that whole time adjust
+        // the guidance level instead of the music (field report 2026-10-20). Only PCM written to
+        // the guidance track counts.
+        //
+        // With "no CarPlay audio" on there is no stream and no PCM at all, so this block stays out
+        // of the way: that mode claims the navigation channel for the whole session instead.
+        if (navigationGuidanceActive && sink?.navigationAudioActive() == true &&
+            event.action == KeyEvent.ACTION_DOWN &&
             event.repeatCount == 0 &&
             (event.keyCode == KeyEvent.KEYCODE_VOLUME_UP || event.keyCode == KeyEvent.KEYCODE_VOLUME_DOWN)
         ) {
@@ -2171,24 +2209,16 @@ class CarPlayHostActivity : ComponentActivity() {
             val navChannel = AirPlayPersistence.loadNavigationAudioChannel(this)
             val audio = getSystemService(AudioManager::class.java)
             val before = volumeLevels(audio, navChannel)
-            // Only guidance PCM counts, not the stream's open/close edge: on this head unit that
-            // stream can stay open for minutes after a prompt, and keys routed that whole time
-            // adjust guidance instead of the music (field report 2026-10-20). The stream-edge
-            // flag is deliberately not required here - when CarPlay audio is set to silent the
-            // edges no longer arrive per prompt, but the decoded PCM still does.
-            val guidance = sink?.navigationAudioActive() == true
-            if (guidance) {
-                // AudioManager exposes no constant for the framework's navigation stream (14);
-                // it is the stream that stock car guidance (usage NAVIGATION_GUIDANCE) maps to.
-                val stream = if (navChannel in 1..10) navChannel else NAVIGATION_STREAM_TYPE
-                audio?.adjustStreamVolume(stream, dir, AudioManager.FLAG_SHOW_UI)
-            }
+            // AudioManager exposes no constant for the framework's navigation stream (14);
+            // it is the stream that stock car guidance (usage NAVIGATION_GUIDANCE) maps to.
+            val stream = if (navChannel in 1..10) navChannel else NAVIGATION_STREAM_TYPE
+            audio?.adjustStreamVolume(stream, dir, AudioManager.FLAG_SHOW_UI)
             appendLog(
-                "Key: volume ${if (dir > 0) "up" else "down"} guidance=$guidance " +
-                    "navChannel=$navChannel handled=$guidance " +
+                "Key: volume ${if (dir > 0) "up" else "down"} guidance=true " +
+                    "navChannel=$navChannel handled=true " +
                     "before[${before}] after[${volumeLevels(audio, navChannel)}]",
             )
-            if (guidance) return true
+            return true
         }
 
         // The steering wheel's hang-up key stays with the head unit. An earlier build also sent a
@@ -2230,23 +2260,15 @@ class CarPlayHostActivity : ComponentActivity() {
         // head unit's own player, which grabbed the audio focus and paused the iPhone - music died
         // seconds after every play, from the wheel, from CarPlay and from the phone alike. The
         // swallow is the stable half; do not forward while that player reacts to wheel keys.
-        // Silent CarPlay counts as well: with no audio rendered there is nothing for those keys to
-        // act on, and forwarding them would wake the head unit's own player for a track nobody
-        // hears. Two switches, one answer - the keys stay with the car.
         if (activeAirPlaySession != null &&
             CarPlayVideo.activity == null &&
             isWheelMediaKey(event.keyCode) &&
-            (AirPlayPersistence.loadMediaViaCarBluetooth(this) ||
-                AirPlayPersistence.loadCarPlayAudioDisabled(this))
+            AirPlayPersistence.loadMediaViaCarBluetooth(this)
         ) {
             if (event.action == KeyEvent.ACTION_DOWN && event.repeatCount == 0) {
-                val reason = if (AirPlayPersistence.loadMediaViaCarBluetooth(this)) {
-                    "media belongs to the car Bluetooth"
-                } else {
-                    "CarPlay audio is silent"
-                }
                 appendLog(
-                    "Media: wheel key ${KeyEvent.keyCodeToString(event.keyCode)} blocked ($reason)",
+                    "Media: wheel key ${KeyEvent.keyCodeToString(event.keyCode)} blocked " +
+                        "(media belongs to the car Bluetooth)",
                 )
             }
             return true
@@ -2371,6 +2393,7 @@ class CarPlayHostActivity : ComponentActivity() {
     }
 
     override fun onDestroy() {
+        releaseSessionNavigationFocus()
         if (CarPlayBackgroundSession.logger != null) CarPlayBackgroundSession.logger = null
         InCallClusterBridge.projectingListener = null
         if (clusterDisplayListenerRegistered) {
@@ -4480,16 +4503,17 @@ class CarPlayHostActivity : ComponentActivity() {
             oemLabel = oemLabel,
             icons = listOf(loadAirPlayIcon()),
             videoInCar = com.shilapi.xcertplay.hud.BydOutputSettings.videoWhileParkedActive(this),
-            // The switch no longer takes the audio capability away, it takes the playback away.
-            //
-            // Advertising no audio at all was tried on 2026-10-19 and again on 2026-10-30: the
-            // phone then never opens a stream, so this app never learns that a guidance prompt
-            // started, and the wheel keys stay on media for the whole drive. Keeping the claim
-            // and dropping the sound instead leaves the guidance stream's `audioType` available
-            // as the prompt signal, which is what the volume-key routing and the navigation
-            // focus are driven by. The sink is put in silent mode for the same setting, so the
-            // two never disagree: this only decides what the phone is told, that decides
-            // whether a track is built.
+            // Audio stays on CarPlay by default: the car sends a wheel media key twice - once to
+            // this app, once over Bluetooth AVRCP to the phone - and with both paths live a single
+            // press skipped two tracks. The duplicate turned out to be the key, not the audio: the
+            // "B" build of 2026-10-19 dropped the audio route instead (the earlier no-audio
+            // advertisement, now the setting below) and silenced CarPlay, moved guidance to the
+            // car's Bluetooth and cost the navigation duck and the volume-key routing for nothing.
+            // So the wheel-key switch only stops us forwarding the key, and the audio route is a
+            // separate, explicit choice: a driver whose music already plays over the car's
+            // Bluetooth can advertise no audio at all (/info drops the audio feature bits and the
+            // audio formats, so the phone never asks for a stream - it is not a refused SETUP,
+            // which is what produced 1852797029 and the 40 s retry storm).
             disableAudioOutput = AirPlayPersistence.loadCarPlayAudioDisabled(this),
         )
     }
@@ -4672,10 +4696,6 @@ class CarPlayHostActivity : ComponentActivity() {
             captureOnlyTypes = if (cardCaptureOnly) setOf(SCREEN_TYPE_ALT_CARD) else emptySet(),
             mediaChannel = AirPlayPersistence.loadMediaAudioChannel(this),
             navigationChannel = AirPlayPersistence.loadNavigationAudioChannel(this),
-            // Same switch as the advertisement above: the phone is told we take audio, and the
-            // sink builds no track for it. The guidance stream still arrives, so its start and
-            // stop edges keep driving the volume-key routing.
-            silentAudio = AirPlayPersistence.loadCarPlayAudioDisabled(this),
             navDuckPercent = { AirPlayPersistence.loadNavDuckPercent(this) },
             context = this,
             navigationStreamType = navigationStreamType,
@@ -4706,53 +4726,105 @@ class CarPlayHostActivity : ComponentActivity() {
     @Volatile private var navigationGuidanceActive = false
 
     /**
-     * What the volume keys are currently pointed at, so the poll only acts on a change.
+     * Ends the guidance volume window.
      *
-     * The routing used to hang off the navigation stream's start/stop edges with a fixed 12 s
-     * window. Both halves were wrong in the field: the stream can stay open for minutes after a
-     * prompt (2026-10-20, keys stuck on guidance), and once the window had expired a later prompt
-     * on that same open stream never re-armed it, so the keys stayed on media. Guidance PCM is
-     * the honest signal, and it is now checked on a timer instead - audible means routed, silent
-     * means media, including in silent mode where the PCM still arrives but is not played.
+     * The flag comes from the navigation stream's start/stop edges, and on this head unit that
+     * stream can stay open far longer than a prompt - the driver was left unable to raise the
+     * music for minutes because every volume key was routed to guidance, which also made the
+     * guidance volume itself drift down (field report 2026-10-20). A prompt is seconds long, so
+     * the routing is only trusted for this window and then handed back to media on its own.
      */
-    private var guidanceKeysOnNavigation = false
+    private var guidanceWindowArmed = false
 
-    // An object rather than a lambda: it re-posts itself, and a self-referencing lambda in an
-    // initializer is a recursive type for the compiler.
-    private val guidanceVolumePoll: Runnable = object : Runnable {
-        override fun run() {
-            if (isDestroyed || isFinishing) return
-            if (!navigationGuidanceActive) return
-            val audible = sink?.navigationAudioActive() == true
-            if (audible != guidanceKeysOnNavigation) {
-                guidanceKeysOnNavigation = audible
-                if (audible) {
-                    val navChannel = AirPlayPersistence.loadNavigationAudioChannel(this@CarPlayHostActivity)
-                    setVolumeControlStream(navChannel)
-                    appendLog("Volume control stream: navigation($navChannel)")
-                } else {
-                    setVolumeControlStream(AudioManager.STREAM_MUSIC)
-                    appendLog("Volume control stream: media（播报结束，恢复媒体音量键）")
-                }
-            }
-            mainHandler.postDelayed(this, GUIDANCE_VOLUME_POLL_MS)
-        }
+    private val endGuidanceVolumeWindow = Runnable {
+        if (isDestroyed || isFinishing) return@Runnable
+        guidanceWindowArmed = false
+        if (!navigationGuidanceActive) return@Runnable
+        navigationGuidanceActive = false
+        setVolumeControlStream(AudioManager.STREAM_MUSIC)
+        appendLog("Volume control stream: media（导航音量窗口结束，恢复媒体音量键）")
     }
 
     private fun onNavigationGuidanceChanged(active: Boolean) {
         navigationGuidanceActive = active
         runOnUiThread {
             if (isDestroyed || isFinishing) return@runOnUiThread
-            mainHandler.removeCallbacks(guidanceVolumePoll)
-            if (!active) {
-                guidanceKeysOnNavigation = false
+            val navChannel = AirPlayPersistence.loadNavigationAudioChannel(this)
+            if (active && navChannel > 0) {
+                setVolumeControlStream(navChannel)
+                appendLog("Volume control stream: navigation($navChannel)")
+                // Armed once per prompt burst: restarting the window on every start edge let a
+                // stream that keeps flapping hold the keys on guidance indefinitely.
+                if (!guidanceWindowArmed) {
+                    guidanceWindowArmed = true
+                    mainHandler.postDelayed(endGuidanceVolumeWindow, GUIDANCE_VOLUME_WINDOW_MS)
+                }
+            } else {
+                guidanceWindowArmed = false
+                mainHandler.removeCallbacks(endGuidanceVolumeWindow)
                 setVolumeControlStream(AudioManager.STREAM_MUSIC)
                 appendLog("Volume control stream: media")
-                return@runOnUiThread
             }
-            // First check runs immediately so the very first prompt is routed without a delay.
-            guidanceVolumePoll.run()
         }
+    }
+
+    /**
+     * 会话级导航音频焦点（"音频交给车机蓝牙"打开时）。
+     *
+     * 这一档不向 iPhone 声明音频能力，所以本机收不到任何 CarPlay 音频流，也就没有任何
+     * "正在播报"的信号可用。因此不再等播报：连接成功即把音频焦点连同音量键默认流一起
+     * 声明到设置里的导航音频流（默认 10），整场会话持有，断开时释放。这正是车机自带
+     * 高德的形态——它全程占着导航通道，音量键自然落到该通道。
+     *
+     * 焦点用旧接口按 stream 声明：AudioFocusRequest 只接受 AudioAttributes，无法指定
+     * 具体的 stream，而这里要的恰好是"某个通道"。
+     */
+    @Volatile private var sessionNavigationFocusHeld = false
+    @Volatile private var sessionNavigationFocusChannel = -1
+
+    private fun holdSessionNavigationFocus() {
+        if (!AirPlayPersistence.loadCarPlayAudioDisabled(this)) {
+            // The switch went off after a session where it was on: give the channel back.
+            releaseSessionNavigationFocus()
+            return
+        }
+        val channel = AirPlayPersistence.loadNavigationAudioChannel(this)
+        if (channel <= 0) return
+        if (sessionNavigationFocusHeld && sessionNavigationFocusChannel == channel) return
+        releaseSessionNavigationFocus()
+        setVolumeControlStream(channel)
+        val manager = getSystemService(AudioManager::class.java)
+        val request = if (manager == null) {
+            AudioManager.AUDIOFOCUS_REQUEST_FAILED
+        } else {
+            runCatching {
+                @Suppress("DEPRECATION")
+                manager.requestAudioFocus(null, channel, AudioManager.AUDIOFOCUS_GAIN)
+            }.getOrElse { error ->
+                Log.w(TAG, "session nav focus failed channel=$channel", error)
+                AudioManager.AUDIOFOCUS_REQUEST_FAILED
+            }
+        }
+        val granted = request == AudioManager.AUDIOFOCUS_REQUEST_GRANTED
+        sessionNavigationFocusHeld = granted
+        sessionNavigationFocusChannel = if (granted) channel else -1
+        appendLog(
+            "Volume control stream: navigation($channel) 全程 " +
+                "focus=${if (granted) "granted" else "denied($request)"} " +
+                volumeLevels(manager, channel),
+        )
+    }
+
+    private fun releaseSessionNavigationFocus() {
+        if (!sessionNavigationFocusHeld) return
+        sessionNavigationFocusHeld = false
+        sessionNavigationFocusChannel = -1
+        val manager = getSystemService(AudioManager::class.java)
+        runCatching {
+            @Suppress("DEPRECATION")
+            manager?.abandonAudioFocus(null)
+        }
+        appendLog("Volume control stream: navigation focus released")
     }
 
     /**
@@ -5064,8 +5136,16 @@ class CarPlayHostActivity : ComponentActivity() {
                     // New connection: the cold-start attempt becomes available again, and its
                     // three-second clock starts here.
                     coldStartAttempted = false
+                    // A reconnect gets its own re-assert budget: the card stream it inherits can be
+                    // panel-sized again (see requestClusterReassertIfCardIsPanelSized).
+                    cardReassertCount = 0
+                    lastCardReassertAtMs = 0L
                     sessionStartedAtElapsedMs = android.os.SystemClock.elapsedRealtime()
                     watchMediaAudioRoute()
+                    // "音频交给车机蓝牙" means this session carries no audio at all, so there is
+                    // no prompt to wait for: the navigation channel is claimed here, once, and
+                    // held for the whole session.
+                    holdSessionNavigationFocus()
                     maybeAutoProjectOnConnect()
                     // A connection made while navigation is already running has no transition to
                     // react to: seed the auto-switch once so it still lands on nav-only.
@@ -5084,6 +5164,9 @@ class CarPlayHostActivity : ComponentActivity() {
                     stopCardH264Recording("session ended")
                     if (activeAirPlaySession === session) activeAirPlaySession = null
                     CarPlayBackgroundSession.active = false
+                    // Before any early return below: the channel claim must not outlive the
+                    // session it was taken for.
+                    releaseSessionNavigationFocus()
                     // A new session is a new connection: allow auto-project to fire again after
                     // any reconnect. restartCarPlay() also resets these, but some reconnect paths
                     // early-return before that reset (handshakeReset/menuOpen), which would leave
@@ -7400,7 +7483,10 @@ class CarPlayHostActivity : ComponentActivity() {
          * a prompt is seconds long and the stream can stay open for minutes, so any fixed window
          * either cuts a long prompt short or holds the keys after the prompt ended.
          */
-        const val GUIDANCE_VOLUME_POLL_MS = 1_000L
+        const val GUIDANCE_VOLUME_WINDOW_MS = 12_000L
+        /** Re-assert budget for a card stream the phone keeps sending panel-sized. */
+        const val CARD_REASSERT_GAP_MS = 5_000L
+        const val CARD_REASSERT_MAX_TRIES = 3
         /**
          * How long the dashboard waits for incall's "projecting" confirmation after the phone
          * connected, before this attempt is dropped. The open sequence alone takes up to ~11 s on

@@ -74,14 +74,15 @@ data class AirPlayConfig(
     val entertainmentSampleRate: Int = 48000,
     val hevc: Boolean = false,
     /**
-     * Keep CarPlay audio silent.
+     * Advertise no audio at all.
      *
-     * It deliberately does NOT change what /info advertises any more. Dropping the audio claim
-     * also stops the phone from opening a guidance stream, and that stream is the only signal
-     * this receiver has that a prompt is playing - without it the wheel volume keys can never
-     * be routed to the navigation channel. The switch now only decides whether
-     * [com.shilapi.xcertplay.media.AndroidMediaSink] builds an AudioTrack; this field is carried
-     * along for diagnostics and to keep the setting in one place.
+     * Drops the audio feature bits, the audio formats, the audio latencies and the audio
+     * resource from /info, so the phone never opens a stream and never sends sound here: music,
+     * guidance and calls stay on whatever route the phone picks (the car's own Bluetooth).
+     *
+     * Because no stream arrives there is no prompt signal to react to either, so the steering
+     * wheel volume keys are not switched per prompt any more - the navigation channel is claimed
+     * for the whole session instead (CarPlayHostActivity.holdSessionNavigationFocus).
      */
     val disableAudioOutput: Boolean = false,
     val microphone: Boolean = false,

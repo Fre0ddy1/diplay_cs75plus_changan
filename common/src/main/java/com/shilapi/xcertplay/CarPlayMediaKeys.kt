@@ -177,13 +177,8 @@ internal object CarPlayMediaKeys {
     private fun updateLocked(active: Boolean) {
         val context = appContext ?: return
         if (controller == null) return
-        // Silent mode renders nothing, so there is no playback to publish and no focus worth
-        // taking. Without this the media session would announce a track nobody hears and could
-        // pull the audio route away from whatever the car is playing - the exact failure the
-        // switch below exists to avoid.
-        val rendered = active && !AirPlayPersistence.loadCarPlayAudioDisabled(context)
-        mediaAudioActive = rendered
-        if (rendered && session == null) start(context) else if (rendered) regainFocusLocked()
+        mediaAudioActive = active
+        if (active && session == null) start(context) else if (active) regainFocusLocked()
         publishPlaybackStateLocked()
     }
 
@@ -297,12 +292,9 @@ internal object CarPlayMediaKeys {
             (index == CarPlayMediaButton.NEXT ||
                 index == CarPlayMediaButton.PREVIOUS ||
                 index == CarPlayMediaButton.PLAY_PAUSE) &&
-            appContext?.let {
-                AirPlayPersistence.loadMediaViaCarBluetooth(it) ||
-                    AirPlayPersistence.loadCarPlayAudioDisabled(it)
-            } == true
+            appContext?.let { AirPlayPersistence.loadMediaViaCarBluetooth(it) } == true
         ) {
-            Log.i(TAG, "media key $source -> blocked (the car owns wheel keys)")
+            Log.i(TAG, "media key $source -> blocked (media belongs to the car Bluetooth)")
             return
         }
         val sent = synchronized(this) { controller }?.sendMediaButton(index) ?: false
