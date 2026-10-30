@@ -32,7 +32,7 @@ import org.robolectric.shadows.ShadowAudioRecord
 import org.robolectric.shadows.ShadowLog
 
 @RunWith(RobolectricTestRunner::class)
-@Config(sdk = [29], manifest = Config.NONE, shadows = [TelephonyMicrophoneTest.ConfigurableAudioEffect::class])
+@Config(sdk = [29], manifest = Config.NONE, shadows = [TelephonyMicrophoneTest.ConfigurableAudioEffect::class, ShadowAudioModeRequests::class])
 class TelephonyMicrophoneTest {
     private val context get() = RuntimeEnvironment.getApplication()
     private val telephony = AudioStreamId(100, "telephony")
@@ -43,6 +43,7 @@ class TelephonyMicrophoneTest {
     private lateinit var sink: AndroidMediaSink
 
     @Before fun setUp() {
+        ShadowAudioModeRequests.clearRequests()
         ConfigurableAudioEffect.resetStatus()
         shadowOf(context).grantPermissions(Manifest.permission.RECORD_AUDIO, Manifest.permission.MODIFY_AUDIO_SETTINGS)
         manager = context.getSystemService(AudioManager::class.java)
@@ -70,7 +71,7 @@ class TelephonyMicrophoneTest {
     }
 
     @Test fun telephonyEnablesEffectsOnItsRecorderAndRestoresThePreviousMode() {
-        manager.mode = AudioManager.MODE_RINGTONE
+        ShadowAudioModeRequests.otherProcess(AudioManager.MODE_RINGTONE)
         sink.onMicrophoneStarted(telephony, config("telephony"))
         val record = awaitCapture()
 
@@ -131,7 +132,7 @@ class TelephonyMicrophoneTest {
     @Test fun diagnosticCallbackFailureDoesNotStopCallCaptureOrChangeModeRestoration() {
         sink.close()
         sink = AndroidMediaSink(context = context, onAudioDiagnostic = { throw IllegalStateException("diagnostic callback failed") })
-        manager.mode = AudioManager.MODE_RINGTONE
+        ShadowAudioModeRequests.otherProcess(AudioManager.MODE_RINGTONE)
         sink.onMicrophoneStarted(telephony, config("telephony"))
         val record = awaitCapture()
         assertEquals(AudioRecord.RECORDSTATE_RECORDING, record.recordingState)
@@ -162,7 +163,7 @@ class TelephonyMicrophoneTest {
     }
 
     @Test fun duplicateStartDoesNotOverwriteTheOriginalModeOrCreateMoreEffects() {
-        manager.mode = AudioManager.MODE_RINGTONE
+        ShadowAudioModeRequests.otherProcess(AudioManager.MODE_RINGTONE)
         sink.onMicrophoneStarted(telephony, config("telephony"))
         awaitCapture()
         sink.onMicrophoneStarted(telephony, config("telephony"))
@@ -172,7 +173,7 @@ class TelephonyMicrophoneTest {
     }
 
     @Test fun failedRecorderInitializationRestoresThePreviousMode() {
-        manager.mode = AudioManager.MODE_RINGTONE
+        ShadowAudioModeRequests.otherProcess(AudioManager.MODE_RINGTONE)
         sink.onMicrophoneStarted(telephony, config("telephony").copy(sampleRate = 1))
         assertEquals(AudioManager.MODE_RINGTONE, manager.mode)
         assertNull(recorder.get())

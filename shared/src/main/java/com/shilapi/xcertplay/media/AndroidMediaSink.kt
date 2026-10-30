@@ -299,7 +299,7 @@ class AndroidMediaSink(
      */
     onScreenStreamOutputSize: ((Int, Int, Int) -> Unit)? = null,
     private val mediaBufferMillis: Int = MediaAudioBuffer.DEFAULT_MILLIS,
-    private val onAudioDiagnostic: (String) -> Unit = {},
+    onAudioDiagnostic: (String) -> Unit = {},
     /** True while any music ("media") audio stream is running; called from media threads. */
     private val onMediaAudioChanged: (Boolean) -> Unit = {},
     /** True while any navigation-guidance stream is playing; called from media threads. */
@@ -308,13 +308,17 @@ class AndroidMediaSink(
     private val navDuckPercent: () -> Int = { AudioFocusCoordinator.DEFAULT_DUCK_PERCENT },
     mediaFocusManagedExternally: Boolean = false,
 ) : MediaSink {
+    private val audioDiagnostic: (String) -> Unit = { line ->
+        runCatching { onAudioDiagnostic(line) }
+        Unit
+    }
     private val appContext = context?.applicationContext
     private val audioManager = appContext?.getSystemService(AudioManager::class.java)
     private val audioFocusCoordinator = AudioFocusCoordinator(
         appContext,
         audioFocusEnabled,
         navDuckPercent,
-        onAudioDiagnostic,
+        audioDiagnostic,
         mediaFocusManagedExternally,
     )
     private val screenStateLock = Any()
@@ -330,7 +334,6 @@ class AndroidMediaSink(
     private val microphoneUplinks = ConcurrentHashMap<AudioStreamId, MicrophoneUplink>()
     private val audioModeLock = Any()
     private var communicationModeStream: AudioStreamId? = null
-    private var savedAudioMode = AudioManager.MODE_NORMAL
     /**
      * The head unit's music level just before a call started.
      *
@@ -432,7 +435,7 @@ class AndroidMediaSink(
         if (audioManager != null) {
             audioModeHandler.post(audioModePoll)
             // One line at start so a report proves the poll is alive even when no call happens.
-            onAudioDiagnostic(
+            audioDiagnostic(
                 "Audio: mode poll started, mode=${runCatching { audioManager?.mode }.getOrNull()} " +
                     "music=${runCatching { audioManager?.getStreamVolume(AudioManager.STREAM_MUSIC) }.getOrNull()}",
             )
@@ -691,14 +694,14 @@ class AndroidMediaSink(
             // onto the iPhone's own volume, which is why the driver saw "手机音量被调到 50%".
             snapshotMusicVolume("microphone started")
             if (config.audioType == "telephony") enterCommunicationMode(id)
-            val uplink = microphoneUplinks.computeIfAbsent(id) { MicrophoneUplink(config, onAudioDiagnostic) }
+            val uplink = microphoneUplinks.computeIfAbsent(id) { MicrophoneUplink(config, audioDiagnostic) }
             if (!uplink.start()) {
                 microphoneUplinks.remove(id, uplink)
                 restoreAudioMode(id)
             }
         } catch (error: Exception) {
             Log.e("xcertplay-usb", "microphone start failed stream=$id", error)
-            MicrophoneCaptureStats.reportStartFailure(config, error, onAudioDiagnostic)
+            MicrophoneCaptureStats.reportStartFailure(config, error, audioDiagnostic)
             onMicrophoneStopped(id)
         }
     }
@@ -725,14 +728,14 @@ class AndroidMediaSink(
         synchronized(audioModeLock) {
             if (communicationModeStream != null) return
             // Select the HAL communication path before AudioRecord is created.
-            savedAudioMode = manager.mode
+            val before = manager.mode
             savedMusicVolume = runCatching { manager.getStreamVolume(AudioManager.STREAM_MUSIC) }.getOrNull()
             savedMusicMuted = runCatching { manager.isStreamMute(AudioManager.STREAM_MUSIC) }.getOrDefault(false)
             savedMusicVolumeAtMs = SystemClock.elapsedRealtime()
             manager.mode = AudioManager.MODE_IN_COMMUNICATION
             communicationModeStream = id
-            Log.i("xcertplay-usb", "audio mode $savedAudioMode -> ${manager.mode} for telephony stream=$id")
-            onAudioDiagnostic("Audio: call started, music level snapshot=$savedMusicVolume muted=$savedMusicMuted")
+            Log.i("xcertplay-usb", "audio mode $before -> ${manager.mode} for telephony stream=$id")
+            runCatching { audioDiagnostic("Audio: call started, music level snapshot=$savedMusicVolume muted=$savedMusicMuted") }
         }
     }
 
@@ -757,7 +760,7 @@ class AndroidMediaSink(
             savedMusicVolume = music
             savedMusicMuted = muted
             savedMusicVolumeAtMs = SystemClock.elapsedRealtime()
-            onAudioDiagnostic("Audio: music snapshot=$music ($reason)")
+            audioDiagnostic("Audio: music snapshot=$music ($reason)")
         }
     }
 
@@ -772,7 +775,7 @@ class AndroidMediaSink(
             val unmuted = runCatching {
                 manager.adjustStreamVolume(AudioManager.STREAM_MUSIC, AudioManager.ADJUST_UNMUTE, 0)
             }.isSuccess
-            onAudioDiagnostic("Audio: music stream was muted after the call, unmuted=$unmuted ($reason)")
+            audioDiagnostic("Audio: music stream was muted after the call, unmuted=$unmuted ($reason)")
         }
         savedMusicMuted = false
         val current = runCatching { manager.getStreamVolume(AudioManager.STREAM_MUSIC) }.getOrNull()
@@ -787,21 +790,21 @@ class AndroidMediaSink(
             SystemClock.elapsedRealtime() - savedMusicVolumeAtMs > MUSIC_SNAPSHOT_TTL_MS
         if (stale || current >= saved) {
             savedMusicVolume = null
-            onAudioDiagnostic(
+            audioDiagnostic(
                 "Audio: music level kept at $current (snapshot $saved, stale=$stale, $reason)",
             )
             return
         }
         if (current == saved) {
             savedMusicVolume = null
-            onAudioDiagnostic("Audio: music level unchanged after the call ($current, $reason)")
+            audioDiagnostic("Audio: music level unchanged after the call ($current, $reason)")
             return
         }
         val restored = runCatching {
             manager.setStreamVolume(AudioManager.STREAM_MUSIC, saved, 0)
         }.isSuccess
         savedMusicVolume = null
-        onAudioDiagnostic("Audio: music level $current -> $saved restored=$restored ($reason)")
+        audioDiagnostic("Audio: music level $current -> $saved restored=$restored ($reason)")
     }
 
     /**
@@ -819,7 +822,7 @@ class AndroidMediaSink(
         val muted = runCatching { manager.isStreamMute(AudioManager.STREAM_MUSIC) }.getOrNull() == true
         val previous = polledAudioMode
         polledAudioMode = mode
-        onAudioDiagnostic("Audio: mode $previous -> $mode, music=$music muted=$muted")
+        audioDiagnostic("Audio: mode $previous -> $mode, music=$music muted=$muted")
         val callStarting = previous == AudioManager.MODE_NORMAL && mode != AudioManager.MODE_NORMAL
         val callEnding = previous != AudioManager.MODE_NORMAL && mode == AudioManager.MODE_NORMAL
         if (callStarting) {
@@ -828,7 +831,7 @@ class AndroidMediaSink(
                     savedMusicVolume = music
                     savedMusicMuted = muted
                     savedMusicVolumeAtMs = SystemClock.elapsedRealtime()
-                    onAudioDiagnostic("Audio: call detected (mode=$mode), music snapshot=$music")
+                    audioDiagnostic("Audio: call detected (mode=$mode), music snapshot=$music")
                 }
             }
         } else if (callEnding) {
@@ -847,7 +850,8 @@ class AndroidMediaSink(
             val active = communicationModeStream ?: return
             if (id != null && id != active) return
             communicationModeStream = null
-            val target = savedAudioMode
+            // MODE_NORMAL withdraws this process's request; another process keeps its own call mode.
+            val target = AudioManager.MODE_NORMAL
             try {
                 manager.mode = target
                 Log.i("xcertplay-usb", "audio mode restored to ${manager.mode}")
@@ -996,7 +1000,7 @@ class AndroidMediaSink(
             audioFocusCoordinator,
             navigationStreamType,
             mediaBufferMillis,
-            onAudioDiagnostic,
+            audioDiagnostic,
             onNavigationFrame = { onNavigationAudioFrame() },
         ).also { audioRenderers[id] = it }
     }
@@ -1469,7 +1473,7 @@ private class AudioRenderer(
     private val report: (String) -> Unit,
     private val onNavigationFrame: () -> Unit = {},
 ) : Closeable {
-    private data class AudioPacket(val rtp: ByteArray, val sample: Int)
+    private data class AudioPacket(val rtp: ByteArray, val sample: Int, val arrivedNs: Long)
 
     private var trackAttributes: AudioAttributes? = null
     private var mappedChannel: AudioChannel? = null
@@ -1519,7 +1523,10 @@ private class AudioRenderer(
     private var bytesPerSecond = 0
     private val bufferProgress = AudioBufferProgress(if (format.channels >= 2) 4 else 2)
     private var underrunsAtPlaybackStart = 0
+    private var headAtPlaybackStart = 0
     private var clockTrim: MediaClockTrim? = null
+    private val packetsDroppedTotal = AtomicLong()
+    private var droppedAtLastTrim = 0L
     private var lastTrimResets = 0
     private var lastPcmWriteNs = 0L
     private var rebufferCount = 0
@@ -1539,9 +1546,9 @@ private class AudioRenderer(
     }
 
     fun submit(rtp: ByteArray, sample: Int) {
+        val now = System.nanoTime()
         if (started) {
             packetsReceived.incrementAndGet()
-            val now = System.nanoTime()
             val previous = lastArrivalNs.getAndSet(now)
             if (previous != 0L) maxArrivalGapMs.accumulateAndGet((now - previous) / 1_000_000L, ::maxOf)
             newestRtpSample = sample
@@ -1550,6 +1557,7 @@ private class AudioRenderer(
             val removed = mediaLagGuard?.recover(queue, sample, AudioPacket::sample, now) ?: 0
             if (removed > 0) {
                 packetsDropped.addAndGet(removed)
+                packetsDroppedTotal.addAndGet(removed.toLong())
                 if (lagRecoveryReports < MAX_REBUFFER_REPORTS) {
                     lagRecoveryReports++
                     report("Audio: stale media packet backlog recovered audioType=${format.audioType} " +
@@ -1557,8 +1565,11 @@ private class AudioRenderer(
                 }
             }
         }
-        if (!started || !queue.offer(AudioPacket(rtp, sample))) {
-            if (started) packetsDropped.incrementAndGet()
+        if (!started || !queue.offer(AudioPacket(rtp, sample, now))) {
+            if (started) {
+                packetsDropped.incrementAndGet()
+                packetsDroppedTotal.incrementAndGet()
+            }
             if (started && !droppedPacketsLogged) {
                 droppedPacketsLogged = true
                 Log.w(TAG, "audio queue full; dropping newest packets to bound latency")
@@ -1573,6 +1584,7 @@ private class AudioRenderer(
     }
 
     private fun run() {
+        runCatching { android.os.Process.setThreadPriority(android.os.Process.THREAD_PRIORITY_AUDIO) }
         try {
             runCatching { report("Audio: starting api=${Build.VERSION.SDK_INT} " +
                 "audioType=${format.audioType} codec=${format.codec} rate=${format.sampleRate} channels=${format.channels} " +
@@ -1732,6 +1744,7 @@ private class AudioRenderer(
                 sampleRate = format.sampleRate,
                 targetFrames = (startThresholdBytes / frameBytes).toLong(),
                 capacityFrames = (capacityBytes / frameBytes).toLong(),
+                measuresTarget = true,
             )
         } else {
             null
@@ -2138,10 +2151,7 @@ private class AudioRenderer(
             if (writeMs >= BLOCKED_WRITE_MS) {
                 blockedWritesThisWindow++
                 if (writeMs > longestBlockedWriteMs) longestBlockedWriteMs = writeMs
-                // A blocked write means the track was full: the trim must speed the music up now,
-                // not wait for the averaged level to react. Measured 629-639 ms blocks on
-                // 2026-10-25 with the queue at 55 k of 57.6 k frames.
-                if (mappedChannel == AudioChannel.MEDIA) clockTrim?.noteOverflow(System.nanoTime())
+                // A blocking write alone is not drift; arrivals during the block enter the time average.
             }
             if (count < 0) {
                 writeErrorsThisWindow++
@@ -2197,8 +2207,14 @@ private class AudioRenderer(
             ?: 0L
         val compressedPcmFrames = compressedRtpFrames * format.sampleRate /
             format.rtpClockRate.coerceAtLeast(1)
-        trim.sample(bufferProgress.queuedBytes(track.playbackHeadPosition) / frameBytes,
-            now, compressedPcmFrames)
+        val dropped = packetsDroppedTotal.get() + inputDropped + unsentPcmBytesTotal / frameBytes
+        if (dropped != droppedAtLastTrim) {
+            droppedAtLastTrim = dropped
+            trim.measureAgain()
+        }
+        val head = track.playbackHeadPosition
+        trim.sample(bufferProgress.queuedBytes(head) / frameBytes, now, compressedPcmFrames,
+            headMoving = head != headAtPlaybackStart, arrivedFrameNs = queuedFrameNsSince(trim.lastSampleNs, now))
         val resets = trim.resetCount
         if (resets != lastTrimResets) {
             lastTrimResets = resets
@@ -2214,9 +2230,27 @@ private class AudioRenderer(
         }
     }
 
+    /** Count queued audio from arrival, including while a write was blocked. */
+    private fun queuedFrameNsSince(sinceNs: Long, nowNs: Long): Double {
+        val clockRate = format.rtpClockRate.coerceAtLeast(1)
+        var frameNs = 0.0
+        var previousSample: Int? = null
+        for (packet in queue) {
+            val previous = previousSample
+            previousSample = packet.sample
+            if (previous == null || packet.arrivedNs <= sinceNs) continue
+            val rtpFrames = (packet.sample.toLong() - previous) and 0xffff_ffffL
+            if (rtpFrames > clockRate) continue
+            frameNs += rtpFrames.toDouble() * format.sampleRate / clockRate * (nowNs - packet.arrivedNs)
+        }
+        return frameNs
+    }
+
     private fun startPlayback(track: AudioTrack) {
         diagnosticStage = "track-play"
         underrunsAtPlaybackStart = track.underrunCount
+        headAtPlaybackStart = track.playbackHeadPosition
+        clockTrim?.measureAgain()
         track.play()
         playbackStarted = true
     }
@@ -2241,6 +2275,9 @@ private class AudioRenderer(
                 .coerceAtMost(startThresholdBytes.toLong()).toInt()
             lastPcmWriteNs = System.nanoTime()
             rebufferCount++
+            if (rebufferCount <= MAX_REBUFFER_REPORTS) {
+                report("Audio: rebuffer paused audioType=${format.audioType} count=$rebufferCount queuedBytes=$prebufferBytes thresholdBytes=$startThresholdBytes")
+            }
         }
         // A short final burst may never reach the start threshold. Play it after a bounded wait.
         if (!playbackStarted && prebufferBytes > 0 && queue.isEmpty() &&

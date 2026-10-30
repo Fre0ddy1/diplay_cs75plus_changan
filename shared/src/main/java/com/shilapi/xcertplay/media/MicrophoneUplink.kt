@@ -27,6 +27,7 @@ import java.util.concurrent.atomic.AtomicBoolean
 internal class MicrophoneUplink(
     private val config: MicrophoneConfig,
     private val onDiagnostic: (String) -> Unit = {},
+    private val noAudioRestartMillis: Long = 1_000L,
 ) : Closeable {
     private val running = AtomicBoolean(false)
     private val stats = MicrophoneCaptureStats(config, report = { message ->
@@ -200,6 +201,7 @@ internal class MicrophoneUplink(
     }
 
     private fun capture(recorder: AudioRecord, socket: DatagramSocket) {
+        runCatching { android.os.Process.setThreadPriority(android.os.Process.THREAD_PRIORITY_AUDIO) }
         val frame = ByteArray(config.frameBytes)
         val readBuffer = ByteArray(maxOf(frame.size, MIN_READ_BYTES))
         val counters = MicrophoneCounters()
@@ -212,6 +214,9 @@ internal class MicrophoneUplink(
         val clockBase = System.nanoTime()
         var framesPaced = 0L
         var filled = 0
+        var readRestarts = 0
+        var noAudioRestarts = 0
+        var lastAudioNs = System.nanoTime()
         try {
             while (running.get()) {
                 stats.reading()
@@ -222,12 +227,26 @@ internal class MicrophoneUplink(
                         Log.e(TAG, "microphone read failed code=$count")
                         stats.failure(MicrophoneFailureStage.READ, code = count)
                     }
+                    if (running.get() && count != AudioRecord.ERROR_DEAD_OBJECT &&
+                        readRestarts < 3 && restartRecording(recorder)) {
+                        readRestarts++
+                        stats.restarted(readRestarts, "read-error", routeType(recorder))
+                        continue
+                    }
                     return
                 }
                 if (count == 0) {
                     stats.flush(routeType = routeInfo)
+                    val now = System.nanoTime()
+                    if (running.get() && noAudioRestarts < 3 && now - lastAudioNs >= noAudioRestartMillis * 1_000_000L) {
+                        noAudioRestarts++
+                        lastAudioNs = now
+                        if (restartRecording(recorder)) stats.restarted(noAudioRestarts, "no-audio", routeType(recorder))
+                        else stats.failure(MicrophoneFailureStage.RECORDING, code = recorder.recordingState)
+                    } else Thread.sleep(5)
                     continue
                 }
+                lastAudioNs = System.nanoTime()
                 var offset = 0
                 while (offset < count && running.get()) {
                     val copied = minOf(frame.size - filled, count - offset)
@@ -259,6 +278,15 @@ internal class MicrophoneUplink(
         }
     }
 
+    private fun restartRecording(recorder: AudioRecord): Boolean = try {
+        runCatching { recorder.stop() }
+        Thread.sleep(50)
+        if (!running.get()) false else {
+            recorder.startRecording()
+            recorder.recordingState == AudioRecord.RECORDSTATE_RECORDING
+        }
+    } catch (_: IllegalStateException) { false }
+
     private fun sendFrame(socket: DatagramSocket, counters: MicrophoneCounters, frame: ByteArray) {
         val bodies = if (config.codec == AudioCodecKind.OPUS) {
             opusEncoder?.encode(frame).orEmpty()
@@ -271,7 +299,7 @@ internal class MicrophoneUplink(
                 socket = socket,
                 counters = counters,
                 body = body,
-                samples = config.samplesPerPacket,
+                samples = config.rtpSamplesPerPacket,
             )
         }
     }
