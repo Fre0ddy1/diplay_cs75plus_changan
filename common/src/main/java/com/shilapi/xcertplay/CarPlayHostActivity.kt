@@ -2230,15 +2230,23 @@ class CarPlayHostActivity : ComponentActivity() {
         // head unit's own player, which grabbed the audio focus and paused the iPhone - music died
         // seconds after every play, from the wheel, from CarPlay and from the phone alike. The
         // swallow is the stable half; do not forward while that player reacts to wheel keys.
+        // Silent CarPlay counts as well: with no audio rendered there is nothing for those keys to
+        // act on, and forwarding them would wake the head unit's own player for a track nobody
+        // hears. Two switches, one answer - the keys stay with the car.
         if (activeAirPlaySession != null &&
             CarPlayVideo.activity == null &&
             isWheelMediaKey(event.keyCode) &&
-            AirPlayPersistence.loadMediaViaCarBluetooth(this)
+            (AirPlayPersistence.loadMediaViaCarBluetooth(this) ||
+                AirPlayPersistence.loadCarPlayAudioDisabled(this))
         ) {
             if (event.action == KeyEvent.ACTION_DOWN && event.repeatCount == 0) {
+                val reason = if (AirPlayPersistence.loadMediaViaCarBluetooth(this)) {
+                    "media belongs to the car Bluetooth"
+                } else {
+                    "CarPlay audio is silent"
+                }
                 appendLog(
-                    "Media: wheel key ${KeyEvent.keyCodeToString(event.keyCode)} blocked " +
-                        "(media belongs to the car Bluetooth)",
+                    "Media: wheel key ${KeyEvent.keyCodeToString(event.keyCode)} blocked ($reason)",
                 )
             }
             return true

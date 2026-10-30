@@ -297,9 +297,12 @@ internal object CarPlayMediaKeys {
             (index == CarPlayMediaButton.NEXT ||
                 index == CarPlayMediaButton.PREVIOUS ||
                 index == CarPlayMediaButton.PLAY_PAUSE) &&
-            appContext?.let { AirPlayPersistence.loadMediaViaCarBluetooth(it) } == true
+            appContext?.let {
+                AirPlayPersistence.loadMediaViaCarBluetooth(it) ||
+                    AirPlayPersistence.loadCarPlayAudioDisabled(it)
+            } == true
         ) {
-            Log.i(TAG, "media key $source -> blocked (media belongs to the car Bluetooth)")
+            Log.i(TAG, "media key $source -> blocked (the car owns wheel keys)")
             return
         }
         val sent = synchronized(this) { controller }?.sendMediaButton(index) ?: false
