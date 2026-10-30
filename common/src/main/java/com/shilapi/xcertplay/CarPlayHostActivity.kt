@@ -403,6 +403,9 @@ class CarPlayHostActivity : ComponentActivity() {
     private var displayDiagnosticAttempt: String? = null
     private var hevcEnabled = true
     private var hevcSoftwareDecoderEnabled = false
+    private val hevcDecoders by lazy { HevcSupport.decoders() }
+    private val sessionHevc: Boolean
+        get() = HevcSupport.usable(hevcEnabled, hevcSoftwareDecoderEnabled, hevcDecoders)
     private var advancedAudioChannelMappingSupported = false
     private var advancedAudioChannelMapping = false
     private var navigationStreamType = 14
@@ -4028,7 +4031,7 @@ class CarPlayHostActivity : ComponentActivity() {
             "${getString(R.string.resolution_handshake_prefix)}${native.width} x ${native.height} -> " +
                 "${negotiated.widthPixels} x ${negotiated.heightPixels}"
         }
-        val transport = if (!hevcEnabled) {
+        val transport = if (!sessionHevc) {
             "H.264"
         } else {
             "HEVC (H.265, ${if (hevcSoftwareDecoderEnabled) "software" else "hardware"})"
@@ -4132,7 +4135,7 @@ class CarPlayHostActivity : ComponentActivity() {
         val requestSummary = "Display request surface=${size.width}x${size.height} " +
             "resolution=${displayScaleTenths * 10}% " +
             "canvas=${display.widthPixels}x${display.heightPixels} fps=$fps " +
-            "codec=${if (hevcEnabled) "HEVC" else "H.264"} softwareHevc=$hevcSoftwareDecoderEnabled"
+            "codec=${if (sessionHevc) "HEVC" else "H.264"} softwareHevc=$hevcSoftwareDecoderEnabled"
         val effectiveSummary = "Display effective canvas=${display.widthPixels}x${display.heightPixels} " +
             "physical=${physical.widthMm}x${physical.heightMm}mm safeArea=${display.safeArea} " +
             "drawOutside=${display.safeAreaDrawOutside} " +
@@ -4141,6 +4144,7 @@ class CarPlayHostActivity : ComponentActivity() {
             this, requestSummary, "Decoder capability enlargement check not required", effectiveSummary,
         )
         appendLog(requestSummary)
+        if (hevcEnabled && !sessionHevc) appendLog("HEVC requested but no suitable decoder; this session uses H.264")
         appendLog(effectiveSummary)
         return AirPlayConfig(
             deviceName = "DiPlay",
@@ -4158,7 +4162,7 @@ class CarPlayHostActivity : ComponentActivity() {
                 null
             },
             rightHandDrive = rightHandDrive,
-            hevc = hevcEnabled,
+            hevc = sessionHevc,
             microphone = microphoneAvailable,
             manufacturer = normalizedManufacturer(),
             model = normalizedModel(),
@@ -5435,7 +5439,7 @@ class CarPlayHostActivity : ComponentActivity() {
         appendLog(
             "$prefix; starting a fresh handshake at " +
                 "${CarPlayDisplayScale.label(displayScaleTenths)} with " +
-                (if (hevcEnabled) "HEVC (H.265)" else "H.264") +
+                (if (sessionHevc) "HEVC (H.265)" else "H.264") +
                 ", MFI ${mfiTargetLabel(mfiTarget)}" +
                 ", Wi-Fi session ${hotspotModeLabel(wirelessHotspotMode)}",
         )
