@@ -17,6 +17,6 @@ interface ProjectionActivationControl {
     fun activate(): Boolean
     /** Launch a module-selected prerequisite without changing the current phone session. */
     fun launchPrerequisite(intent: Intent): Boolean = false
-    /** Return to the same live projection host, never start a replacement session. */
+    /** Return to the same host and refresh its video window; never replace the phone session. */
     fun returnToProjection(): Boolean = false
 }

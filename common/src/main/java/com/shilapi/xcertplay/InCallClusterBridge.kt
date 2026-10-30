@@ -405,34 +405,9 @@ object InCallClusterBridge {
             generation++
         }
         val gen = generation
-        val scoped = object : ProjectionControl {
-            override fun requestLayout(layout: ProjectionLayout): Boolean {
-                if (gen != generation || automaticProjectionOwner !== owner) return false
-                synchronized(confirmationLock) {
-                    if (resumeGeneration == gen) {
-                        resumeRequestSerial = callbackSerial
-                        resumeFullSeen = false
-                        resumeOpenSeen = false
-                    }
-                }
-                return projectionControl.requestLayout(layout)
-            }
-            override fun invalidateConfirmation() {
-                if (gen != generation || automaticProjectionOwner !== owner) return
-                synchronized(confirmationLock) { resumeGeneration = null }
-                lastCallbackValue.remove(CALLBACK_CODE_STATE)
-                persistProjecting(false)
-                generation++ // Reject queued replies and controls from the expired owner.
-                logSeq(generation, "retained confirmation expired; bounded channel watcher may recover")
-            }
-        }
+        val scoped = confirmationControl(gen) { automaticProjectionOwner === owner }
         if (needsFresh) {
-            synchronized(confirmationLock) {
-                resumeGeneration = gen
-                resumeRequestSerial = Long.MAX_VALUE
-                resumeFullSeen = false
-                resumeOpenSeen = false
-            }
+            beginConfirmation(gen)
             if (VehicleCustomizations.onProjectionResumed(ctx, scoped)) {
                 logSeq(gen, "new window on retained channel; waiting for fresh layout and channel replies")
                 return
@@ -448,6 +423,37 @@ object InCallClusterBridge {
         if (layout != null) VehicleCustomizations.onProjectionLayoutRequested(layout)
         logSeq(gen, "reattach retained projection strategy; same window layout=$layout")
     }
+
+    private fun beginConfirmation(gen: Int) = synchronized(confirmationLock) {
+        resumeGeneration = gen
+        resumeRequestSerial = Long.MAX_VALUE
+        resumeFullSeen = false
+        resumeOpenSeen = false
+    }
+
+    /** Rebind a bounded confirmation to the current vendor generation and its actual owner. */
+    private fun confirmationControl(gen: Int, currentOwner: () -> Boolean): ProjectionControl =
+        object : ProjectionControl {
+            override fun requestLayout(layout: ProjectionLayout): Boolean {
+                if (gen != generation || !currentOwner()) return false
+                synchronized(confirmationLock) {
+                    if (resumeGeneration == gen) {
+                        resumeRequestSerial = callbackSerial
+                        resumeFullSeen = false
+                        resumeOpenSeen = false
+                    }
+                }
+                return projectionControl.requestLayout(layout)
+            }
+            override fun invalidateConfirmation() {
+                if (gen != generation || !currentOwner()) return
+                synchronized(confirmationLock) { resumeGeneration = null }
+                lastCallbackValue.remove(CALLBACK_CODE_STATE)
+                persistProjecting(false)
+                generation++ // Reject queued replies and controls from the expired owner.
+                logSeq(generation, "retained confirmation expired; bounded channel watcher may recover")
+            }
+        }
 
     /** Detach page/phone ownership without closing the retained physical channel. */
     fun detachAutomaticProjection(owner: Any) {
@@ -723,7 +729,19 @@ object InCallClusterBridge {
         broadcastHalfSent = false
         sourceEnterSent = false
         silentHoldScheduled = false
-        VehicleCustomizations.onProjectionStarted(context.applicationContext, true, projectionControl)
+        // Source dispatch replaces the vendor generation. Bind a fresh bounded confirmation
+        // instead of clearing the fullscreen timer and waiting for a callback that may never recur.
+        val gen = generation
+        val windowRef = WeakReference(window)
+        val scoped = confirmationControl(gen) {
+            val current = windowRef.get()
+            current != null && observationOwner?.get() === current && contentReadyWindow?.get() === current
+        }
+        beginConfirmation(gen)
+        if (!VehicleCustomizations.onProjectionResumed(context.applicationContext, scoped)) {
+            synchronized(confirmationLock) { resumeGeneration = null }
+            VehicleCustomizations.onProjectionStarted(context.applicationContext, true, scoped)
+        }
         logSeq(generation, "current video window ready; dispatch actual content source handoff")
         runFullOpenSequence(keepFullscreen = lastCallbackValue[1] == 3, onDispatched = onDispatched)
     }

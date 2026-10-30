@@ -1383,13 +1383,14 @@ class CarPlayHostActivity : ComponentActivity() {
             appendLog("Cluster map: no cluster projection display among ${ClusterMapPresentation.describeDisplays(this)}")
             return
         }
-        val presentation = ClusterMapPresentation(
+        lateinit var presentation: ClusterMapPresentation
+        presentation = ClusterMapPresentation(
             this,
             display,
             theme,
-            { surface -> runOnUiThread { onClusterMirrorSurface(surface) } },
-            { surface -> runOnUiThread { onClusterNavSurface(surface) } },
-            { surface -> runOnUiThread { onClusterCardSurface(surface) } },
+            { surface -> runOnUiThread { if (clusterPresentation === presentation) onClusterMirrorSurface(surface) } },
+            { surface -> runOnUiThread { if (clusterPresentation === presentation) onClusterNavSurface(surface) } },
+            { surface -> runOnUiThread { if (clusterPresentation === presentation) onClusterCardSurface(surface) } },
             navOnlyCards = true,
             flyCard = CarPlayClusterDisplay.isFlyCard(AirPlayPersistence.loadClusterContent(this)),
         )
@@ -1402,8 +1403,8 @@ class CarPlayHostActivity : ComponentActivity() {
             }
         }
         try {
-            presentation.show()
             clusterPresentation = presentation
+            presentation.show()
             // Remember which picture source this window was built for. The URL is fixed at build
             // time, so a later change to that setting can only take effect through a rebuild.
             clusterWindowContent = AirPlayPersistence.loadClusterContent(this)
@@ -1443,6 +1444,8 @@ class CarPlayHostActivity : ComponentActivity() {
             // unit is already projecting; incall's own callback is the only channel that can.
             InCallClusterBridge.observeCallback(this, presentation)
         } catch (error: RuntimeException) {
+            if (clusterPresentation === presentation) clusterPresentation = null
+            runCatching { presentation.dismiss() }
             Log.w(ClusterMapPresentation.TAG, "cluster presentation failed", error)
             appendLog("Cluster map: presentation failed ${error.javaClass.simpleName}")
         }
@@ -1463,13 +1466,14 @@ class CarPlayHostActivity : ComponentActivity() {
             appendLog("Cluster map: no cluster projection display (quiet)")
             return
         }
-        val presentation = ClusterMapPresentation(
+        lateinit var presentation: ClusterMapPresentation
+        presentation = ClusterMapPresentation(
             this,
             display,
             theme,
-            { surface -> runOnUiThread { onClusterMirrorSurface(surface) } },
-            { surface -> runOnUiThread { onClusterNavSurface(surface) } },
-            { surface -> runOnUiThread { onClusterCardSurface(surface) } },
+            { surface -> runOnUiThread { if (clusterPresentation === presentation) onClusterMirrorSurface(surface) } },
+            { surface -> runOnUiThread { if (clusterPresentation === presentation) onClusterNavSurface(surface) } },
+            { surface -> runOnUiThread { if (clusterPresentation === presentation) onClusterCardSurface(surface) } },
             navOnlyCards = true,
             flyCard = CarPlayClusterDisplay.isFlyCard(AirPlayPersistence.loadClusterContent(this)),
         )
@@ -1481,8 +1485,8 @@ class CarPlayHostActivity : ComponentActivity() {
             }
         }
         try {
-            presentation.show()
             clusterPresentation = presentation
+            presentation.show()
             // Remember which picture source this window was built for. The URL is fixed at build
             // time, so a later change to that setting can only take effect through a rebuild.
             clusterWindowContent = AirPlayPersistence.loadClusterContent(this)
@@ -1497,6 +1501,8 @@ class CarPlayHostActivity : ComponentActivity() {
             appendLog("Cluster map: quiet window shown display=${display.displayId}")
             InCallClusterBridge.observeCallback(this, presentation)
         } catch (error: RuntimeException) {
+            if (clusterPresentation === presentation) clusterPresentation = null
+            runCatching { presentation.dismiss() }
             appendLog("Cluster map: quiet window failed ${error.javaClass.simpleName}")
         }
     }
@@ -1697,6 +1703,13 @@ class CarPlayHostActivity : ComponentActivity() {
             "Disconnect: 隐藏仪表窗口（归还仪表，不发序列）" +
                 if (immediate) "（司机主动断开）" else "（${disconnectReleaseFallbackMs}ms 无画面，兜底隐藏）",
         )
+    }
+
+    /** A prerequisite may have created its own Presentation above ours on the same panel. */
+    private fun refreshProjectionWindowAfterPrerequisite() {
+        dismissClusterPresentation()
+        ensureClusterWindowQuiet()
+        appendLog("Projection prerequisite returned; rebuilt current video window before source handoff")
     }
 
     private fun dismissClusterPresentation() {
@@ -6178,6 +6191,7 @@ class CarPlayHostActivity : ComponentActivity() {
                             return runCatching {
                                 startActivity(Intent(this@CarPlayHostActivity, CarPlayHostActivity::class.java)
                                     .addFlags(Intent.FLAG_ACTIVITY_REORDER_TO_FRONT or Intent.FLAG_ACTIVITY_NEW_TASK))
+                                refreshProjectionWindowAfterPrerequisite()
                                 true
                             }.getOrElse { appendLog("Projection prerequisite return failed: ${it.javaClass.simpleName}"); false }
                         }

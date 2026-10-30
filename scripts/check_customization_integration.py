@@ -74,6 +74,8 @@ checks['common/src/main/java/com/shilapi/xcertplay/DiPlaySessionService.kt'] += 
 checks['shared/src/main/java/com/shilapi/xcertplay/orchestration/CarPlayController.kt'] += ['VehicleCustomizations.allowAutomaticStartup(appContext)']
 checks['common/src/main/java/com/shilapi/xcertplay/CarPlayHostActivity.kt'] += ['VehicleCustomizations.onProjectionEnvironment(', 'DiPlayAppExit.request(this)', 'InCallClusterBridge.observeDisplayAvailable(displayOn)', 'override fun launchPrerequisite(intent: Intent)', 'override fun returnToProjection()']
 checks['customizations/changan-projection/src/main/java/com/freddyq/diplay/changan/projection/ProjectionEnvironmentBridge.kt'] = ['StockAmapBootstrap', 'bootstrap.ready(', 'policy.clear()']
+checks['common/src/main/java/com/shilapi/xcertplay/CarPlayHostActivity.kt'] += ['refreshProjectionWindowAfterPrerequisite()']
+checks['common/src/main/java/com/shilapi/xcertplay/InCallClusterBridge.kt'] += ['private fun confirmationControl(', 'beginConfirmation(gen)']
 checks['common/src/main/java/com/shilapi/xcertplay/InCallClusterBridge.kt'] += ['fun invalidateProjectionChannel()', 'projectionDisplayAvailable', 'remoteServiceEpoch++']
 failures=[]
 for name,needles in checks.items():
