@@ -386,7 +386,7 @@
     <string name="cluster_content_apple_combined">Apple map + card (one stream)</string>
     <string name="cluster_content_hint">All are pictures the phone sends; switching reconnects, because the URL is fixed when the window is built.</string>
     <string name="cluster_card_safe_title">Card safe area (experiment)</string>
-    <string name="cluster_card_safe_hint">Only the Apple full-navigation card window. 0 = the old declaration (whole canvas to the phone), 30 % restored the card\'s size on the car; negative values stop the phone from connecting. This build also negotiates a 960x400 canvas and no longer crops/upscales - the window shows the stream 1:1; reconnects when you let go.</string>
+    <string name="cluster_card_safe_hint">Only the Apple full-navigation card window. 0 = the native 480x200 (old behaviour). N % does two things at once: inset the safe area by N % of the short edge on all four sides, and grow the negotiated canvas from the 480x200 base by the same amount (30 % gives 624x264 with a ~466x106 safe rectangle). The window shows the stream 1:1, so the card really is bigger and nothing is upscaled into blur. Negative values stop the phone from connecting; reconnects when you let go.</string>
     <string name="cluster_card_diagnostics">Diagnostic: full-panel card + raw H.264</string>
     <string name="cluster_card_diagnostics_desc">Only for \'Apple full navigation\' (the separate card stream). Declares the card display at the panel size (e.g. 1920x720) and reconnects. On every navigation start the card\'s raw H.264 is saved to the log folder as card-112-TIME.h264 for offline playback.</string>
     <string name="cluster_card_song_max_chars">Song card maximum characters</string>

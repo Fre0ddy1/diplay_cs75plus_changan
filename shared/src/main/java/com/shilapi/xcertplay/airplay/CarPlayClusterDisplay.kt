@@ -131,9 +131,9 @@ object CarPlayClusterDisplay {
      * DiPlay shows as it arrives at the panel's upper-left, over the map stream. The card needs
      * no input and no features, exactly like the map cluster display.
      *
-     * Both declaration knobs below are field findings: the safe area decides how big iOS draws the
-     * card inside the canvas (27.2 drew it tiny on a full-canvas safe area), and the canvas decides
-     * how many pixels that card is made of.
+     * One knob, two effects (driver's rule, 2026-10-30): the percentage insets the safe area AND
+     * grows the whole negotiated canvas by the same amount, so the card iOS draws comes out that
+     * much larger while every pixel of it stays 1:1 - see [safeInsetPct].
      */
     fun cardConfig(
         widthPixels: Int = CARD_WIDTH_PIXELS,
@@ -141,34 +141,28 @@ object CarPlayClusterDisplay {
         fps: Int = FPS,
         physicalWidthMm: Int = DEFAULT_CARD_WIDTH_PHYSICAL_MM,
         /**
-         * Safe-area inset as a percentage of the canvas's short edge (0-50), applied to all four
-         * edges. 0 leaves the declaration as it always was (whole canvas safe, [safeArea] null).
-         * On the car (2026-10-30) a positive value changed how iOS lays the card out: 30 % looked
-         * normal again after 27.2 drew it tiny. Negative values are not supported - the phone
-         * refuses the whole session when the safe area leaves the canvas.
+         * Card scale in percent (0-50). **0 is the native declaration**: a 480x200 canvas with the
+         * whole canvas safe, exactly as it always was.
+         *
+         * A positive value does two things at once, with the same number:
+         * 1. insets the safe area by that percentage of the canvas's SHORT edge on all four sides.
+         *    On the car (2026-10-30) this is what made iOS 27.2 draw the turn card at its old size
+         *    again - at 30 % it fills the 360x80 rectangle instead of the tiny corner it used.
+         * 2. grows the declared canvas by the same percentage: 30 % turns the 480x200 base into
+         *    624x264 (rounded to a multiple of 8), so the safe rectangle becomes ~466x106 instead
+         *    of 360x80. The card window follows the stream 1:1, so the bigger card is real pixels
+         *    and nothing is stretched up - enlarging the picture was what blurred it before.
+         *
+         * Negative values are not supported: the phone refuses the whole session when the safe
+         * area leaves the canvas (field 2026-10-30, -20/-35/-50 all failed to connect).
          */
         safeInsetPct: Int = 0,
-        /**
-         * Negotiated canvas multiplier: the display is declared `widthPixels * canvasScale` wide
-         * and `heightPixels * canvasScale` high, so the phone paints (and streams) that much more
-         * detail. 1 = the native declaration.
-         *
-         * This is the "enlarge the view area with it" half of the 2026-10-30 experiment. The safe
-         * area is a PERCENTAGE, so the rectangle iOS lays the card out in grows with the canvas at
-         * the same aspect: a 2x canvas carries twice the pixels in the same 4.5:1 shape, instead of
-         * one small rectangle being stretched up to the window (which is what blurs). The card
-         * window then shows the stream 1:1, i.e. twice the panel footprint.
-         *
-         * The physical size is deliberately NOT multiplied (96x40 mm either way), which leaves two
-         * possible readings for iOS and both are informative: honour the density and the card keeps
-         * its size with twice the resolution, ignore it and the card comes out twice as large.
-         */
-        canvasScale: Int = 1,
     ): AirPlayDisplayConfig {
         val pct = safeInsetPct.coerceIn(0, 50)
-        val scale = canvasScale.coerceIn(1, 3)
-        val width = roundTo8(widthPixels.toDouble() * scale)
-        val height = roundTo8(heightPixels.toDouble() * scale)
+        // Same percentage for the canvas: 0 keeps the 480x200 base, 30 makes it 624x264.
+        val grow = (100 + pct) / 100.0
+        val width = roundTo8(widthPixels * grow)
+        val height = roundTo8(heightPixels * grow)
         val physicalMm = physicalWidthMm.coerceIn(1, 2000)
         val shortEdge = minOf(width, height)
         // Never let the inset collapse the safe area - the phone aborts on an empty rectangle.
@@ -182,8 +176,8 @@ object CarPlayClusterDisplay {
         return AirPlayDisplayConfig(
             widthPixels = width,
             heightPixels = height,
-            // Driver-typed physical width (settings, default 96 mm). heightPhysical follows the
-            // canvas aspect so the physical rectangle and the pixel rectangle agree.
+            // Driver-typed physical width (settings, default 96 mm), NOT scaled with the canvas:
+            // it stays the base declaration, so what grows is the pixel count, not the panel.
             widthPhysicalMm = physicalMm,
             heightPhysicalMm = Math.round(physicalMm * height.toDouble() / width).toInt(),
             fps = fps,
@@ -203,24 +197,15 @@ object CarPlayClusterDisplay {
      * window full of whitespace (driver, tested repeatedly, 2026-10-29).
      *
      * What DID move it was the safe area (field, 2026-10-30): with 30 % insets the phone fills that
-     * inset rectangle with the card and it comes out the size it used to have before 27.2. This
-     * build therefore keeps the same percentage but asks for [CARD_CANVAS_SCALE] x the canvas, so
-     * that rectangle is made of twice the pixels - see cardConfig(canvasScale).
+     * inset rectangle with the card and it comes out the size it used to have before 27.2. The
+     * percentage therefore also grows the canvas by the same amount, which makes that rectangle
+     * bigger in real pixels instead of being stretched up - see cardConfig(safeInsetPct).
      *
      * The custom-card mode (MAP_WITH_CUSTOM_CARD) draws its own card independently of this AirPlay
      * display.
      */
     const val CARD_WIDTH_PIXELS = 480
     const val CARD_HEIGHT_PIXELS = 200
-
-    /**
-     * 2026-10-30 experiment: negotiate the card canvas this many times larger while the safe-area
-     * percentage stays where the driver set it. 2 = a 960x400 canvas whose 30 % safe rectangle is
-     * 720x160 - the 360x80 rectangle that looked right on the car, with twice the pixels behind it.
-     * The card window grows with it (1:1 display, no upscale), which is the whole point: bigger AND
-     * sharp. 1 returns to the native 480x200 declaration.
-     */
-    const val CARD_CANVAS_SCALE = 2
 
     /**
      * Default physical width reported for the instruction-card display: 96 mm at 480x200 is about

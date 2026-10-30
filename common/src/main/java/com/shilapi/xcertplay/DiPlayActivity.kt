@@ -807,9 +807,9 @@ class DiPlayActivity : ComponentActivity() {
                 // 卡窗安全区（实验项，2026-10-30）：iOS 27.2 把 instructioncard 的卡画得很小。
                 // 单改 viewArea（480x200 -> 960x480）只让留白变多，卡本身没变大；改成 safeArea
                 // 内缩后手机会按那块矩形排卡（30% 实测恢复正常），负值会被手机拒绝连接，所以
-                // 范围 0-50。本版协商画布同时放大（CARD_CANVAS_SCALE），卡窗按 1:1 显示，不再
-                // 裁剪放大。只有 FLY_CARD 用卡窗，其他模式不受影响；/info 每会话只读一次，
-                // 松手热重启才生效。
+                // 范围 0-50。这个百分比同时把协商画布从 480x200 基准按同比例放大（30% ->
+                // 624x264），卡窗按 1:1 显示，不再裁剪/放大，所以卡变大且不糊。只有 FLY_CARD
+                // 用卡窗，其他模式不受影响；/info 每会话只读一次，松手热重启才生效。
                 runCatching {
                     val safeTitle = label(getString(R.string.cluster_card_safe_title), 16, TEXT, true)
                     safeTitle.setPadding(0, dp(12), 0, 0)
