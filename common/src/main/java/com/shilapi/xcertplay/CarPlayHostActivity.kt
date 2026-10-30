@@ -2198,7 +2198,7 @@ class CarPlayHostActivity : ComponentActivity() {
         // the guidance level instead of the music (field report 2026-10-20). Only PCM written to
         // the guidance track counts. Same signal as guidanceVolumePoll, so the window the keys are
         // routed through and the window this handler acts on never disagree.
-        if (navigationGuidanceActive && sink?.navigationAudioActive() == true &&
+        if (sink?.navigationAudioActive() == true &&
             event.action == KeyEvent.ACTION_DOWN &&
             event.repeatCount == 0 &&
             (event.keyCode == KeyEvent.KEYCODE_VOLUME_UP || event.keyCode == KeyEvent.KEYCODE_VOLUME_DOWN)
@@ -4710,39 +4710,32 @@ class CarPlayHostActivity : ComponentActivity() {
         )
     }
 
-    /**
-     * While navigation guidance is playing, route the volume keys to the configured
-     * navigation channel so the steering-wheel keys adjust guidance volume instead of
-     * always adjusting media. Restores media routing when guidance stops.
-     *
-     * True from the navigation stream's start edge to its stop edge. That edge alone is not the
-     * prompt: on this head unit the stream stays open far longer than one announcement, so what
-     * decides the routing is the guidance PCM below, not this flag.
-     */
-    @Volatile private var navigationGuidanceActive = false
-
     /** What the volume keys are currently pointed at, so the poll only acts on a change. */
     private var guidanceKeysOnNavigation = false
 
     /**
-     * Follows the guidance PCM instead of a fixed window.
+     * Follows the guidance PCM, and only the guidance PCM.
      *
-     * This used to be a 12 s window armed on the stream's start edge, and both halves were wrong
-     * in the field: the window expired mid-drive and never re-armed while that same stream stayed
-     * open, so every later announcement was left adjusting media (2026-10-20: keys stuck the other
-     * way round for minutes), and a prompt shorter than the window still paid the full 12 s. The
-     * PCM is the honest signal - [AndroidMediaSink.navigationAudioActive] is true only while
-     * decoded guidance frames keep arriving, so a prompt ends the routing 2.5 s after its last
-     * frame and the next prompt claims it again.
+     * Three designs have now been in this spot, and the two that were built on the navigation
+     * stream's start/stop *edge* both failed in the field:
+     *
+     *  - a 12 s window armed on the start edge expired mid-drive and never re-armed while that
+     *    same stream stayed open, so every later announcement adjusted media instead (2026-10-20);
+     *  - the edge callback comes from `updateNavigationAudio`, which only fires when the set of
+     *    navigation stream ids changes. A stream id left behind by a session that ended without a
+     *    clean teardown makes the next start edge a no-op (true -> true), so the flag it guarded
+     *    stayed false and NOTHING was routed - field 2026-10-30 21:19, the log shows type=101
+     *    audioType=default accepted and not one `Volume control stream` line after it.
+     *
+     * So the poll runs for the whole session instead of being armed by that flag, and reads the
+     * one signal that cannot get stuck: [AndroidMediaSink.navigationAudioActive] is true only
+     * while decoded guidance frames keep arriving, and false 2.5 s after the last one.
      */
     // An object rather than a lambda: it re-posts itself, and a self-referencing lambda in an
     // initializer is a recursive type for the compiler.
     private val guidanceVolumePoll: Runnable = object : Runnable {
         override fun run() {
             if (isDestroyed || isFinishing) return
-            // The stream stays open for the whole drive, so the poll must keep running past any
-            // single prompt and hand the keys back and forth as prompts come and go.
-            if (!navigationGuidanceActive) return
             val audible = sink?.navigationAudioActive() == true
             if (audible != guidanceKeysOnNavigation) {
                 guidanceKeysOnNavigation = audible
@@ -4759,20 +4752,26 @@ class CarPlayHostActivity : ComponentActivity() {
         }
     }
 
+    /**
+     * Starts the poll with the session and stops it with the session.
+     *
+     * Not armed from [onNavigationGuidanceChanged] on purpose - that callback is the edge, and the
+     * edge is what gets stuck. It still drives the ducking and the focus inside the sink.
+     */
+    private fun startGuidanceVolumePoll() {
+        mainHandler.removeCallbacks(guidanceVolumePoll)
+        guidanceKeysOnNavigation = false
+        mainHandler.post(guidanceVolumePoll)
+    }
+
+    private fun stopGuidanceVolumePoll() {
+        mainHandler.removeCallbacks(guidanceVolumePoll)
+        guidanceKeysOnNavigation = false
+    }
+
     private fun onNavigationGuidanceChanged(active: Boolean) {
-        navigationGuidanceActive = active
-        runOnUiThread {
-            if (isDestroyed || isFinishing) return@runOnUiThread
-            mainHandler.removeCallbacks(guidanceVolumePoll)
-            if (!active) {
-                guidanceKeysOnNavigation = false
-                setVolumeControlStream(AudioManager.STREAM_MUSIC)
-                appendLog("Volume control stream: media")
-                return@runOnUiThread
-            }
-            // First check runs immediately so the very first prompt is routed without a delay.
-            guidanceVolumePoll.run()
-        }
+        // Edge only shortens the first response; the poll itself no longer depends on it.
+        if (active) runOnUiThread { if (!isDestroyed && !isFinishing) guidanceVolumePoll.run() }
     }
 
     /**
@@ -5087,6 +5086,7 @@ class CarPlayHostActivity : ComponentActivity() {
                     lastCardReassertAtMs = 0L
                     sessionStartedAtElapsedMs = android.os.SystemClock.elapsedRealtime()
                     watchMediaAudioRoute()
+                    startGuidanceVolumePoll()
                     maybeAutoProjectOnConnect()
                     // A connection made while navigation is already running has no transition to
                     // react to: seed the auto-switch once so it still lands on nav-only.
@@ -5105,6 +5105,10 @@ class CarPlayHostActivity : ComponentActivity() {
                     stopCardH264Recording("session ended")
                     if (activeAirPlaySession === session) activeAirPlaySession = null
                     CarPlayBackgroundSession.active = false
+                    // The poll and the navigation routing belong to the session that started
+                    // them; a new one re-arms both from scratch.
+                    stopGuidanceVolumePoll()
+                    setVolumeControlStream(AudioManager.STREAM_MUSIC)
                     // A new session is a new connection: allow auto-project to fire again after
                     // any reconnect. restartCarPlay() also resets these, but some reconnect paths
                     // early-return before that reset (handshakeReset/menuOpen), which would leave
