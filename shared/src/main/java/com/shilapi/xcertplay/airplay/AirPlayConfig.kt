@@ -73,6 +73,16 @@ data class AirPlayConfig(
     val port: Int = 7000,
     val entertainmentSampleRate: Int = 48000,
     val hevc: Boolean = false,
+    /**
+     * Keep CarPlay audio silent.
+     *
+     * It deliberately does NOT change what /info advertises any more. Dropping the audio claim
+     * also stops the phone from opening a guidance stream, and that stream is the only signal
+     * this receiver has that a prompt is playing - without it the wheel volume keys can never
+     * be routed to the navigation channel. The switch now only decides whether
+     * [com.shilapi.xcertplay.media.AndroidMediaSink] builds an AudioTrack; this field is carried
+     * along for diagnostics and to keep the setting in one place.
+     */
     val disableAudioOutput: Boolean = false,
     val microphone: Boolean = false,
     val manufacturer: String = "xcertplay",
