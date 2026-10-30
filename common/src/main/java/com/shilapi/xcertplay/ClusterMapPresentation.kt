@@ -98,6 +98,8 @@ internal class ClusterMapPresentation(
     private var cardCropTop = 0
     private var cardCropWidth = CarPlayClusterDisplay.CARD_WIDTH_PIXELS
     private var cardCropHeight = CarPlayClusterDisplay.CARD_HEIGHT_PIXELS
+    /** Safe-area percent last applied to the card picture; -1 forces the first apply. */
+    private var cardCropScalePct = -1
     /** Panel coordinates the card window was last laid out at, i.e. AFTER the clamp (FLY_CARD). */
     private var cardWindowLeft = CARD_LEFT_PX
     private var cardWindowTop = CARD_TOP_PX
@@ -689,49 +691,61 @@ internal class ClusterMapPresentation(
     }
 
     /**
-     * 卡窗画面变换。
+     * 卡窗画面变换：把 safeArea 那块矩形裁出来，按高度基准等比放大填满卡窗。
      *
-     * 2026-10-30 实车第一轮：把 safeArea 那一块裁出来、按高度基准放大填满卡窗，位置算对了，
-     * 但小图放大会糊。第二轮（司机要求）改成「协商画布随百分比同比例放大」——见
-     * CarPlayClusterDisplay.cardConfig 的 safeInsetPct：基准仍是 480×200，手机多画像素，
-     * 卡窗按流的原始像素 1:1 显示，倍数≈1 才不会糊。所以裁剪放大这一段先停用，这里只留一个
-     * 干净的 identity 变换，顺便把上一版可能残留的矩阵清掉。
+     * iOS 是把卡画在「安全区矩形」里的（2026-10-30 实车：30% 时暗像素正好从 inset 起、到
+     * 画布边 inset 止），所以矩形以外全是空的。这里把矩形裁出来放大填满窗口，卡就能占满整个
+     * 卡窗，而不是缩在角落里。
      *
-     * 原来的裁剪数学整段留在下面的注释里：等画布本身够大、不再需要放大时，照着恢复即可。
+     * 放大倍数 = 窗口高 / 矩形高，所以**百分比越大倍数越大、越糊**；协商画布也已经随同一个
+     * 百分比放大（`CarPlayClusterDisplay.cardConfig` 的 safeInsetPct），小百分比时倍数接近 1，
+     * 几乎不掉画质。0% 走老逻辑，原样 1:1 不裁不缩。
+     *
+     * 司机 2026-10-30 的规则：高度为基准、左上角对齐、超出的右边/下边裁掉。居中裁过一次，
+     * 把左上那行字裁没了，只剩一个「米」。
      */
     private fun applyCardCropTransform() {
         val texture = cardTextureView ?: return
-        texture.setTransform(Matrix())
+        val pct = AirPlayPersistence.loadClusterCardSafeInsetPct(context).coerceIn(0, 50)
+        if (pct == cardCropScalePct) return
+        cardCropScalePct = pct
+        if (pct == 0) {
+            texture.setTransform(Matrix())
+            Log.i(TAG, "cluster card 1:1 (0 % safe area) window=${cardVideoWidth}x$cardVideoHeight")
+            return
+        }
+        val viewW = cardVideoWidth
+        val viewH = cardVideoHeight
+        if (viewW <= 0 || viewH <= 0) return
+        // Same arithmetic as the declaration in cardConfig(): the safe rectangle is the canvas
+        // inset by pct of its short edge on every side.
+        val shortEdge = minOf(viewW, viewH)
+        val inset = (shortEdge * pct / 100).coerceAtMost((shortEdge - 16) / 2)
+        val srcW = viewW - 2 * inset
+        val srcH = viewH - 2 * inset
+        if (srcW <= 0 || srcH <= 0) return
+        val scale = viewH.toFloat() / srcH
+        // Anchored at the rectangle's top-left: that is where the phone actually paints (measured
+        // on the 30 % screenshot the card's text sat at x 13-85 of the 360 px old rectangle, the
+        // rest empty), so the crop must start there and throw away the right/bottom overflow.
+        val dx = -inset * scale
+        val dy = -inset * scale
+        texture.setTransform(Matrix().apply {
+            setScale(scale, scale)
+            postTranslate(dx, dy)
+        })
         Log.i(
             TAG,
-            "cluster card 1:1 (crop disabled) safePct=" +
-                "${AirPlayPersistence.loadClusterCardSafeInsetPct(context).coerceIn(0, 50)} " +
-                "window=${cardVideoWidth}x$cardVideoHeight buffer=${cardStreamWidth}x$cardStreamHeight",
+            "cluster card crop pct=$pct inset=$inset src=${srcW}x$srcH " +
+                "scale=${"%.2f".format(scale)} window=${viewW}x$viewH buffer=${cardStreamWidth}x$cardStreamHeight",
         )
-        // ---- 第一版「裁出 safeArea + 按高度基准放大」，暂时停用 ----
-        // val pct = AirPlayPersistence.loadClusterCardSafeInsetPct(context).coerceIn(0, 50)
-        // if (pct == 0) { texture.setTransform(Matrix()); return }
-        // val viewW = cardVideoWidth
-        // val viewH = cardVideoHeight
-        // if (viewW <= 0 || viewH <= 0) return
-        // val shortEdge = minOf(viewW, viewH)
-        // val inset = (shortEdge * pct / 100).coerceAtMost((shortEdge - 16) / 2)
-        // // 实测（30% 截图）：卡画在安全区矩形本身里，暗像素从 x=60 起、到 419 止，所以从 inset 起裁。
-        // val srcW = viewW - 2 * inset
-        // val srcH = viewH - 2 * inset
-        // if (srcW <= 0 || srcH <= 0) return
-        // // 高度为基准（司机 2026-10-30 的规则）：安全区放大到高度填满卡窗，宽度按比例跟出，
-        // // 超出卡窗的右边/下边裁掉；左上角对齐，因为手机就是把卡画在左上（30% 截图里文字在
-        // // 360 px 安全区的 x 13-85，右边全是空的）。第一版居中裁会把这行字裁没，只剩一个「米」。
-        // val scale = viewH.toFloat() / srcH
-        // val dx = -inset * scale
-        // val dy = -inset * scale
-        // texture.setTransform(Matrix().apply { setScale(scale, scale); postTranslate(dx, dy) })
-        // Log.i(TAG, "cluster card safe-area pct=$pct inset=$inset src=${srcW}x$srcH scale=$scale")
     }
 
-    /** Re-applies the card picture transform. 当前裁剪停用，只剩 identity；留给设置页将来实时生效。 */
-    fun refreshCardCropTransform() = applyCardCropTransform()
+    /** Re-applies the safe-area crop after the setting changed (called from the host). */
+    fun refreshCardCropTransform() {
+        cardCropScalePct = -1
+        applyCardCropTransform()
+    }
 
     /** Live card window frame on the panel: left, top, width, height. Null when not created. */
     fun cardWindowRect(): IntArray? {

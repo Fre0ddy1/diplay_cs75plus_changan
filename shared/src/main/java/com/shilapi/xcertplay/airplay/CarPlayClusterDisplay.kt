@@ -133,8 +133,9 @@ object CarPlayClusterDisplay {
      *
      * One knob, two effects (driver's rule, 2026-10-30): the percentage insets the safe area AND
      * grows the whole negotiated canvas by the same amount. iOS fills the safe rectangle with the
-     * card, so a SMALLER percentage leaves a bigger rectangle - i.e. a bigger card - while the
-     * canvas growth keeps every pixel of that card 1:1 - see [safeInsetPct].
+     * card, so a SMALLER percentage leaves a bigger rectangle - i.e. a bigger card - and the canvas
+     * growth hands the crop-and-fill step in ClusterMapPresentation more real pixels to work with,
+     * so a small percentage stays nearly 1:1 - see [safeInsetPct].
      */
     fun cardConfig(
         widthPixels: Int = CARD_WIDTH_PIXELS,
@@ -154,8 +155,9 @@ object CarPlayClusterDisplay {
          * rectangle with normal type, 30 % 466x106, 50 % a 16 px strip whose type is unreadable.
          *
          * The canvas is grown from the 480x200 base by the same percentage (10 % -> 528x224), so the
-         * rectangle is made of more real pixels instead of being stretched up; the card window shows
-         * the stream 1:1, so nothing is resampled.
+         * rectangle is made of more real pixels before ClusterMapPresentation crops it out and
+         * scales it to fill the window - the smaller the percentage, the closer that scale is to 1
+         * and the sharper the card.
          *
          * Negative values are not supported: the phone refuses the whole session when the safe area
          * leaves the canvas (field 2026-10-30, -20/-35/-50 all failed to connect).
