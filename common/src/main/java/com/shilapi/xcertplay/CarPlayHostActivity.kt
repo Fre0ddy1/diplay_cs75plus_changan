@@ -4426,16 +4426,18 @@ class CarPlayHostActivity : ComponentActivity() {
             oemLabel = oemLabel,
             icons = listOf(loadAirPlayIcon()),
             videoInCar = com.shilapi.xcertplay.hud.BydOutputSettings.videoWhileParkedActive(this),
-            // Audio always stays on CarPlay, whatever the wheel-key switch says.
-            //
-            // Driver's design (2026-10-19): the head unit sends a steering-wheel media key twice -
-            // once to this app, once over Bluetooth AVRCP to the phone - so with both paths live a
-            // single press skipped two tracks. Dropping the audio route here (the earlier "B"
-            // build) silenced CarPlay and moved guidance to the car's Bluetooth, which cost the
-            // navigation duck and the volume-key routing for no reason: the duplicate is the key,
-            // not the audio. Keeping the audio declared means music, ducking and guidance volume
-            // all behave like factory CarPlay, and the switch only stops us forwarding the key.
-            disableAudioOutput = false,
+            // Audio stays on CarPlay by default: the car sends a wheel media key twice - once to
+            // this app, once over Bluetooth AVRCP to the phone - and with both paths live a single
+            // press skipped two tracks. The duplicate turned out to be the key, not the audio: the
+            // "B" build of 2026-10-19 dropped the audio route instead (the earlier no-audio
+            // advertisement, now the setting below) and silenced CarPlay, moved guidance to the
+            // car's Bluetooth and cost the navigation duck and the volume-key routing for nothing.
+            // So the wheel-key switch only stops us forwarding the key, and the audio route is a
+            // separate, explicit choice: a driver whose music already plays over the car's
+            // Bluetooth can advertise no audio at all (/info drops the audio feature bits and the
+            // audio formats, so the phone never asks for a stream - it is not a refused SETUP,
+            // which is what produced 1852797029 and the 40 s retry storm).
+            disableAudioOutput = AirPlayPersistence.loadCarPlayAudioDisabled(this),
         )
     }
 
