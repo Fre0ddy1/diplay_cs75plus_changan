@@ -4698,34 +4698,36 @@ class CarPlayHostActivity : ComponentActivity() {
     @Volatile private var navigationGuidanceActive = false
 
     /**
-     * Ends the guidance volume window.
+     * What the volume keys are currently pointed at, so the poll only acts on a change.
      *
-     * The flag comes from the navigation stream's start/stop edges, and on this head unit that
-     * stream can stay open far longer than a prompt - the driver was left unable to raise the
-     * music for minutes because every volume key was routed to guidance, which also made the
-     * guidance volume itself drift down (field report 2026-10-20). A prompt is seconds long, so
-     * the routing is only trusted for this window and then handed back to media on its own.
+     * The routing used to hang off the navigation stream's start/stop edges with a fixed 12 s
+     * window. Both halves were wrong in the field: the stream can stay open for minutes after a
+     * prompt (2026-10-20, keys stuck on guidance), and once the window had expired a later prompt
+     * on that same open stream never re-armed it, so the keys stayed on media. Guidance PCM is
+     * the honest signal, and it is now checked on a timer instead - audible means routed, silent
+     * means media, including in silent mode where the PCM still arrives but is not played.
      */
-    private var guidanceWindowArmed = false
+    private var guidanceKeysOnNavigation = false
 
     // An object rather than a lambda: it re-posts itself, and a self-referencing lambda in an
     // initializer is a recursive type for the compiler.
-    private val endGuidanceVolumeWindow: Runnable = object : Runnable {
+    private val guidanceVolumePoll: Runnable = object : Runnable {
         override fun run() {
             if (isDestroyed || isFinishing) return
-            // Still audible: extend instead of dropping the routing. A long prompt (a route
-            // announcement runs well past 12 s) keeps the keys on guidance, while a stream that
-            // merely stays open - the 2026-10-20 report of keys stuck on guidance for minutes -
-            // still falls back to media the moment the prompt itself stops.
-            if (navigationGuidanceActive && sink?.navigationAudioActive() == true) {
-                mainHandler.postDelayed(this, GUIDANCE_VOLUME_WINDOW_MS)
-                return
-            }
-            guidanceWindowArmed = false
             if (!navigationGuidanceActive) return
-            navigationGuidanceActive = false
-            setVolumeControlStream(AudioManager.STREAM_MUSIC)
-            appendLog("Volume control stream: media（导航音量窗口结束，恢复媒体音量键）")
+            val audible = sink?.navigationAudioActive() == true
+            if (audible != guidanceKeysOnNavigation) {
+                guidanceKeysOnNavigation = audible
+                if (audible) {
+                    val navChannel = AirPlayPersistence.loadNavigationAudioChannel(this@CarPlayHostActivity)
+                    setVolumeControlStream(navChannel)
+                    appendLog("Volume control stream: navigation($navChannel)")
+                } else {
+                    setVolumeControlStream(AudioManager.STREAM_MUSIC)
+                    appendLog("Volume control stream: media（播报结束，恢复媒体音量键）")
+                }
+            }
+            mainHandler.postDelayed(this, GUIDANCE_VOLUME_POLL_MS)
         }
     }
 
@@ -4733,22 +4735,15 @@ class CarPlayHostActivity : ComponentActivity() {
         navigationGuidanceActive = active
         runOnUiThread {
             if (isDestroyed || isFinishing) return@runOnUiThread
-            val navChannel = AirPlayPersistence.loadNavigationAudioChannel(this)
-            if (active && navChannel > 0) {
-                setVolumeControlStream(navChannel)
-                appendLog("Volume control stream: navigation($navChannel)")
-                // Armed once per prompt burst: restarting the window on every start edge let a
-                // stream that keeps flapping hold the keys on guidance indefinitely.
-                if (!guidanceWindowArmed) {
-                    guidanceWindowArmed = true
-                    mainHandler.postDelayed(endGuidanceVolumeWindow, GUIDANCE_VOLUME_WINDOW_MS)
-                }
-            } else {
-                guidanceWindowArmed = false
-                mainHandler.removeCallbacks(endGuidanceVolumeWindow)
+            mainHandler.removeCallbacks(guidanceVolumePoll)
+            if (!active) {
+                guidanceKeysOnNavigation = false
                 setVolumeControlStream(AudioManager.STREAM_MUSIC)
                 appendLog("Volume control stream: media")
+                return@runOnUiThread
             }
+            // First check runs immediately so the very first prompt is routed without a delay.
+            guidanceVolumePoll.run()
         }
     }
 
@@ -7390,11 +7385,14 @@ class CarPlayHostActivity : ComponentActivity() {
         const val PROTOCOL_TRACE_PREFIX = "TRACE "
         const val GESTURE_MIN_FINGERS = 3
         /**
-         * How long the volume keys stay on the guidance stream after a prompt starts. A prompt is
-         * a few seconds; the navigation stream on this head unit can stay open much longer, and
-         * routing the keys for that whole time leaves the driver unable to change the music.
+         * How often the guidance routing re-checks whether a prompt is audible.
+         *
+         * Cheap: one timestamp comparison per second while a navigation stream is open, and it
+         * stops the moment that stream closes. It has to be a check rather than a fixed window -
+         * a prompt is seconds long and the stream can stay open for minutes, so any fixed window
+         * either cuts a long prompt short or holds the keys after the prompt ended.
          */
-        const val GUIDANCE_VOLUME_WINDOW_MS = 12_000L
+        const val GUIDANCE_VOLUME_POLL_MS = 1_000L
         /**
          * How long the dashboard waits for incall's "projecting" confirmation after the phone
          * connected, before this attempt is dropped. The open sequence alone takes up to ~11 s on

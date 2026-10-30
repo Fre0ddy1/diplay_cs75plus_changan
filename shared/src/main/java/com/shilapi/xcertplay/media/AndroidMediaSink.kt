@@ -1845,10 +1845,12 @@ private class AudioRenderer(
     }
 
     private fun createTrack() {
-        // Silent mode: the stream is still opened, received and decoded, but no AudioTrack is
-        // built, so nothing reaches the head unit's mixer and no focus is taken from whatever is
-        // already playing. mappedChannel is still resolved - everything downstream (guidance
-        // detection, the volume-key routing, the navigation focus) keys off it.
+        // Silent mode: no stream is rendered at all.
+        //
+        // The streams are still opened, received and (for guidance) decoded, but no AudioTrack is
+        // built, so nothing reaches the head unit's mixer and no media focus is taken from
+        // whatever is already playing. mappedChannel is still resolved here - the guidance
+        // detection and the volume-key routing key off it.
         if (silent) {
             mappedChannel = mappedSelection().channel
             diagnosticStage = "silent"

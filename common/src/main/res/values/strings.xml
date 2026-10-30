@@ -644,8 +644,8 @@
     <string name="media_audio_via_bluetooth">Wheel media keys via car Bluetooth</string>
     <string name="media_audio_via_bluetooth_description">Only decides who answers the wheel media keys; it does not change where audio goes. When on, play/pause and track keys from the wheel are not forwarded to CarPlay and are left to the car Bluetooth (AVRCP) to control the phone, so one press is not answered twice.</string>
     <string name="carplay_audio_disabled">Silent CarPlay (wheel keys follow guidance)</string>
-    <string name="carplay_audio_disabled_description">DiPlay still tells the phone it takes audio, but builds no audio output: nothing from CarPlay is played, so music and guidance stay on the car own route. The streams are kept only for their type, which is the one reliable signal that a guidance prompt is playing. During a prompt the wheel volume keys switch to the navigation channel set below, and they return to media when it ends. DiPlay no longer ducks anything. Reconnect to apply.</string>
-    <string name="carplay_audio_disabled_note">CarPlay audio is silent: the guidance stream still arrives, so the wheel volume keys move to the navigation channel while a prompt plays. The music level under a prompt no longer applies.</string>
+    <string name="carplay_audio_disabled_description">DiPlay keeps advertising audio but builds no audio output at all: nothing from CarPlay is played, music, guidance and calls included. The streams are still received because their type is the only signal that a guidance prompt is playing. During a prompt the wheel volume keys move to the navigation channel set below and return to media when it ends. Whatever the car plays on its own route is unaffected. Reconnect to apply.</string>
+    <string name="carplay_audio_disabled_note">CarPlay is silent: the guidance stream still arrives, so the wheel volume keys move to the navigation channel while a prompt plays. The music level under a prompt no longer applies.</string>
     <string name="settings_group_frequent">Frequent</string>
     <string name="settings_group_connect">Connection</string>
     <string name="settings_group_display">Picture</string>

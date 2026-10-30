@@ -622,9 +622,9 @@
     <string name="nav_duck_percent_hint">播报期间音乐降到该比例，播报结束自动恢复；通话音频不受影响。改动在下一次播报即生效。</string>
     <string name="media_audio_via_bluetooth">方向盘媒体键交给车机蓝牙</string>
     <string name="media_audio_via_bluetooth_description">只决定方向盘媒体键归谁处理，不影响音频走哪条路。开启后，播放/暂停与切歌不再转发给 CarPlay，只由车机蓝牙（AVRCP）控制手机，避免一次按键被响应两次。</string>
-    <string name="carplay_audio_disabled">CarPlay 静音（方向盘音量键跟随导航播报）</string>
-    <string name="carplay_audio_disabled_description">开启后 DiPlay 仍向手机声明音频能力，但不建立任何音频输出：CarPlay 的声音一律不播，音乐与播报仍走车机自己的通路。保留音频流只为读它的类型——那是「正在导航播报」最可靠的信号。播报期间方向盘音量键切到下面设置的导航通道，播报结束自动还给媒体；DiPlay 不再压低音乐。需断开重连生效。</string>
-    <string name="carplay_audio_disabled_note">CarPlay 已静音：导航播报仍会送来音频流，因此播报期间方向盘音量键会切到导航通道。本页的「导航播报时音乐音量」不再适用。</string>
+    <string name="carplay_audio_disabled">CarPlay 全程静音（方向盘音量键跟随导航播报）</string>
+    <string name="carplay_audio_disabled_description">开启后 DiPlay 仍向手机声明音频能力，但不建立任何音频输出：CarPlay 的音乐、播报、通话全部不播。保留音频流只为读它的类型——那是「正在导航播报」的唯一可靠信号。播报期间方向盘音量键切到下面设置的导航通道，播报结束自动还给媒体。车机自己那一路声音不受影响。需断开重连生效。</string>
+    <string name="carplay_audio_disabled_note">CarPlay 已全程静音：导航播报流仍会送来，所以播报期间方向盘音量键会切到导航通道。本页的「导航播报时音乐音量」不再适用。</string>
     <string name="cluster_card_position_preview">卡片位置预览（示意）</string>
     <string name="cluster_card_position_preview_note">原点为整个仪表盘投屏画面左上角 (0,0)（1920x720），X 向右、Y 向下，坐标即卡片左上角位置（px）。直接在 X/Y 输入框键入数字预览移动，点击“应用并保存”才会写入并立即刷新仪表盘上的卡片；卡片自适应后若越出屏幕会自动收回边界并保存修正坐标。</string>
     <string name="cluster_card_position_apply">应用并保存</string>
