@@ -132,8 +132,9 @@ object CarPlayClusterDisplay {
      * no input and no features, exactly like the map cluster display.
      *
      * One knob, two effects (driver's rule, 2026-10-30): the percentage insets the safe area AND
-     * grows the whole negotiated canvas by the same amount, so the card iOS draws comes out that
-     * much larger while every pixel of it stays 1:1 - see [safeInsetPct].
+     * grows the whole negotiated canvas by the same amount. iOS fills the safe rectangle with the
+     * card, so a SMALLER percentage leaves a bigger rectangle - i.e. a bigger card - while the
+     * canvas growth keeps every pixel of that card 1:1 - see [safeInsetPct].
      */
     fun cardConfig(
         widthPixels: Int = CARD_WIDTH_PIXELS,
@@ -141,20 +142,23 @@ object CarPlayClusterDisplay {
         fps: Int = FPS,
         physicalWidthMm: Int = DEFAULT_CARD_WIDTH_PHYSICAL_MM,
         /**
-         * Card scale in percent (0-50). **0 is the native declaration**: a 480x200 canvas with the
-         * whole canvas safe, exactly as it always was.
+         * Card safe-area inset in percent (0-50).
          *
-         * A positive value does two things at once, with the same number:
-         * 1. insets the safe area by that percentage of the canvas's SHORT edge on all four sides.
-         *    On the car (2026-10-30) this is what made iOS 27.2 draw the turn card at its old size
-         *    again - at 30 % it fills the 360x80 rectangle instead of the tiny corner it used.
-         * 2. grows the declared canvas by the same percentage: 30 % turns the 480x200 base into
-         *    624x264 (rounded to a multiple of 8), so the safe rectangle becomes ~466x106 instead
-         *    of 360x80. The card window follows the stream 1:1, so the bigger card is real pixels
-         *    and nothing is stretched up - enlarging the picture was what blurred it before.
+         * **0 is the native declaration**: a 480x200 canvas with the whole canvas safe - and it is
+         * also where iOS 27.2 falls back to drawing the card tiny, so it is the one value not to
+         * use in a release.
          *
-         * Negative values are not supported: the phone refuses the whole session when the safe
-         * area leaves the canvas (field 2026-10-30, -20/-35/-50 all failed to connect).
+         * iOS paints the card INSIDE the safe rectangle and scales it to fill, so the number works
+         * the opposite way round to what it looks like: the SMALLER the percentage, the BIGGER the
+         * card. Measured on the car (2026-10-30, panel pixels, 1:1 display): 10 % leaves a 484x180
+         * rectangle with normal type, 30 % 466x106, 50 % a 16 px strip whose type is unreadable.
+         *
+         * The canvas is grown from the 480x200 base by the same percentage (10 % -> 528x224), so the
+         * rectangle is made of more real pixels instead of being stretched up; the card window shows
+         * the stream 1:1, so nothing is resampled.
+         *
+         * Negative values are not supported: the phone refuses the whole session when the safe area
+         * leaves the canvas (field 2026-10-30, -20/-35/-50 all failed to connect).
          */
         safeInsetPct: Int = 0,
     ): AirPlayDisplayConfig {
