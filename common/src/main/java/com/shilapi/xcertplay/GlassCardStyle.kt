@@ -85,15 +85,15 @@ internal object GlassCardStyle {
         canvas.saveLayer(rect.left - radius, rect.top - radius, rect.right + radius, rect.bottom + radius, null)
         val shadowRect = RectF(rect)
         shadowRect.offset(0f, SHADOW_DY_PX)
-        canvas.drawRoundRect(shadowRect, radius, radius, shadowPaint)
+        canvas.drawRect(shadowRect, shadowPaint)
         canvas.restore()
 
         // Base fill: the shared glass tint, or the caller's exact colour.
         if (fillOverride == null) {
-            canvas.drawRoundRect(rect, radius, radius, fillPaint)
+            canvas.drawRect(rect, fillPaint)
         } else {
             val custom = Paint(Paint.ANTI_ALIAS_FLAG).apply { color = fillOverride }
-            canvas.drawRoundRect(rect, radius, radius, custom)
+            canvas.drawRect(rect, custom)
         }
 
         // Top sheen band.
@@ -103,7 +103,7 @@ internal object GlassCardStyle {
             Color.argb(SHEEN_ALPHA_MID, 255, 255, 255),
             Shader.TileMode.CLAMP,
         )
-        canvas.drawRoundRect(rect, radius, radius, sheenPaint)
+        canvas.drawRect(rect, sheenPaint)
         sheenPaint.shader = null
 
         // Glossy bevel: bright top hairline, dim bottom hairline, faint full outline.
@@ -112,24 +112,24 @@ internal object GlassCardStyle {
         edgePaint.color = bottomEdge
         canvas.drawLine(rect.left + radius, rect.bottom - 0.75f, rect.right - radius, rect.bottom - 0.75f, edgePaint)
         edgePaint.color = outline
-        canvas.drawRoundRect(rect, radius, radius, edgePaint)
+        canvas.drawRect(rect, edgePaint)
     }
 
     /** Draws a soft glass chip (used for the maneuver glyph and the lane capsules). */
     fun drawChip(canvas: Canvas, rect: RectF, radius: Float, highlight: Boolean = false) {
         if (highlight) {
             val accent = Paint(Paint.ANTI_ALIAS_FLAG).apply { color = Color.argb(70, 10, 132, 255) }
-            canvas.drawRoundRect(rect, radius, radius, accent)
+            canvas.drawRect(rect, accent)
             val accentStroke = Paint(Paint.ANTI_ALIAS_FLAG).apply {
                 color = Color.argb(160, 10, 132, 255); style = Paint.Style.STROKE; strokeWidth = 2f
             }
-            canvas.drawRoundRect(rect, radius, radius, accentStroke)
+            canvas.drawRect(rect, accentStroke)
         } else {
-            canvas.drawRoundRect(rect, radius, radius, chipFillPaint)
+            canvas.drawRect(rect, chipFillPaint)
             val chipEdge = Paint(Paint.ANTI_ALIAS_FLAG).apply {
                 color = Color.argb(40, 255, 255, 255); style = Paint.Style.STROKE; strokeWidth = 1.5f
             }
-            canvas.drawRoundRect(rect, radius, radius, chipEdge)
+            canvas.drawRect(rect, chipEdge)
         }
     }
 
@@ -145,7 +145,7 @@ internal object GlassCardStyle {
             Color.argb(40, 0, 0, 0), Color.argb(22, 0, 0, 0),
             Shader.TileMode.CLAMP,
         )
-        canvas.drawRoundRect(rect, radius, radius, back)
+        canvas.drawRect(rect, back)
         back.shader = null
     }
 

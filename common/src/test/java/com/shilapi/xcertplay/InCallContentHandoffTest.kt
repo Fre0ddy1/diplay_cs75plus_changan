@@ -352,4 +352,44 @@ class InCallContentHandoffTest {
         assertEquals(1,sourceAcknowledgements())
         assertNull(ReflectionHelpers.getStaticField<Any?>(InCallClusterBridge::class.java,"resumeGeneration"))
     }
+
+    @Test fun directFullscreenCoversColdActivationAndCurrentSourceHandoff() {
+        val window=Any()
+        InCallClusterBridge.observeCallback(app,window)
+        InCallClusterBridge.openProjection(app,automatic=true)
+        idle(1600)
+        frameReady(window); idle(1600)
+        assertEquals(2,sourceAcknowledgements())
+        val modes=calls.filter { it.first==8 }.map { it.second.first() }
+        assertTrue(modes.isNotEmpty())
+        assertTrue("activation, holds and content takeover must all skip small ACK",modes.all { it==3 })
+    }
+
+    @Test fun directFullscreenAlsoCoversRetainedSilentChannelAndReassertion() {
+        callbacks[1]=1; callbacks[2]=3
+        InCallClusterBridge.openProjection(app,automatic=true)
+        idle(1000)
+        InCallClusterBridge.reassertProjection(app)
+        idle(1000)
+        assertEquals(0,sourceAcknowledgements())
+        val modes=calls.filter { it.first==8 }.map { it.second.first() }
+        assertTrue(modes.isNotEmpty())
+        assertTrue(modes.all { it==3 })
+    }
+
+    @Test fun disablingAutomaticFullscreenRetainsTheOriginalInitialSequence() {
+        app.getSharedPreferences("diplay_changan_projection",0).edit().putBoolean("automatic_fullscreen",false).commit()
+        InCallClusterBridge.openProjection(app,automatic=true)
+        idle(100)
+        assertTrue(calls.any { it.first==8 && it.second==listOf(1,0) })
+        assertTrue(calls.any { it.first==8 && it.second==listOf(3,0) })
+    }
+
+    @Test fun noCustomizationRetainsTheUpstreamInitialSequence() {
+        extensions.clear()
+        InCallClusterBridge.openProjection(app,automatic=true)
+        idle(100)
+        assertTrue(calls.any { it.first==8 && it.second==listOf(1,0) })
+        assertTrue(calls.any { it.first==8 && it.second==listOf(3,0) })
+    }
 }

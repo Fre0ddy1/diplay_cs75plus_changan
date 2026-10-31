@@ -1735,16 +1735,17 @@ class DiPlayActivity : ComponentActivity() {
     }
 
     private fun askHotspotCredentials(existingWifi: Boolean = false, done: (String, String) -> Unit) {
+        val detected = if (existingWifi) null else CarHotspotSetup.readSavedHotspot(this)
         val fields = column().apply { setPadding(dp(24), dp(12), dp(24), dp(12)) }
-        fields.addView(label(getString(if (existingWifi) R.string.existing_wifi_instructions else R.string.copy_these_from_the_car_s_hotspot_settings_use_5_ghz_if_av), 16, MUTED))
+        fields.addView(label(getString(if (existingWifi) R.string.existing_wifi_instructions else if (detected != null) R.string.system_hotspot_details_loaded else R.string.copy_these_from_the_car_s_hotspot_settings_use_5_ghz_if_av), 16, MUTED))
         val ssid = EditText(this).apply {
             hint = getString(if (existingWifi) R.string.existing_wifi_ssid else R.string.hotspot_name)
-            setText(if (existingWifi) AirPlayPersistence.loadExistingWifiSsid(this@DiPlayActivity) else storedSsid())
+            setText(if (existingWifi) AirPlayPersistence.loadExistingWifiSsid(this@DiPlayActivity) else detected?.ssid ?: storedSsid())
             setSingleLine()
         }
         val password = EditText(this).apply {
             hint = getString(if (existingWifi) R.string.existing_wifi_password else R.string.hotspot_password)
-            setText(if (existingWifi) AirPlayPersistence.loadExistingWifiPassphrase(this@DiPlayActivity) else storedPassword())
+            setText(if (existingWifi) AirPlayPersistence.loadExistingWifiPassphrase(this@DiPlayActivity) else detected?.passphrase ?: storedPassword())
             setSingleLine()
             inputType = android.text.InputType.TYPE_CLASS_TEXT or android.text.InputType.TYPE_TEXT_VARIATION_PASSWORD
         }
@@ -1781,7 +1782,7 @@ class DiPlayActivity : ComponentActivity() {
             dialog.window?.setSoftInputMode(android.view.WindowManager.LayoutParams.SOFT_INPUT_ADJUST_RESIZE)
             dialog.getButton(android.app.AlertDialog.BUTTON_NEUTRAL).setOnClickListener { hideKeyboard() }
             dialog.getButton(AlertDialog.BUTTON_POSITIVE).setOnClickListener {
-                val name = if (existingWifi) ssid.text.toString() else ssid.text.toString().trim()
+                val name = ssid.text.toString()
                 val secret = password.text.toString()
                 val problem = hotspotError(name, secret)
                 if (problem != null) error.text = problem
@@ -3204,7 +3205,7 @@ class DiPlayActivity : ComponentActivity() {
         target.setTextColor(if (selected) BG else TEXT)
         target.background = android.graphics.drawable.RippleDrawable(
             ColorStateList.valueOf(0x336F9FD9),
-            rounded(if (selected) ACCENT else SURFACE, if (selected) ACCENT else BORDER),
+            bordered(if (selected) ACCENT else SURFACE, if (selected) ACCENT else BORDER),
             null
         )
     }
@@ -3350,7 +3351,7 @@ class DiPlayActivity : ComponentActivity() {
      */
     private fun detailBadge(title: String, description: String): TextView = label("!", 10, BG, true).apply {
         gravity = Gravity.CENTER
-        background = rounded(ACCENT, ACCENT, 11)
+        background = bordered(ACCENT, ACCENT)
         contentDescription = getString(R.string.settings_setting_details)
         isClickable = true
         setOnClickListener {
@@ -3472,8 +3473,8 @@ class DiPlayActivity : ComponentActivity() {
         setPadding(dp(14), 0, dp(14), 0); minHeight = dp(48); stateListAnimator = null
         setOnClickListener { click() }
     }
-    private fun rounded(color: Int, stroke: Int, radiusDp: Int = 20) = GradientDrawable().apply {
-        setColor(color); cornerRadius = dp(radiusDp).toFloat(); setStroke(dp(1), stroke)
+    private fun bordered(color: Int, stroke: Int) = GradientDrawable().apply {
+        setColor(color); cornerRadius = 0f; setStroke(dp(1), stroke)
     }
     private fun matchButton(top: Int = 0, height: Int = 68) = LinearLayout.LayoutParams(-1, dp(height)).apply { topMargin = dp(top) }
     private fun space(height: Int) = View(this).apply { layoutParams = LinearLayout.LayoutParams(1, dp(height)) }
@@ -3500,7 +3501,7 @@ class DiPlayActivity : ComponentActivity() {
                 gravity = Gravity.CENTER_VERTICAL
                 setPadding(dp(12), 0, dp(10), 0)
                 minimumHeight = dp(56)
-                background = if (selected) rounded(GlassUi.selected, BORDER, 14) else null
+                background = if (selected) bordered(GlassUi.selected, BORDER) else null
                 isClickable = true
                 setOnClickListener {
                     if (settingsGroup == group) return@setOnClickListener

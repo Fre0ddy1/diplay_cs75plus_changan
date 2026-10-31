@@ -31,14 +31,14 @@ object GlassUi {
     val danger = Color.rgb(145, 43, 54)
     fun dialogContext(context: Context) = ContextThemeWrapper(context, R.style.Theme_DiPlay_Glass_Dialog)
     fun backdrop(): Drawable = FrostBackdrop()
-    fun panel(context: Context, radius: Int = 28, nested: Boolean = false): Drawable =
+    fun panel(context: Context, radius: Int = 0, nested: Boolean = false): Drawable =
         GlassMaterialDrawable(context.resources.displayMetrics.density, radius.toFloat(), nested = nested)
     fun lift(view: View, nested: Boolean = false) {
         view.background = panel(view.context, nested = nested)
         view.elevation = view.resources.displayMetrics.density * if (nested) 0f else 3f
     }
     fun button(context: Context, primary: Boolean = false, destructive: Boolean = false): Drawable {
-        val fill = GlassMaterialDrawable(context.resources.displayMetrics.density, 30f,
+        val fill = GlassMaterialDrawable(context.resources.displayMetrics.density, 0f,
             control = true, primary = primary, destructive = destructive)
         return RippleDrawable(ColorStateList.valueOf(0x330056C3), fill, null)
     }

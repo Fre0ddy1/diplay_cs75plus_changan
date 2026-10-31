@@ -25,6 +25,7 @@ class HotspotStartupCustomization : VehicleCustomization {
     private var lastNotice: CarHotspotTethering.Result? = null
     private var lastNoticeAt = 0L
     override fun automaticHotspotDefault(context: Context) = true
+    override fun platformHotspotCredentials(context: Context) = SavedHotspotReader.read(context)
     override fun platformHotspotStarter(context: Context): PlatformHotspotStarter {
         val app = context.applicationContext
         return FrameworkHotspotStarter(app, ::diagnostic, restored = {

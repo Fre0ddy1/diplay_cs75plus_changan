@@ -870,7 +870,7 @@ object InCallClusterBridge {
         clearScreenOpen()
         setCarProperties()
         if (binder == null) return
-        setMode(1)
+        if (!startsFullscreen()) setMode(1)
         setMode(3)
     }
 
@@ -951,7 +951,7 @@ object InCallClusterBridge {
         broadcastHalfSent = true   // the broadcast ladder half is exactly what is being skipped
         clearScreenOpen()
         setCarProperties()
-        setMode(1)
+        if (!startsFullscreen()) setMode(1)
         setMode(3)
         // Called again when the service connects late; the binder half should run then, but the hold
         // loop must not be scheduled twice.
@@ -1081,7 +1081,7 @@ object InCallClusterBridge {
             if (!alive()) return@repeatAt
             clearScreenOpen()
         }
-        if (!keepFullscreen) setMode(1)
+        if (!keepFullscreen && !startsFullscreen()) setMode(1)
         setMode(3)
         setCarProperties()
         // f0/g0: 90 ms later tx2[1] (dashboard source switch confirmation).
@@ -1156,6 +1156,10 @@ object InCallClusterBridge {
         callbackRegistered = false
         logSeq(generation, "unregisterCallback tx30 -> $ok")
     }
+
+    private fun startsFullscreen(): Boolean = contextRef?.let {
+        VehicleCustomizations.initialProjectionLayout(it) == ProjectionLayout.FULLSCREEN
+    } == true
 
     private fun setMode(mode: Int): Boolean {
         val b = binder ?: return false

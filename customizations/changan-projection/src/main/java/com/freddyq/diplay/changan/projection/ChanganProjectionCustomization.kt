@@ -21,6 +21,8 @@ class ChanganProjectionCustomization : VehicleCustomization {
     }
     private val environment = ProjectionEnvironmentBridge { contentRecovery.invalidate() }
     override val id = "changan-projection"
+    override fun initialProjectionLayout(context: Context): ProjectionLayout? =
+        if (ChanganProjectionSettings.enabled(context)) ProjectionLayout.FULLSCREEN else null
     // Controller preparation and AirPlay activation may both announce the same session.
     // Projection has its own start generation; a duplicate phone-start must not reset recovery.
     override fun onSessionStarted(context: Context) = contentRecovery.resume()

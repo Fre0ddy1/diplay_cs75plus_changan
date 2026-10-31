@@ -89,6 +89,17 @@ class GlassUiRenderTest {
         assertTrue(androidx.core.graphics.ColorUtils.calculateContrast(GlassUi.buttonBorder, GlassUi.buttonSurface) >= 3)
         assertTrue(androidx.core.graphics.ColorUtils.calculateContrast(GlassUi.buttonBorder, GlassUi.buttonSurfaceEnd) >= 3)
     }
+    @Test fun panelsAndButtonsHaveSquareOutlines() {
+        val app=RuntimeEnvironment.getApplication()
+        val panel=GlassUi.panel(app).apply { setBounds(0,0,400,120) }
+        val outline=android.graphics.Outline()
+        panel.getOutline(outline)
+        assertEquals(0f,outline.radius,0f)
+        val button=GlassUi.button(app) as android.graphics.drawable.RippleDrawable
+        button.setBounds(0,0,400,120)
+        button.getDrawable(0).getOutline(outline)
+        assertEquals(0f,outline.radius,0f)
+    }
     @Test fun equalSizePagesShareBoundedWallpaperAndReplacementKeepsOldPageDrawable() {
         val first = GlassUi.backdrop().apply { setBounds(0, 0, 1280, 720) }
         val second = GlassUi.backdrop().apply { setBounds(0, 0, 1280, 720) }

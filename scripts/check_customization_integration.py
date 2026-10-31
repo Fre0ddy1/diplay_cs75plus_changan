@@ -81,6 +81,11 @@ checks['common/src/main/java/com/shilapi/xcertplay/InCallClusterBridge.kt'] += [
 checks['customizations/changan-projection/src/main/java/com/freddyq/diplay/changan/projection/ChanganProjectionCustomization.kt'] += ['override fun onProjectionLayoutConfirmed(']
 checks['common/src/main/java/com/shilapi/xcertplay/InCallClusterBridge.kt'] += ['fun invalidateProjectionChannel()', 'projectionDisplayAvailable', 'remoteServiceEpoch++']
 failures=[]
+checks['common/src/main/java/com/shilapi/xcertplay/InCallClusterBridge.kt'] += ['private fun startsFullscreen()', '!keepFullscreen && !startsFullscreen()']
+checks['customizations/changan-projection/src/main/java/com/freddyq/diplay/changan/projection/ChanganProjectionCustomization.kt'] += ['override fun initialProjectionLayout(']
+checks['customizations/hotspot-startup/src/main/java/com/freddyq/diplay/hotspot/HotspotStartupCustomization.kt'] += ['override fun platformHotspotCredentials(']
+for host in ['DiPlayActivity.kt','CarPlayHostActivity.kt']:
+    checks['common/src/main/java/com/shilapi/xcertplay/'+host] += ['CarHotspotSetup.readSavedHotspot(this)']
 for name,needles in checks.items():
     path=ROOT/name
     text=path.read_text(encoding='utf-8') if path.exists() else ''

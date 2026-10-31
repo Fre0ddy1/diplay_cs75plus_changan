@@ -133,7 +133,7 @@ class CarPlayVideoActivity : Activity() {
             minHeight = dp(64)
             minWidth = dp(64)
             setPadding(dp(24), 0, dp(24), 0)
-            background = GradientDrawable().apply { cornerRadius = dp(32).toFloat(); setColor(0xB3000000.toInt()) }
+            background = GradientDrawable().apply { cornerRadius = 0f; setColor(0xB3000000.toInt()) }
             setOnClickListener { finish() }
         }
         fun round(icon: Int, label: String, onClick: () -> Unit) = ImageView(this).apply {
@@ -142,7 +142,7 @@ class CarPlayVideoActivity : Activity() {
             contentDescription = label
             scaleType = ImageView.ScaleType.FIT_CENTER
             setPadding(dp(18), dp(18), dp(18), dp(18))
-            background = GradientDrawable().apply { shape = GradientDrawable.OVAL; setColor(0x80000000.toInt()) }
+            background = GradientDrawable().apply { shape = GradientDrawable.RECTANGLE; setColor(0x80000000.toInt()) }
             setOnClickListener { onClick(); showControls() }
         }
         playPause = round(Media3R.drawable.exo_icon_play, "") { CarPlayVideo.setPlaying(!CarPlayVideo.playing) }

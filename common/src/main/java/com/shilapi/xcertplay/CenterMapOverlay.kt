@@ -82,7 +82,6 @@ internal object CenterMapOverlay {
         val prefs = context.getSharedPreferences(PREFS, Context.MODE_PRIVATE)
         val width = prefs.getInt(KEY_WIDTH, (screenWidth * WIDTH_FRACTION).toInt()).coerceIn(minWidth, maxWidth)
         val height = (width / aspect).toInt()
-        val radius = 24f * metrics.density / 2
         val params = WindowManager.LayoutParams(
             width,
             height,
@@ -123,11 +122,7 @@ internal object CenterMapOverlay {
         }
         val card = FrameLayout(context).apply {
             setBackgroundColor(Color.BLACK)
-            outlineProvider = object : ViewOutlineProvider() {
-                override fun getOutline(view: View, outline: Outline) =
-                    outline.setRoundRect(0, 0, view.width, view.height, radius)
-            }
-            clipToOutline = true
+            clipToOutline = false
             addView(video, FrameLayout.LayoutParams(-1, -1))
         }
         val slop = ViewConfiguration.get(context).scaledTouchSlop

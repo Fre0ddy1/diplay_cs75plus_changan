@@ -9,7 +9,6 @@ import android.graphics.Paint
 import android.graphics.LinearGradient
 import android.graphics.Shader
 import android.graphics.Matrix
-import android.graphics.Outline
 import android.graphics.Rect
 import android.graphics.SurfaceTexture
 import android.graphics.drawable.ColorDrawable
@@ -24,7 +23,6 @@ import android.view.Surface
 import android.view.SurfaceHolder
 import android.view.SurfaceView
 import android.view.View
-import android.view.ViewOutlineProvider
 import android.view.TextureView
 import android.widget.FrameLayout
 import android.widget.TextView
@@ -560,17 +558,8 @@ internal class ClusterMapPresentation(
             }
         }
         cardTextureView = cardView
-        // Rounded corners (field request 2026-10-24): the stream itself arrives as a square
-        // rectangle and the driver found that ugly, so the window clips it. Still nothing of ours
-        // is drawn inside the picture - this only shapes its outer edge.
-        cardView.outlineProvider = object : ViewOutlineProvider() {
-            override fun getOutline(view: View, outline: Outline) {
-                val width = if (view.width > 0) view.width else cardVideoWidth
-                val height = if (view.height > 0) view.height else cardVideoHeight
-                outline.setRoundRect(0, 0, width, height, CARD_CORNER_RADIUS_PX)
-            }
-        }
-        cardView.clipToOutline = true
+        // Keep the rectangular video surface; do not round or crop its corners locally.
+        cardView.clipToOutline = false
         root.addView(cardView, cardWindowParams())
         applyCardWindowVisibility()
         Log.i(TAG, "cluster card window created ${cardVideoWidth}x$cardVideoHeight at $cardWindowLeft,$cardWindowTop")
@@ -888,8 +877,6 @@ internal class ClusterMapPresentation(
         // coordinates before the first layout resolves them from persistence.
         const val CARD_LEFT_PX = 0
         const val CARD_TOP_PX = 0
-        /** Rounded corners of the card window, in panel pixels (≈24 % of the card height). */
-        const val CARD_CORNER_RADIUS_PX = 48f
         /**
          * The card window's key in the shared per-card position store (AirPlayPersistence).
          *

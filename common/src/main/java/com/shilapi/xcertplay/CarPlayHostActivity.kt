@@ -83,6 +83,7 @@ import com.shilapi.xcertplay.orchestration.CarPlayRuntimeConfig
 import com.shilapi.xcertplay.orchestration.CarPlayStatus
 import com.shilapi.xcertplay.orchestration.CarPlayTransport
 import com.shilapi.xcertplay.orchestration.ManualHotspotBand
+import com.shilapi.xcertplay.orchestration.ManualHotspotValidation
 import com.shilapi.xcertplay.orchestration.ManualHotspotSecurity
 import com.shilapi.xcertplay.orchestration.MfiTarget
 import com.shilapi.xcertplay.orchestration.WirelessHotspotMode
@@ -2209,7 +2210,7 @@ class CarPlayHostActivity : ComponentActivity() {
             isClickable = true
         }
         val panel = FrameLayout(this).apply {
-            background = GlassUi.panel(this@CarPlayHostActivity, 28)
+            background = GlassUi.panel(this@CarPlayHostActivity)
         }
         val content = LinearLayout(this).apply {
             orientation = LinearLayout.VERTICAL
@@ -3260,7 +3261,7 @@ class CarPlayHostActivity : ComponentActivity() {
             scaleType = ImageView.ScaleType.CENTER_CROP
             background = GradientDrawable().apply {
                 shape = GradientDrawable.RECTANGLE
-                cornerRadius = dp(8).toFloat()
+                cornerRadius = 0f
                 setColor(MENU_TRACK_OFF)
             }
         }
@@ -3708,9 +3709,18 @@ class CarPlayHostActivity : ComponentActivity() {
             ),
         )
 
+        val detectedHotspot = CarHotspotSetup.readSavedHotspot(this)
+        detectedHotspot?.let { detected ->
+            manualHotspotSsid = detected.ssid
+            manualHotspotPassphrase = detected.passphrase
+            manualHotspotSecurity = ManualHotspotValidation.securityFor(detected.passphrase)
+            manualHotspotBand = ManualHotspotBand.AUTO
+            manualHotspotChannel = 0
+        }
         val manualFields = LinearLayout(this).apply {
             orientation = LinearLayout.VERTICAL
         }
+        if (detectedHotspot != null) manualFields.addView(menuText(getString(R.string.system_hotspot_details_loaded), 14f, MENU_SECONDARY))
         manualFields.addView(
             settingsInputRow(getString(R.string.hotspot_ssid), manualHotspotSsid) { value ->
                 manualHotspotSsid = value

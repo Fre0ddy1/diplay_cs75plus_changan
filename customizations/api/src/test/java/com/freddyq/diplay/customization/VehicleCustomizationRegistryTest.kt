@@ -11,6 +11,26 @@ import org.robolectric.annotation.Config
 @RunWith(RobolectricTestRunner::class)
 @Config(manifest = Config.NONE, sdk = [28])
 class VehicleCustomizationRegistryTest {
+    @Test fun platformCredentialsAndInitialLayoutRemainOptIn() {
+        val empty=VehicleCustomizationRegistry()
+        assertNull(empty.platformHotspotCredentials(app))
+        assertNull(empty.initialProjectionLayout(app))
+    }
+    @Test fun failedPlatformReaderDoesNotSuppressTheNextProvider() {
+        val r=VehicleCustomizationRegistry()
+        r.register(object:VehicleCustomization {
+            override val id="denied-reader"
+            override fun platformHotspotCredentials(context: Context):PlatformHotspotCredentials = error("denied")
+            override fun initialProjectionLayout(context: Context):ProjectionLayout = error("denied")
+        })
+        r.register(object:VehicleCustomization {
+            override val id="saved-settings"
+            override fun platformHotspotCredentials(context: Context)=PlatformHotspotCredentials("Test AP","test-key")
+            override fun initialProjectionLayout(context: Context)=ProjectionLayout.FULLSCREEN
+        })
+        assertEquals("Test AP",r.platformHotspotCredentials(app)!!.ssid)
+        assertEquals(ProjectionLayout.FULLSCREEN,r.initialProjectionLayout(app))
+    }
     private val registry = VehicleCustomizationRegistry()
     private val app get() = RuntimeEnvironment.getApplication()
     @Test fun `warm recovery requires an explicit owner`() {
