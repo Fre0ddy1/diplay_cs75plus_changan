@@ -73,4 +73,6 @@ Frida服务二进制、Java桥依赖、编译bundle和日志只留本地，不�
 
 当前白名单签名与Incall签名不同，不能把“白名单可安装”当作“具备系统用户/平台调试权限”。因此此时尚不具备已验证可用的进程附加路径，未安装66、未上传/启动服务、未附加/注入进程。即使尝试现有adbd的root能力也须另获授权，因为该命令会重启ADB；若系统拒绝，应停止，不为此解锁或修改系统。
 
+18:21经用户明确授权，仅尝试一次 `adb root`，返回 `adbd cannot run as root in production builds`。虽然命令进程返回码为0，文本明确表示提权失败，不能按返回码认定成功。按授权边界立即停止，没有安装66、上传/启动诊断服务或注入。车机应用仍为65；当前条件不支持本方案的实车试验。
+
 参考：[Frida Android权限与ABI准备](https://frida.re/docs/android/)、[Frida17 Java桥依赖](https://frida.re/docs/bridges/)。
