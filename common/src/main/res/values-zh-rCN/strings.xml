@@ -621,7 +621,7 @@
     <string name="nav_duck_percent_value">%1$d%%</string>
     <string name="nav_duck_percent_hint">播报期间音乐降到该比例，播报结束自动恢复；通话音频不受影响。改动在下一次播报即生效。</string>
     <string name="media_audio_via_bluetooth">方向盘媒体键交给车机蓝牙</string>
-    <string name="media_audio_via_bluetooth_description">只决定方向盘媒体键归谁处理，不影响音频走哪条路。开启后，播放/暂停与切歌不再转发给 CarPlay，只由车机蓝牙（AVRCP）控制手机，避免一次按键被响应两次。</string>
+    <string name="media_audio_via_bluetooth_description">只决定方向盘媒体键归谁处理，不影响音频走哪条路。开启后，播放/暂停与切歌不再转发给 CarPlay，只由车机蓝牙（AVRCP）控制手机，避免一次按键被响应两次。打开此功能需要在蓝牙设置中关闭媒体音频。</string>
     <string name="ambient_rhythm_follows_music">氛围灯跟随 CarPlay 音乐</string>
     <string name="ambient_rhythm_follows_music_description">把 DiPlay 正在播放的音乐会话交给车机，由车机自己的音乐律动驱动氛围灯。车机氛围灯菜单里也要打开音乐律动。每一步调用都会写进日志（Ambient 开头），方便判断是被拒绝还是已生效。</string>
     <string name="cluster_card_position_preview">卡片位置预览（示意）</string>
