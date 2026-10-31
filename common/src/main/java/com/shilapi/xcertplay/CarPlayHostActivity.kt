@@ -2050,8 +2050,19 @@ class CarPlayHostActivity : ComponentActivity() {
         mainHandler.post {
             val nav = navClusterSurface
             val cardSurface = cardClusterSurface
-            if (nav != null) sink?.setSurface(mapType, nav)
-            if (cardSurface != null) sink?.setSurface(cardType, cardSurface)
+            // Hand each Surface over instead of just re-pointing it. A Surface can only have one
+            // producer: setting it on the new type leaves the old type's decoder still writing
+            // into it, and that decoder dies on its next dequeue (field 2026-10-31 18:30:20 and
+            // 18:31:05: both cluster decoders were rebuilt 150 ms after a rebind, then the phone
+            // dropped the session). Clearing the old owner first makes the move clean.
+            if (nav != null) {
+                sink?.clearSurface(cardType, nav)
+                sink?.setSurface(mapType, nav)
+            }
+            if (cardSurface != null) {
+                sink?.clearSurface(mapType, cardSurface)
+                sink?.setSurface(cardType, cardSurface)
+            }
             clusterUiReasserted = false
             mainHandler.postDelayed({ controller?.forceClusterKeyFrames("rebind") }, 200L)
         }
@@ -5381,9 +5392,14 @@ class CarPlayHostActivity : ComponentActivity() {
             // Generic path: re-bind BOTH resident surfaces so 110 and 111 stay active in incall
             // (this is what suppresses the "全屏导航已开启" announcement on mode switches).
             mirrorClusterSurface?.let { renderer.setMirrorSurface(SCREEN_TYPE_MAIN, CLUSTER_MAIN_MIRROR, it) }
-            navClusterSurface?.let { renderer.setSurface(SCREEN_TYPE_ALT, it) }
+            // Attach to the CURRENT binding, not to the fixed 111/112 mapping: a swap made in
+            // reconcileClusterStreamBindings (the phone can open the card display first) survives
+            // into the new sink only if both sides agree on which type carries which picture.
+            // A hardcoded mapping here re-attached the map view to the card stream and the two
+            // never met again, because reconcile already considered the binding correct.
+            navClusterSurface?.let { renderer.setSurface(navBoundType, it) }
             // FLY_CARD: the card window's stream is resident too.
-            cardClusterSurface?.let { renderer.setSurface(SCREEN_TYPE_ALT_CARD, it) }
+            cardClusterSurface?.let { renderer.setSurface(cardBoundType, it) }
         }
         MapMirrors.reapply()
         val media = createMediaEngine(renderer)
