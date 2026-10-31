@@ -643,6 +643,8 @@
     <string name="nav_duck_percent_hint">Music drops to this level while a prompt plays and comes back when it ends. Calls are never lowered; changes apply from the next prompt.</string>
     <string name="media_audio_via_bluetooth">Wheel media keys via car Bluetooth</string>
     <string name="media_audio_via_bluetooth_description">Only decides who answers the wheel media keys; it does not change where audio goes. When on, play/pause and track keys from the wheel are not forwarded to CarPlay and are left to the car Bluetooth (AVRCP) to control the phone, so one press is not answered twice.</string>
+    <string name="nav_audio_only">Guidance audio only (experimental)</string>
+    <string name="nav_audio_only_description">Declares no media audio to the iPhone, so music stays on the car\'s own Bluetooth player. Navigation prompts still come through CarPlay on their own channel, which is what the wheel volume keys adjust. Reconnects when changed.</string>
     <string name="settings_group_frequent">Frequent</string>
     <string name="settings_group_connect">Connection</string>
     <string name="settings_group_display">Picture</string>
