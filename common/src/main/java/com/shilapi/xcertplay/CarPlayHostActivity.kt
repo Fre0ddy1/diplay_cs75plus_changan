@@ -573,6 +573,15 @@ class CarPlayHostActivity : ComponentActivity() {
     /** Last geometry of each stream, so the card window can be sized from the right one after a rebind. */
     @Volatile private var lastAltGeometry: com.shilapi.xcertplay.media.ScreenStreamGeometry? = null
     @Volatile private var lastCardGeometry: com.shilapi.xcertplay.media.ScreenStreamGeometry? = null
+    /**
+     * When the first decoded size of this session arrived (elapsedRealtime, 0 = not yet).
+     *
+     * Opens a short window in which ONE report is enough to name its stream. Waiting for both
+     * left the dashboard on the wrong picture for a whole session whenever only one of the two
+     * cluster displays ever started (field 2026-10-31: the map came up as the second stream and
+     * the card display never opened at all, so the size pair never completed and nothing moved).
+     */
+    @Volatile private var clusterFirstSizeReportAtMs = 0L
     /** The start-up channel watcher; the only component allowed to send the activation sequence. */
     private var watcherThread: Thread? = null
     /** Last channel state the watcher sampled. Every swipe decision reads this, not incall. */
@@ -1978,6 +1987,9 @@ class CarPlayHostActivity : ComponentActivity() {
             }
             else -> return
         }
+        if (clusterFirstSizeReportAtMs == 0L) {
+            clusterFirstSizeReportAtMs = SystemClock.elapsedRealtime()
+        }
         reconcileClusterStreamBindings(type)
     }
 
@@ -1998,14 +2010,9 @@ class CarPlayHostActivity : ComponentActivity() {
         val alt = lastAltStreamSize
         val card = lastCardStreamSize
         var rebound = false
-        // Both sides must be known and different: one callback alone is not proof.
-        if (alt != null && card != null && alt != card) {
-            val altPanel = looksLikePanelSize(alt.first, alt.second)
-            val cardPanel = looksLikePanelSize(card.first, card.second)
-            if (altPanel != cardPanel) {
-                rebound = bindClusterMapStream(if (altPanel) SCREEN_TYPE_ALT else SCREEN_TYPE_ALT_CARD)
-            }
-        } else if (alt != null && card != null && alt == card && looksLikePanelSize(alt.first, alt.second)) {
+        val firstFrameOpen = clusterFirstSizeReportAtMs != 0L &&
+            SystemClock.elapsedRealtime() - clusterFirstSizeReportAtMs <= CLUSTER_FIRST_FRAME_WINDOW_MS
+        when {
             // Both type-111 streams carry the panel picture, so the size says nothing about which
             // is which - and the window that shows the card ends up with a shrunken map in it.
             // That is the iPhone redrawing the card UUID as a full screen after a quick reconnect
@@ -2014,7 +2021,36 @@ class CarPlayHostActivity : ComponentActivity() {
             // itself out again). No local binding can fix a picture the phone sent to the wrong
             // UUID: it has to be told to redraw each display. requestClusterReassert does exactly
             // that, and it is rate-limited because it makes iOS re-render the card page.
-            requestClusterReassertIfCardIsPanelSized()
+            alt != null && card != null && alt == card && looksLikePanelSize(alt.first, alt.second) ->
+                requestClusterReassertIfCardIsPanelSized()
+
+            // Inside the window after the first frame, one report names its own stream: the map is
+            // always encoded at the panel's width and the card at 480, so the width alone says
+            // which one this is, and the other type is the partner by elimination. This is what
+            // fixes the session where only one display ever started - waiting for the pair left the
+            // map view on the card stream (a full-panel card picture) until the next reconnect.
+            firstFrameOpen -> {
+                val reported = if (type == SCREEN_TYPE_ALT) alt else card
+                if (reported != null) {
+                    val mapType = if (widthSaysMap(reported.first)) type else otherClusterType(type)
+                    appendLog(
+                        "Cluster: first-frame ${reported.first}x${reported.second} on stream " +
+                            "${if (type == SCREEN_TYPE_ALT) 111 else 112} " +
+                            "-> map is ${if (mapType == SCREEN_TYPE_ALT) 111 else 112}",
+                    )
+                    if (navBoundType != mapType) rebound = bindClusterMapStream(mapType)
+                }
+            }
+
+            // Later in the session both sides must be known and different: one callback alone is
+            // not proof, and a stream that is mid-restart must not move the surfaces.
+            alt != null && card != null && alt != card -> {
+                val altPanel = looksLikePanelSize(alt.first, alt.second)
+                val cardPanel = looksLikePanelSize(card.first, card.second)
+                if (altPanel != cardPanel) {
+                    rebound = bindClusterMapStream(if (altPanel) SCREEN_TYPE_ALT else SCREEN_TYPE_ALT_CARD)
+                }
+            }
         }
         // The card window is laid out from whichever stream is bound to it - including straight
         // after a rebind, where the card stream itself may never report its size again.
@@ -2071,6 +2107,24 @@ class CarPlayHostActivity : ComponentActivity() {
 
     /** The 08:28 baseline has no capture-only path; the diagnostic experiment is retired. */
     private fun cardCaptureOnlyMode(): Boolean = false
+
+    /** The other of the two routed cluster types. */
+    private fun otherClusterType(type: Int): Int =
+        if (type == SCREEN_TYPE_ALT) SCREEN_TYPE_ALT_CARD else SCREEN_TYPE_ALT
+
+    /**
+     * True when a decoded width can only belong to the map display.
+     *
+     * The map is advertised at the panel's own size and the phone encodes it at that width (1920
+     * here, whatever the safe area crops off the bottom); the instruction card is 480 wide. So the
+     * width alone names a cluster stream, without waiting for its partner to report. Falling back
+     * to a fixed 1280 when the panel size is not sampled yet keeps an unsampled watcher from
+     * declaring every stream a map.
+     */
+    private fun widthSaysMap(width: Int): Boolean {
+        val panel = watcherWidth
+        return if (panel > 0) width >= panel else width >= CLUSTER_MAP_FALLBACK_WIDTH_PX
+    }
 
     /** True when a decoded stream is large enough to be the panel itself, not the card canvas. */
     private fun looksLikePanelSize(width: Int, height: Int): Boolean {
@@ -5334,6 +5388,9 @@ class CarPlayHostActivity : ComponentActivity() {
         // phone changed the order.
         lastAltStreamSize = null
         lastCardStreamSize = null
+        // Re-opens the first-frame window: a new session re-opens both streams, so the first
+        // report of this session may name its stream again.
+        clusterFirstSizeReportAtMs = 0L
         val controllerGeneration = restartGeneration
         val config = createRuntimeConfig()
         val airPlayConfig = createAirPlayConfig(size)
@@ -7486,6 +7543,15 @@ class CarPlayHostActivity : ComponentActivity() {
         const val CLUSTER_MIN_READY_HEIGHT_PX = 400
         /** How often the watcher may repeat "size not ready" in the report. */
         const val CLUSTER_SIZE_WAIT_LOG_MS = 5_000L
+        /**
+         * Window after the first decoded cluster size in which a SINGLE report is allowed to name
+         * its own stream by width (see reconcileClusterStreamBindings). Two seconds is far more
+         * than the 200-350 ms the first output format takes; it exists to end the guessing, not to
+         * give the phone time. Outside it, moving the surfaces needs both streams to agree.
+         */
+        const val CLUSTER_FIRST_FRAME_WINDOW_MS = 2_000L
+        /** Used to tell map from card by width when the panel size has not been sampled yet. */
+        const val CLUSTER_MAP_FALLBACK_WIDTH_PX = 1280
         /**
          * Freeze detection. Aligned with the five-second video stats window: three consecutive
          * windows below [FREEZE_KBPS] means the picture has not changed for ~15 s while frames keep
