@@ -213,6 +213,8 @@ object InCallClusterBridge {
     private var contextRef: Context? = null
     private var bound = false
     private var binder: IBinder? = null
+    /** A successful entry belongs to the live channel, not each video window or layout retry. */
+    @Volatile private var fullscreenEntryBinder: IBinder? = null
     private var callbackRegistered = false
     /** Set once the host asks us to watch the callback before any projection is requested. */
     private var observeCallbackRequested = false
@@ -225,6 +227,7 @@ object InCallClusterBridge {
     fun observeDisplayAvailable(available: Boolean) { projectionDisplayAvailable = available }
     /** Power/service loss invalidates our belief, without touching the physical source. */
     fun invalidateProjectionChannel() {
+        fullscreenEntryBinder = null
         mainHandler.removeCallbacksAndMessages(token)
         generation++
         openState = false
@@ -448,6 +451,7 @@ object InCallClusterBridge {
             }
             override fun invalidateConfirmation() {
                 if (gen != generation || !currentOwner()) return
+                fullscreenEntryBinder = null // Only a new bounded activation may retry entry.
                 synchronized(confirmationLock) { resumeGeneration = null }
                 lastCallbackValue.remove(CALLBACK_CODE_STATE)
                 persistProjecting(false)
@@ -496,6 +500,7 @@ object InCallClusterBridge {
                     // Persist the projecting state so a fresh process can tell a warm projection
                     // from a cold one without announcing (see the class doc).
                     if (code == CALLBACK_CODE_STATE) {
+                        if (value == 0) fullscreenEntryBinder = null
                         val projecting = value == CALLBACK_PROJECTING
                         if (projecting && releasedByUs() && withinR0AnswerWindow()) {
                             // The head unit answering our own r0 reports "projecting" for ITS OWN
@@ -617,6 +622,7 @@ object InCallClusterBridge {
     }
 
     private fun forgetRemoteConnection() {
+        fullscreenEntryBinder = null
         remoteServiceEpoch++
         openState = false // The ready-state watcher owns activation after the service returns.
         projectionNeedsReconfirmation = true
@@ -884,6 +890,7 @@ object InCallClusterBridge {
      * back with the normal open sequence.
      */
     fun releaseExternalScreen(context: Context) {
+        fullscreenEntryBinder = null
         contentHandoffWindow = null
         contentReadyWindow = null
         contextRef = context.applicationContext
@@ -952,7 +959,7 @@ object InCallClusterBridge {
         clearScreenOpen()
         setCarProperties()
         if (!startsFullscreen()) setMode(1)
-        setMode(3)
+        setMode(3, allowEntry = true)
         // Called again when the service connects late; the binder half should run then, but the hold
         // loop must not be scheduled twice.
         if (silentHoldScheduled) return
@@ -1071,7 +1078,7 @@ object InCallClusterBridge {
         val windowAtDispatch = observationOwner?.get()
         // Capture readiness before the sequence, not when its delayed acknowledgement arrives.
         val contentWasReady = windowAtDispatch != null && contentReadyWindow?.get() === windowAtDispatch
-        logSeq(gen, "G0: register + F0 + 9 + n0(F0) + C0(1) + C0(3) + Z + tx2 + hold")
+        logSeq(gen, "G0: register + F0 + source-enter + initial-layout + Z + tx2 + layout-only hold")
         registerCallback(b)
         clearScreenOpen()
         sendSourceEnter()
@@ -1082,7 +1089,7 @@ object InCallClusterBridge {
             clearScreenOpen()
         }
         if (!keepFullscreen && !startsFullscreen()) setMode(1)
-        setMode(3)
+        setMode(3, allowEntry = true)
         setCarProperties()
         // f0/g0: 90 ms later tx2[1] (dashboard source switch confirmation).
         mainHandler.postAtTime({
@@ -1161,13 +1168,18 @@ object InCallClusterBridge {
         VehicleCustomizations.initialProjectionLayout(it) == ProjectionLayout.FULLSCREEN
     } == true
 
-    private fun setMode(mode: Int): Boolean {
+    private fun setMode(mode: Int, allowEntry: Boolean = false): Boolean {
         val b = binder ?: return false
-        val slide = txWrite(b, 21, intArrayOf(1, 0))
+        val singleEntry = startsFullscreen()
+        // A retained live channel needs source takeover, but not another slide into projection.
+        if (singleEntry && reportsProjecting()) fullscreenEntryBinder = b
+        val requestEntry = !singleEntry || (allowEntry && fullscreenEntryBinder !== b)
+        val slide = !requestEntry || txWrite(b, 21, intArrayOf(1, 0))
+        if (singleEntry && requestEntry && slide) fullscreenEntryBinder = b
         val acknowledge = txWrite(b, 8, intArrayOf(mode, 0))
         val finish = txWrite(b, 1, intArrayOf(0))
         val dispatched = slide && acknowledge && finish
-        logSeq(generation, "setMode($mode) dispatched=$dispatched")
+        logSeq(generation, "setMode($mode) dispatched=$dispatched entry=${if (!requestEntry) "omitted" else if (slide) "dispatched" else "failed"}")
         return dispatched
     }
 

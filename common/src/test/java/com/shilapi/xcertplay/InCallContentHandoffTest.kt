@@ -36,6 +36,9 @@ class InCallContentHandoffTest {
     private var oldExtensions = emptyList<VehicleCustomization>()
     private val controls = mutableListOf<ProjectionControl>()
     private var onSourceWrite: (() -> Unit)? = null
+    private var rejectEntries = 0
+    private var rejectAcks = 0
+    private fun entries() = calls.count { it.first == 21 && it.second == listOf(1,0) }
     private val callbacks get() = ReflectionHelpers.getStaticField<MutableMap<Int,Int>>(InCallClusterBridge::class.java,"lastCallbackValue")
     private val extensions get() = ReflectionHelpers.getField<MutableList<VehicleCustomization>>(VehicleCustomizations,"extensions")
     private fun field(name:String,value:Any?) = ReflectionHelpers.setStaticField(InCallClusterBridge::class.java,name,value)
@@ -47,6 +50,8 @@ class InCallContentHandoffTest {
             val values=mutableListOf<Int>()
             if(code in setOf(1,2,8,21)) repeat(if(code==1 || code==2) 1 else 2) { values+=data.readInt() }
             calls+=code to values
+            if (code == 21 && rejectEntries > 0) { rejectEntries--; return false }
+            if (code == 8 && rejectAcks > 0) { rejectAcks--; return false }
             if (code == 2 && values == listOf(1)) onSourceWrite?.invoke()
             reply?.writeNoException()
             reply?.writeInt(1)
@@ -54,7 +59,7 @@ class InCallContentHandoffTest {
         }
     }
     @Before fun prepare() {
-        for(name in listOf("binder","openState","contextRef","bound","observeCallbackRequested",
+        for(name in listOf("binder","fullscreenEntryBinder","remoteServiceEpoch","openState","contextRef","bound","observeCallbackRequested",
             "callbackRegistered","callbackHeard","generation","observationOwner",
             "projectionNeedsReconfirmation","automaticProjectionOwner","callbackSerial","resumeGeneration",
             "resumeRequestSerial","resumeFullSeen","resumeOpenSeen","projectingListener",
@@ -76,6 +81,7 @@ class InCallContentHandoffTest {
             }
         })
         field("binder",fake)
+        field("fullscreenEntryBinder",null)
         field("contextRef",app)
         field("openState",false)
         field("bound",true)
@@ -130,6 +136,7 @@ class InCallContentHandoffTest {
         frameReady(window); idle(1600)
         assertEquals(1,sourceAcknowledgements())
         assertTrue(calls.none { it.first==8 && it.second==listOf(1,0) })
+        assertEquals("observed live channel needs source takeover, not another entry",0,entries())
     }
     @Test fun freshGlobalRepliesDoNotCancelIndependentContentHandoff() {
         field("openState",true)
@@ -363,6 +370,7 @@ class InCallContentHandoffTest {
         val modes=calls.filter { it.first==8 }.map { it.second.first() }
         assertTrue(modes.isNotEmpty())
         assertTrue("activation, holds and content takeover must all skip small ACK",modes.all { it==3 })
+        assertEquals("cold entry must not repeat for holds or current-window takeover",1,entries())
     }
 
     @Test fun directFullscreenAlsoCoversRetainedSilentChannelAndReassertion() {
@@ -375,6 +383,7 @@ class InCallContentHandoffTest {
         val modes=calls.filter { it.first==8 }.map { it.second.first() }
         assertTrue(modes.isNotEmpty())
         assertTrue(modes.all { it==3 })
+        assertEquals("retained channel and reassertion need no entry",0,entries())
     }
 
     @Test fun disablingAutomaticFullscreenRetainsTheOriginalInitialSequence() {
@@ -383,6 +392,7 @@ class InCallContentHandoffTest {
         idle(100)
         assertTrue(calls.any { it.first==8 && it.second==listOf(1,0) })
         assertTrue(calls.any { it.first==8 && it.second==listOf(3,0) })
+        assertEquals("legacy mode keeps entry before each layout ACK",calls.count { it.first==8 },entries())
     }
 
     @Test fun noCustomizationRetainsTheUpstreamInitialSequence() {
@@ -391,5 +401,115 @@ class InCallContentHandoffTest {
         idle(100)
         assertTrue(calls.any { it.first==8 && it.second==listOf(1,0) })
         assertTrue(calls.any { it.first==8 && it.second==listOf(3,0) })
+        assertEquals("legacy mode keeps entry before each layout ACK",calls.count { it.first==8 },entries())
     }
+    @Test fun layoutRetryUsesOnlyFullAckAndFinish() {
+        val window=Any()
+        InCallClusterBridge.observeCallback(app,window)
+        InCallClusterBridge.requestContentHandoff(app,window) {}
+        idle(1000)
+        assertEquals(1,entries())
+        val control=controls.last()
+        calls.clear()
+        assertTrue(control.requestLayout(ProjectionLayout.FULLSCREEN))
+        assertEquals(listOf(8 to listOf(3,0),1 to listOf(0)),calls)
+    }
+
+    @Test fun replacementVideoWindowStillChangesSourceWithoutAnotherEntry() {
+        val first=Any()
+        InCallClusterBridge.observeCallback(app,first)
+        InCallClusterBridge.requestContentHandoff(app,first) {}
+        idle(1000)
+        val replacement=Any()
+        InCallClusterBridge.observeCallback(app,replacement)
+        InCallClusterBridge.requestContentHandoff(app,replacement) {}
+        idle(1000)
+        assertEquals(2,sourceAcknowledgements())
+        assertEquals(1,entries())
+    }
+
+    @Test fun smallScreenCallbacksDoNotMakeBoundedRetriesReenterProjection() {
+        InCallClusterBridge.openProjection(app,automatic=true)
+        idle(1000)
+        reply(1,1); reply(2,2)
+        idle(11000)
+        assertEquals(1,entries())
+        assertEquals(3,fullscreenAttempts())
+        assertTrue(calls.filter { it.first==8 }.all { it.second==listOf(3,0) })
+    }
+
+    @Test fun closedChannelAllowsOneNewEntry() {
+        InCallClusterBridge.openProjection(app,automatic=true)
+        idle(1000)
+        assertEquals(1,entries())
+        reply(2,0)
+        InCallClusterBridge.openProjection(app,automatic=true)
+        idle(1000)
+        assertEquals(2,entries())
+    }
+
+    @Test fun explicitHandbackAllowsOneNewEntry() {
+        InCallClusterBridge.openProjection(app,automatic=true)
+        idle(1000)
+        InCallClusterBridge.releaseExternalScreen(app)
+        InCallClusterBridge.openProjection(app,automatic=true)
+        idle(1000)
+        assertEquals(2,entries())
+    }
+
+    @Test fun powerInvalidationAllowsOneNewEntry() {
+        InCallClusterBridge.openProjection(app,automatic=true)
+        idle(1000)
+        InCallClusterBridge.invalidateProjectionChannel()
+        InCallClusterBridge.openProjection(app,automatic=true)
+        idle(1000)
+        assertEquals(2,entries())
+    }
+
+    @Test fun reconnectingServiceAllowsEntryEvenIfBinderIdentityIsReused() {
+        InCallClusterBridge.openProjection(app,automatic=true)
+        idle(1000)
+        val connection=ReflectionHelpers.getStaticField<android.content.ServiceConnection>(InCallClusterBridge::class.java,"connection")
+        connection.onServiceDisconnected(null)
+        connection.onServiceConnected(null,fake)
+        InCallClusterBridge.openProjection(app,automatic=true)
+        idle(1000)
+        assertEquals(2,entries())
+    }
+
+    @Test fun rejectedEntryDoesNotConsumeNextFullActivation() {
+        rejectEntries=1
+        InCallClusterBridge.openProjection(app,automatic=true)
+        idle(1000)
+        assertEquals(1,entries())
+        assertNull(ReflectionHelpers.getStaticField<IBinder?>(InCallClusterBridge::class.java,"fullscreenEntryBinder"))
+        InCallClusterBridge.openProjection(app,automatic=true)
+        idle(1000)
+        assertEquals(2,entries())
+        assertSame(fake,ReflectionHelpers.getStaticField<IBinder>(InCallClusterBridge::class.java,"fullscreenEntryBinder"))
+    }
+
+    @Test fun rejectedAckDoesNotRepeatAlreadyAcceptedEntry() {
+        rejectAcks=1
+        InCallClusterBridge.openProjection(app,automatic=true)
+        idle(1000)
+        assertEquals(1,entries())
+        assertTrue(calls.count { it.first==8 && it.second==listOf(3,0) }>1)
+    }
+
+    @Test fun confirmationFallbackMayReenterButExpiredControlCannotResetFreshEntry() {
+        val window=Any()
+        InCallClusterBridge.observeCallback(app,window)
+        InCallClusterBridge.requestContentHandoff(app,window) {}
+        idle(1000)
+        val expired=controls.last()
+        expired.invalidateConfirmation()
+        InCallClusterBridge.openProjection(app,automatic=true)
+        idle(1000)
+        assertEquals(2,entries())
+        expired.invalidateConfirmation()
+        assertFalse(expired.requestLayout(ProjectionLayout.FULLSCREEN))
+        assertSame(fake,ReflectionHelpers.getStaticField<IBinder>(InCallClusterBridge::class.java,"fullscreenEntryBinder"))
+    }
+
 }
