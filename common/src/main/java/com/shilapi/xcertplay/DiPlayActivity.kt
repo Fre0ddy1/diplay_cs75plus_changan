@@ -3370,20 +3370,31 @@ class DiPlayActivity : ComponentActivity() {
         val head = row().apply { gravity = Gravity.CENTER_VERTICAL }
         head.addView(label(title, 15, if (enabled) TEXT else MUTED, true), LinearLayout.LayoutParams(-2, -2))
         text.addView(head)
-        text.addView(label(description, 12, MUTED).apply {
+        val desc = label(description, 12, MUTED).apply {
             maxLines = 2
             ellipsize = TextUtils.TruncateAt.END
             setPadding(0, dp(3), dp(14), 0)
-        })
+        }
+        text.addView(desc)
         line.addView(text, LinearLayout.LayoutParams(0, -2, 1f))
         // Its own column rather than a marker after the title: titles differ in length, and a badge
         // that follows each one lands on a different x per row, which is what made the list look
         // crooked. Beside the switch they line up.
-        if (description.length > 110) {
-            line.addView(
-                detailBadge(title, description),
-                LinearLayout.LayoutParams(dp(22), dp(22)).apply { marginEnd = dp(10) },
-            )
+        //
+        // Whether it is needed comes from the finished layout, not from a character count. The old
+        // "length > 110" test was written for English and hid the badge on every Chinese
+        // description that actually got cut (four of them at 93-100 characters, three to four
+        // lines at this panel width), while putting one on English rows that fit.
+        val badge = detailBadge(title, description).apply { visibility = View.GONE }
+        line.addView(
+            badge,
+            LinearLayout.LayoutParams(dp(22), dp(22)).apply { marginEnd = dp(10) },
+        )
+        desc.post {
+            val layout = desc.layout ?: return@post
+            if (layout.lineCount == 0) return@post
+            val cut = layout.lineCount > 2 || layout.getEllipsisCount(layout.lineCount - 1) > 0
+            badge.visibility = if (cut) View.VISIBLE else View.GONE
         }
         val control = Switch(this).apply {
             contentDescription = title
