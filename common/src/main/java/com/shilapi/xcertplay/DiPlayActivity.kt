@@ -729,16 +729,6 @@ class DiPlayActivity : ComponentActivity() {
                 AirPlayPersistence.saveMediaViaCarBluetooth(this, it)
                 render()
             }
-            // Experimental: advertise guidance audio only. Changing what /info declares needs a
-            // new session, so a live one is reconnected - same as the audio-channel pickers.
-            toggle(card, getString(R.string.nav_audio_only),
-                getString(R.string.nav_audio_only_description),
-                AirPlayPersistence.loadNavAudioOnly(this)) {
-                AirPlayPersistence.saveNavAudioOnly(this, it)
-                if (CarPlayBackgroundSession.hasSession()) {
-                    connect(AirPlayPersistence.loadWirelessEnabled(this))
-                }
-            }
             // Audio always stays on CarPlay: this app can only steer the wheel keys when it owns
             // the stream a prompt plays on. Advertising no audio was built twice and removed twice
             // - the phone then played everything on the car's Bluetooth media path, so the

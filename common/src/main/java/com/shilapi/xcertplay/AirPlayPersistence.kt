@@ -62,13 +62,6 @@ object AirPlayPersistence {
      * gets working wheel keys back, which is the smaller surprise of the two).
      */
     private const val KEY_MEDIA_AUDIO_VIA_BLUETOOTH = "media_audio_via_bluetooth"
-    /**
-     * Experimental: advertise guidance audio only (no media), so the phone keeps music on the
-     * car's own Bluetooth player while prompts still come through CarPlay on their own channel.
-     * Off by default; the no-audio experiments of 2026-10-30 are why this is a switch and not a
-     * behaviour change.
-     */
-    private const val KEY_NAV_AUDIO_ONLY = "nav_audio_only"
     private const val KEY_NAV_DUCK_PERCENT = "nav_duck_percent"
     private const val KEY_MEDIA_AUDIO_CHANNEL = "media_audio_channel"
     private const val KEY_NAVIGATION_AUDIO_CHANNEL = "navigation_audio_channel"
@@ -240,23 +233,6 @@ object AirPlayPersistence {
         context.getSharedPreferences(PREFS, Context.MODE_PRIVATE).edit()
             .putBoolean(KEY_MEDIA_AUDIO_VIA_BLUETOOTH, enabled)
             .commit()
-    }
-
-    /**
-     * Experimental: declare guidance audio to the phone and no media audio.
-     *
-     * The phone then has no CarPlay stream to put music on, so it falls back to the car's own
-     * Bluetooth player (the only route left), while prompts still arrive on the CarPlay audio
-     * stream they always used - which is the one the wheel volume keys are pointed at.
-     */
-    fun loadNavAudioOnly(context: Context): Boolean =
-        context.getSharedPreferences(PREFS, Context.MODE_PRIVATE)
-            .getBoolean(KEY_NAV_AUDIO_ONLY, false)
-
-    fun saveNavAudioOnly(context: Context, enabled: Boolean) {
-        context.getSharedPreferences(PREFS, Context.MODE_PRIVATE).edit()
-            .putBoolean(KEY_NAV_AUDIO_ONLY, enabled)
-            .apply()
     }
 
     /** Music level while a navigation prompt plays; 100 % leaves the music untouched. */
@@ -1078,8 +1054,7 @@ object AirPlayPersistence {
             "Saved audio: musicBufferMs=${loadMediaBufferMillis(context)} " +
                 "duckPercent=${loadNavDuckPercent(context)} " +
                 "audioFocus=${loadAudioFocusEnabled(context)} " +
-                "mediaViaCarBluetooth=${loadMediaViaCarBluetooth(context)} " +
-                "navAudioOnly=${loadNavAudioOnly(context)}",
+                "mediaViaCarBluetooth=${loadMediaViaCarBluetooth(context)}",
         )
         appendLine(
             "Saved video: hevc=${loadHevcEnabled(context)} fps=${loadFps(context)} " +

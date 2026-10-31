@@ -4550,14 +4550,6 @@ class CarPlayHostActivity : ComponentActivity() {
         } else {
             null
         }
-        val navAudioOnly = AirPlayPersistence.loadNavAudioOnly(this)
-        appendLog(
-            "Audio declaration: " + if (navAudioOnly) {
-                "guidance only (experimental) - no media format, music is expected on the car's Bluetooth"
-            } else {
-                "guidance + media"
-            },
-        )
         return AirPlayConfig(
             deviceName = "DiPlay",
             deviceId = DiPlayBootstrap.deviceId(airPlayIdentity),
@@ -4574,7 +4566,6 @@ class CarPlayHostActivity : ComponentActivity() {
             oemLabel = oemLabel,
             icons = listOf(loadAirPlayIcon()),
             videoInCar = com.shilapi.xcertplay.hud.BydOutputSettings.videoWhileParkedActive(this),
-            navAudioOnly = navAudioOnly,
             // Audio always stays on CarPlay. Advertising no audio at all was built twice and
             // removed twice: the phone then keeps its sound on the car's Bluetooth, where the
             // head unit plays it on its media path, so the navigation channel the wheel keys

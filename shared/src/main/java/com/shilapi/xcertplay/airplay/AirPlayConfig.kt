@@ -80,10 +80,4 @@ data class AirPlayConfig(
     val icons: List<AirPlayIcon> = emptyList(),
     /** iOS 27 video in car (see [VideoInCar]); video plays only while [VideoInCar.allowed]. */
     val videoInCar: Boolean = false,
-    /**
-     * Experimental: advertise the guidance audio formats only and drop the media ones, so the
-     * phone has no CarPlay stream to put music on and keeps it on the car's Bluetooth player.
-     * Prompts keep their own stream, which is what makes the wheel volume keys work on them.
-     */
-    val navAudioOnly: Boolean = false,
 )

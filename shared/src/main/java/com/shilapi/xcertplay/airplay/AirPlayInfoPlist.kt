@@ -75,8 +75,8 @@ object AirPlayInfoPlist {
             "keepAliveSendStatsAsBody" to false,
             "modes" to modes(),
         )
-        info["audioLatencies"] = audioLatencies(config.navAudioOnly)
-        info["audioFormats"] = audioFormats(config.entertainmentSampleRate, config.microphone, config.navAudioOnly)
+        info["audioLatencies"] = audioLatencies()
+        info["audioFormats"] = audioFormats(config.entertainmentSampleRate, config.microphone)
         info["extendedFeatures"] = listOf("vocoderInfo", "enhancedRequestCarUI")
         info["displays"] = displays
         info["hidDevices"] = listOf(
@@ -127,7 +127,7 @@ object AirPlayInfoPlist {
         ),
     )
 
-    private fun audioLatencies(navAudioOnly: Boolean): List<Map<String, Any?>> {
+    private fun audioLatencies(): List<Map<String, Any?>> {
         fun base(type: Int, audioType: String? = null): Map<String, Any?> {
             val entry = linkedMapOf<String, Any?>(
                 "type" to type,
@@ -137,21 +137,16 @@ object AirPlayInfoPlist {
             if (audioType != null) entry["audioType"] = audioType
             return entry
         }
-        val entries = arrayListOf(
+        return listOf(
             base(100), base(100, "default"), base(100, "media"), base(100, "telephony"),
             base(100, "speechRecognition"), base(100, "alert"), base(101), base(101, "default"),
             base(102, "default"),
         )
-        // navAudioOnly: the two media latencies go with the media formats below, so the plist
-        // never describes a path it does not also declare a format for.
-        if (navAudioOnly) entries.removeAll { it["type"] == 102 || it["audioType"] == "media" }
-        return entries
     }
 
     private fun audioFormats(
         entertainmentRate: Int,
         microphone: Boolean,
-        navAudioOnly: Boolean,
     ): List<Map<String, Any?>> {
         fun format(type: Int, audioType: String, outputFormats: Int, inputFormats: Int? = null): Map<String, Any?> {
             val entry = linkedMapOf<String, Any?>(
@@ -172,7 +167,7 @@ object AirPlayInfoPlist {
         val pcmInput = if (microphone) pcmMono else null
         val wirelessInput = if (microphone) pcmMono or opus else null
 
-        val formats = arrayListOf(
+        return listOf(
             format(100, "compatibility", pcm, pcmInput),
             format(101, "compatibility", pcm),
             format(100, "default", pcm or opus, wirelessInput),
@@ -183,13 +178,6 @@ object AirPlayInfoPlist {
             format(101, "default", pcm or opus),
             format(102, "media", aacLc),
         )
-        // Experimental "guidance audio only": with no media format advertised the phone has no
-        // CarPlay stream to put music on and keeps it on the car's Bluetooth player, while the
-        // prompt keeps the 101/default entry above - the one the wheel volume keys point at.
-        // Everything else (alert, telephony, speechRecognition) stays, so calls and Siri do not
-        // change route.
-        if (navAudioOnly) formats.removeAll { it["audioType"] == "media" }
-        return formats
     }
 
     private fun displayEntry(display: AirPlayDisplayConfig, type: Int, uuid: String): Map<String, Any?> {
