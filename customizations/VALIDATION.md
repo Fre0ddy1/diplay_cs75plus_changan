@@ -176,3 +176,14 @@ mobile lint0错误、19警告；standaloneDebug构建通过。原生布局新增
 最终10张1280/1920原生预览与56逐像素比较：8张设置/菜单图完全相同，两张首页仅版本号区域不同。比较记录与原图本地保留，不修改交付图片。初次预览归档脚本因机械版本替换影响SHA函数名而中断，修复本地归档脚本后完整归档；部分结果单独保留，未改变APK或测试结果。没有降低或删除断言。
 
 57=`0.2.22-ca75plus.15`，APK SHA-256：`baef3384d4106af8eefaec7c4533c108cc3f4a5d2c8740edd6918f75e3c6a52f`，21,984,255字节。相同白名单签名v1/v2/v3、16KiB对齐、运行资产、全语言名称、平台回调编译桩隔离及新材质/提示标记均核验通过。本轮无ADB访问、无车机安装；不能用离线测试宣称实车FPS或耗电改善。正式发行仍为50。详见[57说明](../docs/CS75PLUS-57-轻量界面.md)。
+
+
+## 2026-10-31 64候选：恢复本地圆角与扩展音频审计
+
+基于63的77803bb。按最新需求恢复62版已有的面板28dp、按钮30dp及卡片/封面圆角，保留直接全屏、热点预填和视频容器矩形边界。音频生产逻辑没有改动；61吸收分支继续暂停。README明确公开资料参考不等于完整MFi实现/认证。
+
+本轮定向196项：192通过、4失败，0错误/跳过。changan-audio20项、common63项全部通过；shared113项中4项失败，均与c83b33b原始基线failed_cases逐项匹配：AndroidMediaSinkStateTest.recreatingTheScreenRestoresItsActiveVideoState、MicrophoneCaptureStatsTest.aggregatesFiveSecondWindowsAndKeepsFinalPartialWindow、TelephonyMicrophoneTest的两个diagnosticCallbackFailure用例。失败日志和XML本地保留，没有删、跳或降低断言。shared失败后另行完成原计划的common测试、构建和lint，未重试相同失败；不是全量测试通过。
+
+按新需求将63版直角Outline断言替换为精确28/30dp圆角断言，其余原断言保留。1280/1920的10张实际Android布局预览已生成，首页及设置页目视核验。standaloneDebug构建成功，lint0错误、19警告。64=0.2.22-ca75plus.22，APK SHA-256为efa91f5df58ff4e72d3cce9b63488f434bb1c4199f6b42f44b8570296d8fb2a7；白名单证书v1/v2/v3、运行资产、版本、16KiB对齐与平台编译桩隔离检查通过。本轮没有ADB访问或车机安装，正式发行仍为50。
+
+详见[64圆角与音频链路审计](../docs/CS75PLUS-64-圆角与音频链路审计.md)。

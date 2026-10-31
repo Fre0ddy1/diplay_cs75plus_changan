@@ -40,7 +40,7 @@ class GlassUiRenderTest {
         VehicleCustomizations.register(com.freddyq.diplay.changan.projection.ChanganProjectionCustomization())
         VehicleCustomizations.register(com.freddyq.diplay.hotspot.HotspotStartupCustomization())
         val app = RuntimeEnvironment.getApplication()
-        val info = app.packageManager.getPackageInfo(app.packageName, 0).apply { versionName = "0.2.22-ca75plus.15" }
+        val info = app.packageManager.getPackageInfo(app.packageName, 0).apply { versionName = "0.2.22-ca75plus.22" }
         shadowOf(app.packageManager).installPackage(info)
     }
     @After fun restore() { extensions.clear(); extensions.addAll(previous) }
@@ -89,16 +89,16 @@ class GlassUiRenderTest {
         assertTrue(androidx.core.graphics.ColorUtils.calculateContrast(GlassUi.buttonBorder, GlassUi.buttonSurface) >= 3)
         assertTrue(androidx.core.graphics.ColorUtils.calculateContrast(GlassUi.buttonBorder, GlassUi.buttonSurfaceEnd) >= 3)
     }
-    @Test fun panelsAndButtonsHaveSquareOutlines() {
+    @Test fun panelsAndButtonsRestoreRoundedOutlines() {
         val app=RuntimeEnvironment.getApplication()
         val panel=GlassUi.panel(app).apply { setBounds(0,0,400,120) }
         val outline=android.graphics.Outline()
         panel.getOutline(outline)
-        assertEquals(0f,outline.radius,0f)
+        assertEquals(28f * app.resources.displayMetrics.density,outline.radius,0f)
         val button=GlassUi.button(app) as android.graphics.drawable.RippleDrawable
         button.setBounds(0,0,400,120)
         button.getDrawable(0).getOutline(outline)
-        assertEquals(0f,outline.radius,0f)
+        assertEquals(30f * app.resources.displayMetrics.density,outline.radius,0f)
     }
     @Test fun equalSizePagesShareBoundedWallpaperAndReplacementKeepsOldPageDrawable() {
         val first = GlassUi.backdrop().apply { setBounds(0, 0, 1280, 720) }

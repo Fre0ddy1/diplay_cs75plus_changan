@@ -3205,7 +3205,7 @@ class DiPlayActivity : ComponentActivity() {
         target.setTextColor(if (selected) BG else TEXT)
         target.background = android.graphics.drawable.RippleDrawable(
             ColorStateList.valueOf(0x336F9FD9),
-            bordered(if (selected) ACCENT else SURFACE, if (selected) ACCENT else BORDER),
+            rounded(if (selected) ACCENT else SURFACE, if (selected) ACCENT else BORDER),
             null
         )
     }
@@ -3351,7 +3351,7 @@ class DiPlayActivity : ComponentActivity() {
      */
     private fun detailBadge(title: String, description: String): TextView = label("!", 10, BG, true).apply {
         gravity = Gravity.CENTER
-        background = bordered(ACCENT, ACCENT)
+        background = rounded(ACCENT, ACCENT, 11)
         contentDescription = getString(R.string.settings_setting_details)
         isClickable = true
         setOnClickListener {
@@ -3473,8 +3473,8 @@ class DiPlayActivity : ComponentActivity() {
         setPadding(dp(14), 0, dp(14), 0); minHeight = dp(48); stateListAnimator = null
         setOnClickListener { click() }
     }
-    private fun bordered(color: Int, stroke: Int) = GradientDrawable().apply {
-        setColor(color); cornerRadius = 0f; setStroke(dp(1), stroke)
+    private fun rounded(color: Int, stroke: Int, radiusDp: Int = 20) = GradientDrawable().apply {
+        setColor(color); cornerRadius = dp(radiusDp).toFloat(); setStroke(dp(1), stroke)
     }
     private fun matchButton(top: Int = 0, height: Int = 68) = LinearLayout.LayoutParams(-1, dp(height)).apply { topMargin = dp(top) }
     private fun space(height: Int) = View(this).apply { layoutParams = LinearLayout.LayoutParams(1, dp(height)) }
@@ -3501,7 +3501,7 @@ class DiPlayActivity : ComponentActivity() {
                 gravity = Gravity.CENTER_VERTICAL
                 setPadding(dp(12), 0, dp(10), 0)
                 minimumHeight = dp(56)
-                background = if (selected) bordered(GlassUi.selected, BORDER) else null
+                background = if (selected) rounded(GlassUi.selected, BORDER, 14) else null
                 isClickable = true
                 setOnClickListener {
                     if (settingsGroup == group) return@setOnClickListener

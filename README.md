@@ -19,7 +19,7 @@
 
 ## Apple官方文档参考
 
-CarPlay音频、媒体按键及音频资源状态处理参照Apple官方公开文档设计与实现：
+CarPlay音频、媒体按键及音频资源状态处理参照Apple官方公开文档设计与实现；这不代表完整实现MFi接收端规范或通过Apple认证。当前实现范围与代码检查结果见[音频链路审计](docs/CS75PLUS-64-圆角与音频链路审计.md)。
 
 - [Developing CarPlay Systems, Part 1](https://developer.apple.com/videos/play/wwdc2016/722/)：车端媒体按键接入CarPlay播放、暂停及上一首/下一首控制。
 - [Developing CarPlay Systems, Part 2](https://developer.apple.com/videos/play/wwdc2016/723/)：音频通道、音量及资源状态管理。

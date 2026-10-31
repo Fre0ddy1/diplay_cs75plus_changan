@@ -204,7 +204,7 @@ internal class ClusterSongView(context: Context) : View(context) {
             runCatching {
                 canvas.clipPath(
                     Path().apply {
-                        addRect(artRect, Path.Direction.CW)
+                        addRoundRect(artRect, artSize * 0.14f, artSize * 0.14f, Path.Direction.CW)
                     },
                 )
             }

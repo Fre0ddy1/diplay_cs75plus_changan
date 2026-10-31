@@ -2210,7 +2210,7 @@ class CarPlayHostActivity : ComponentActivity() {
             isClickable = true
         }
         val panel = FrameLayout(this).apply {
-            background = GlassUi.panel(this@CarPlayHostActivity)
+            background = GlassUi.panel(this@CarPlayHostActivity, 28)
         }
         val content = LinearLayout(this).apply {
             orientation = LinearLayout.VERTICAL
@@ -3261,7 +3261,7 @@ class CarPlayHostActivity : ComponentActivity() {
             scaleType = ImageView.ScaleType.CENTER_CROP
             background = GradientDrawable().apply {
                 shape = GradientDrawable.RECTANGLE
-                cornerRadius = 0f
+                cornerRadius = dp(8).toFloat()
                 setColor(MENU_TRACK_OFF)
             }
         }
