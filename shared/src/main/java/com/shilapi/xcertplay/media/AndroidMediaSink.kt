@@ -383,6 +383,20 @@ class AndroidMediaSink(
         fun refreshDuckLevels() {
             liveSinks.forEach { runCatching { it.refreshDuckLevel() } }
         }
+
+        /** The instruction-card stream (CarPlayHostActivity.SCREEN_TYPE_ALT_CARD). */
+        private const val CARD_STREAM_TYPE = 112
+        /**
+         * What the card decoder is asked to allocate, instead of the panel's 1920x720.
+         *
+         * The card display is a 480x208 picture and the phone has never reported a card canvas
+         * anywhere near the panel size (the tallest seen, a junction view, is still ~480x300), so
+         * declaring the panel size there only reserves output buffers this MTK unit cannot spare
+         * while three streams are live. The picture itself follows the stream's SPS, not this
+         * request: at 1920x720 the decoder already reported coded=480x208 in the field.
+         */
+        private const val CARD_DECODER_WIDTH = 960
+        private const val CARD_DECODER_HEIGHT = 600
     }
 
     /** Re-applies the duck level so a setting change is heard at once, without reconnecting. */
@@ -1123,8 +1137,10 @@ class AndroidMediaSink(
     private fun newVideoDecoder(type: Int, surface: Surface?, statsLabel: String? = null) = VideoDecoder(
         type,
         surface,
-        videoWidth,
-        videoHeight,
+        // The card display is a small picture: ask for 960x600 rather than the panel's size, so
+        // the third live decoder does not reserve panel-sized buffers (see CARD_DECODER_WIDTH).
+        if (type == CARD_STREAM_TYPE) CARD_DECODER_WIDTH else videoWidth,
+        if (type == CARD_STREAM_TYPE) CARD_DECODER_HEIGHT else videoHeight,
         preferSoftwareHevcDecoder,
         requestKeyFrame = { requestVideoRecovery(type) },
         report = { videoDiagnosticHandlers[type]?.invoke(it) },
