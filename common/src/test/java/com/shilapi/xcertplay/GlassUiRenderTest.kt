@@ -40,7 +40,7 @@ class GlassUiRenderTest {
         VehicleCustomizations.register(com.freddyq.diplay.changan.projection.ChanganProjectionCustomization())
         VehicleCustomizations.register(com.freddyq.diplay.hotspot.HotspotStartupCustomization())
         val app = RuntimeEnvironment.getApplication()
-        val info = app.packageManager.getPackageInfo(app.packageName, 0).apply { versionName = "0.2.22-ca75plus.23" }
+        val info = app.packageManager.getPackageInfo(app.packageName, 0).apply { versionName = "0.2.22-ca75plus.24-probe1" }
         shadowOf(app.packageManager).installPackage(info)
     }
     @After fun restore() { extensions.clear(); extensions.addAll(previous) }

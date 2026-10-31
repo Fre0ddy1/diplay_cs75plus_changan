@@ -1,6 +1,7 @@
 package com.freddyq.diplay.customization
 
 import android.content.Context
+import android.os.IBinder
 import android.util.Log
 import java.util.concurrent.CopyOnWriteArrayList
 
@@ -16,6 +17,10 @@ interface VehicleCustomization {
     fun platformHotspotStarter(context: Context): PlatformHotspotStarter? = null
     fun platformHotspotCredentials(context: Context): PlatformHotspotCredentials? = null
     fun initialProjectionLayout(context: Context): ProjectionLayout? = null
+    /** Null uses the host transport; non-null consumes this layout request without fallback. */
+    fun dispatchProjectionLayout(context: Context, layout: ProjectionLayout, service: IBinder): Boolean? = null
+    /** A current local video window completed its source handshake; not physical display proof. */
+    fun onProjectionSourceReady(context: Context, window: Any, service: IBinder) {}
     /** True claims startup hotspot handling; work must be asynchronous. */
     fun onApplicationForeground(context: Context, control: ApplicationForegroundControl): Boolean = false
     fun mediaKeyRoute(context: Context): MediaKeyRoute? = null
@@ -91,6 +96,18 @@ open class VehicleCustomizationRegistry {
     fun initialProjectionLayout(context: Context): ProjectionLayout? = extensions.firstNotNullOfOrNull {
         runCatching { it.initialProjectionLayout(context.applicationContext) }.getOrNull()
     }
+    fun dispatchProjectionLayout(context: Context, layout: ProjectionLayout, service: IBinder): Boolean? {
+        for (extension in extensions) {
+            try { extension.dispatchProjectionLayout(context.applicationContext, layout, service)?.let { return it } }
+            catch (error: Exception) {
+                Log.w(TAG, "${extension.id} layout transport failed", error)
+                return false // A claimed experimental transport must not activate the host fallback.
+            }
+        }
+        return null
+    }
+    fun onProjectionSourceReady(context: Context, window: Any, service: IBinder) =
+        dispatch { it.onProjectionSourceReady(context.applicationContext, window, service) }
     fun onApplicationForeground(context: Context, control: ApplicationForegroundControl): Boolean {
         if (!allowAutomaticStartup(context)) return true
         for (extension in extensions) {

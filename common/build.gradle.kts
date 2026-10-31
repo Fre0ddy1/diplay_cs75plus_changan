@@ -31,6 +31,7 @@ dependencies {
     api(project(":shared"))
     implementation(project(":changan-hud"))
     implementation(project(":changan-projection"))
+    implementation(project(":lvds-request-probe"))
     implementation(project(":changan-audio"))
     implementation(project(":compact-logging"))
     implementation(project(":app-lifecycle"))

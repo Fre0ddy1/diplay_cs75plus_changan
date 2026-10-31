@@ -57,7 +57,7 @@ class InCallReconnectLifecycleTest {
     }
 
     @Before fun prepare() {
-        for (name in listOf("binder", "fullscreenEntryBinder", "openState", "contextRef", "bound", "observeCallbackRequested",
+        for (name in listOf("binder", "openState", "contextRef", "bound", "observeCallbackRequested",
             "callbackRegistered", "callbackHeard", "generation", "observationOwner",
             "projectionNeedsReconfirmation", "automaticProjectionOwner", "callbackSerial", "resumeGeneration",
             "resumeRequestSerial", "resumeFullSeen", "resumeOpenSeen", "projectingListener",
@@ -79,7 +79,6 @@ class InCallReconnectLifecycleTest {
             }
         })
         field("binder", fake)
-        field("fullscreenEntryBinder", null)
         field("contextRef", app)
         field("openState", true)
         field("bound", true)
