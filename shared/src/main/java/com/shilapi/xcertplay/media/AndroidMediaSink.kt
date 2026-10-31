@@ -357,6 +357,12 @@ class AndroidMediaSink(
     private val onAudioDiagnostic: (String) -> Unit = {},
     /** True while any music ("media") audio stream is running; called from media threads. */
     private val onMediaAudioChanged: (Boolean) -> Unit = {},
+    /**
+     * Session id of the playing music AudioTrack, 0 when it goes away. Only the media channel
+     * reports here: the head unit's ambient-light rhythm follows one music session, and this is
+     * the id the car's own music apps would have handed over.
+     */
+    private val onMediaTrackSession: ((Int) -> Unit)? = null,
     /** True while any navigation-guidance stream is playing; called from media threads. */
     private val onNavigationGuidanceChanged: (Boolean) -> Unit = {},
     /** Music level (percent) while a prompt plays or the phone asks us to duck. */
@@ -1165,6 +1171,7 @@ class AndroidMediaSink(
             mediaBufferMillis,
             onAudioDiagnostic,
             onNavigationFrame = { onNavigationAudioFrame() },
+            onMediaTrackSession = onMediaTrackSession,
         ).also { audioRenderers[id] = it }
     }
 }
@@ -1647,6 +1654,8 @@ private class AudioRenderer(
     private val mediaBufferMillis: Int,
     private val report: (String) -> Unit,
     private val onNavigationFrame: () -> Unit = {},
+    /** Music AudioTrack session id for the car's rhythm; null on the navigation/other channels. */
+    private val onMediaTrackSession: ((Int) -> Unit)? = null,
 ) : Closeable {
     private data class AudioPacket(val rtp: ByteArray, val sample: Int)
 
@@ -1751,6 +1760,8 @@ private class AudioRenderer(
     override fun close() {
         running = false
         thread.interrupt()
+        // 0 = this music session is gone; the car's rhythm holder must stop watching it.
+        if (format.audioType == "media") onMediaTrackSession?.invoke(0)
     }
 
     private fun run() {
@@ -1902,6 +1913,13 @@ private class AudioRenderer(
             )
         }
         track = built
+        // Only the music channel: the car's rhythm follows one music session, and handing it a
+        // prompt or call track would make the lamps chase the wrong thing.
+        if (format.audioType == "media") {
+            val sessionId = runCatching { built.audioSessionId }.getOrDefault(0)
+            report("Ambient: media track session=$sessionId")
+            onMediaTrackSession?.invoke(sessionId)
+        }
         diagnosticStage = "track-attributes"
         trackAttributes = audioTrackAttributesForFocus(built, attributes)
         diagnosticStage = "track-capacity"

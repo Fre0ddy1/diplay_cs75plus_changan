@@ -734,6 +734,14 @@ class DiPlayActivity : ComponentActivity() {
             // - the phone then played everything on the car's Bluetooth media path, so the
             // navigation channel the keys pointed at had no sound in it.
             navDuckPercentControl(card)
+            // Vehicle's own ambient-light rhythm, driven by CarPlay's music session. Off by
+            // default: it binds a system service (com.incall.apps.commonservice).
+            toggle(card, getString(R.string.ambient_rhythm_follows_music),
+                getString(R.string.ambient_rhythm_follows_music_description),
+                AirPlayPersistence.loadAmbientRhythmEnabled(this)) {
+                AirPlayPersistence.saveAmbientRhythmEnabled(this, it)
+                com.shilapi.xcertplay.hud.IncallMusicRhythm.refreshActive()
+            }
         }
         activeSectionGroups = GROUP_CONNECT
         section(content, getString(R.string.location), R.drawable.ic_dp_navigation) { card ->

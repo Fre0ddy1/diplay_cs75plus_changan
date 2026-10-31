@@ -4772,7 +4772,18 @@ class CarPlayHostActivity : ComponentActivity() {
             },
             onMediaAudioChanged = CarPlayMediaKeys::onMediaAudioChanged,
             onNavigationGuidanceChanged = ::onNavigationGuidanceChanged,
+            // The car's own ambient-light rhythm follows one music session, so it gets the
+            // session of the AudioTrack this sink builds for stream 102.
+            onMediaTrackSession = { sessionId -> ambientRhythm.onMediaTrack(sessionId) },
         )
+    }
+
+    /**
+     * The head unit's vehicle-setting service, used only to hand it CarPlay's music session.
+     * Lazily built: an unused feature must not bind a system service.
+     */
+    private val ambientRhythm by lazy {
+        com.shilapi.xcertplay.hud.IncallMusicRhythm(this) { appendLog(it) }
     }
 
     /** What the volume keys are currently pointed at, so the poll only acts on a change. */
@@ -5980,6 +5991,9 @@ class CarPlayHostActivity : ComponentActivity() {
         controller = null
         sink = null
         sessionDisplay = null
+        // Hand the lamps back before the session goes away; a rhythm left running would keep
+        // following a session that no longer plays.
+        runCatching { ambientRhythm.release() }
         Log.i(TAG, "shutdown reason=$reason terminateProcess=$terminateProcess")
         teardownExecutor.execute {
             oldController?.close()

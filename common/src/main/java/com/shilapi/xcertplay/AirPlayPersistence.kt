@@ -62,6 +62,12 @@ object AirPlayPersistence {
      * gets working wheel keys back, which is the smaller surprise of the two).
      */
     private const val KEY_MEDIA_AUDIO_VIA_BLUETOOTH = "media_audio_via_bluetooth"
+    /**
+     * Ambient light follows CarPlay music: hands the media AudioTrack's session id to the head
+     * unit's vehicle-setting service, which drives the car's own music rhythm from that session.
+     * Off by default - it talks to a system service and is unverified on this panel.
+     */
+    private const val KEY_AMBIENT_RHYTHM = "ambient_rhythm"
     private const val KEY_NAV_DUCK_PERCENT = "nav_duck_percent"
     private const val KEY_MEDIA_AUDIO_CHANNEL = "media_audio_channel"
     private const val KEY_NAVIGATION_AUDIO_CHANNEL = "navigation_audio_channel"
@@ -238,6 +244,23 @@ object AirPlayPersistence {
         context.getSharedPreferences(PREFS, Context.MODE_PRIVATE).edit()
             .putBoolean(KEY_MEDIA_AUDIO_VIA_BLUETOOTH, enabled)
             .commit()
+    }
+
+    /**
+     * Ambient light follows CarPlay music (see IncallMusicRhythm).
+     *
+     * The car's rhythm only ever ran for its own music apps: they hand the system the session id
+     * of their AudioTrack and the system visualises that session. CarPlay's audio is played by
+     * this app, so its session can be handed over the same way - which is the whole feature.
+     */
+    fun loadAmbientRhythmEnabled(context: Context): Boolean =
+        context.getSharedPreferences(PREFS, Context.MODE_PRIVATE)
+            .getBoolean(KEY_AMBIENT_RHYTHM, false)
+
+    fun saveAmbientRhythmEnabled(context: Context, enabled: Boolean) {
+        context.getSharedPreferences(PREFS, Context.MODE_PRIVATE).edit()
+            .putBoolean(KEY_AMBIENT_RHYTHM, enabled)
+            .apply()
     }
 
     /** Music level while a navigation prompt plays; 100 % leaves the music untouched. */
@@ -1059,7 +1082,8 @@ object AirPlayPersistence {
             "Saved audio: musicBufferMs=${loadMediaBufferMillis(context)} " +
                 "duckPercent=${loadNavDuckPercent(context)} " +
                 "audioFocus=${loadAudioFocusEnabled(context)} " +
-                "mediaViaCarBluetooth=${loadMediaViaCarBluetooth(context)}",
+                "mediaViaCarBluetooth=${loadMediaViaCarBluetooth(context)} " +
+                "ambientRhythm=${loadAmbientRhythmEnabled(context)}",
         )
         appendLine(
             "Saved video: hevc=${loadHevcEnabled(context)} fps=${loadFps(context)} " +

@@ -643,6 +643,8 @@
     <string name="nav_duck_percent_hint">Music drops to this level while a prompt plays and comes back when it ends. Calls are never lowered; changes apply from the next prompt.</string>
     <string name="media_audio_via_bluetooth">Wheel media keys via car Bluetooth</string>
     <string name="media_audio_via_bluetooth_description">Only decides who answers the wheel media keys; it does not change where audio goes. When on, play/pause and track keys from the wheel are not forwarded to CarPlay and are left to the car Bluetooth (AVRCP) to control the phone, so one press is not answered twice.</string>
+    <string name="ambient_rhythm_follows_music">Ambient light follows CarPlay music</string>
+    <string name="ambient_rhythm_follows_music_description">Hands the music session DiPlay plays to the car, so the head unit\'s own music rhythm drives the ambient light while CarPlay music plays. Turn music rhythm on in the car\'s ambient-light menu too. Every step is logged under Ambient.</string>
     <string name="settings_group_frequent">Frequent</string>
     <string name="settings_group_connect">Connection</string>
     <string name="settings_group_display">Picture</string>
