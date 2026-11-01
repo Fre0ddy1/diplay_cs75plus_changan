@@ -74,6 +74,8 @@ class IncallMusicRhythm(
     private var pendingSession = NONE
     /** True only when this client turned the car's rhythm switch on, so stopping can put it back. */
     private var ownsSwitch = false
+    /** True while a pause has parked the car's rhythm; the next track takes it back. */
+    private var switchSuspended = false
     private var lastLoggedSession = NONE
     /** Last session the sink reported, kept even while the switch is off. */
     @Volatile private var lastSessionId = 0
@@ -269,6 +271,7 @@ class IncallMusicRhythm(
             }
         }
         ownsSwitch = false
+        switchSuspended = false
         pendingSession = NONE
         if (bound) {
             runCatching { context.unbindService(connection) }
@@ -292,6 +295,24 @@ class IncallMusicRhythm(
         if (sessionId == STOPPED) {
             val stopped = call(TX_PLAY_STATUS) { it.writeInt(PAUSED) }
             log("Ambient: media stopped -> play status $PAUSED accepted=$stopped")
+            // iOS tears stream 102 down when music pauses, so this session is dead. Leaving the
+            // manager pointing at it means it keeps reading an empty spectrum and the lamps go
+            // dark (field 2026-11-01 12:26). Handing the switch back returns them to the car's own
+            // static colour - the closest thing to "rhythm paused" this service offers.
+            if (lastLoggedSession != NONE && !switchSuspended) {
+                val off = call(TX_RHYTHM_ON) { it.writeInt(0) }
+                switchSuspended = off
+                log("Ambient: rhythm parked (media stopped) -> $off")
+            }
+            return
+        }
+        if (switchSuspended) {
+            handSession(sessionId)
+            val back = call(TX_RHYTHM_ON) { it.writeInt(1) }
+            switchSuspended = !back
+            log("Ambient: rhythm resumed after pause -> $back")
+            val playing = call(TX_PLAY_STATUS) { it.writeInt(PLAYING) }
+            log("Ambient: play status $PLAYING accepted=$playing")
             return
         }
         val switchOn = readSwitchState()
