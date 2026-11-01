@@ -85,11 +85,20 @@ internal class CarNightSensor(
         car = null
     }
 
-    /** CarSensorEvent carries a NightData payload whose `isNight` is what the panel dims on. */
+    /**
+     * CarSensorEvent carries a NightData payload. Its field is `isNightMode` (taken from the head
+     * unit's own android.car jar), and it is reached through getNightData(out) rather than a field
+     * read - reading a `nightData` field silently returned null on every event, which is why the
+     * headlights changed nothing (field 2026-11-01 15:49).
+     */
     private fun handleEvent(event: Any) {
         val night = runCatching {
-            val data = event.javaClass.getField("nightData").get(event) ?: return
-            data.javaClass.getField("isNight").getBoolean(data)
+            val dataClass = Class.forName("android.car.hardware.CarSensorEvent\$NightData")
+            val out = dataClass.getDeclaredConstructor().newInstance()
+            event.javaClass.getMethod("getNightData", dataClass).invoke(event, out)
+            dataClass.getField("isNightMode").getBoolean(out)
+        }.onFailure {
+            log("Night: event parse failed ${it.javaClass.simpleName}: ${it.message}")
         }.getOrNull() ?: return
         if (lastNight == night) return
         lastNight = night
