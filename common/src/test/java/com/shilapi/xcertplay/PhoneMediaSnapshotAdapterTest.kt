@@ -5,6 +5,13 @@ import org.junit.Assert.*
 import org.junit.Test
 
 class PhoneMediaSnapshotAdapterTest {
+    @Test fun aNewExplicitZeroProgressSampleResetsTheAnchorEvenWhenItsValueWasAlreadyZero() {
+        val adapter = PhoneMediaSnapshotAdapter()
+        val first = CarPlayNowPlaying(title = "A", elapsedMillis = 0, elapsedRevision = 1, playing = true)
+        adapter.update(first, true, 1000)
+        assertEquals(5000L, adapter.update(first.copy(title = "歌词"), true, 6000).positionMillis)
+        assertEquals(0L, adapter.update(first.copy(title = "B", elapsedRevision = 2), true, 7000).positionMillis)
+    }
     @Test fun liveTitleUpdatesDoNotRewindTheRealProgressAnchor() {
         val adapter = PhoneMediaSnapshotAdapter()
         val first = CarPlayNowPlaying(title = "歌词甲", artist = "曲名", album = "歌手", sourceApp = "QQ音乐",

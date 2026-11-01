@@ -78,6 +78,16 @@ class CarPlayUserAudioRecoveryTest {
         verify(controller, never()).sendMediaButton(Key.PLAY)
         assertFalse(ReflectionHelpers.getField<Boolean>(CarPlayMediaKeys, "focusHeld"))
     }
+    @Test fun activeMediaStillWaitsForFullHandoffBeforeSendingExactlyOneNext() {
+        Preparation.enabled = true
+        CarPlayMediaKeys.onMediaAudioChanged(true); idle()
+        CarPlayMediaKeys.fromWindow(Key.NEXT)
+        verify(controller, never()).sendMediaButton(anyInt())
+        assertEquals(1, Preparation.callbacks.size)
+        Preparation.callbacks.single()(true); Preparation.callbacks.single()(true); idle()
+        verify(controller, times(1)).sendMediaButton(Key.NEXT)
+        verify(controller, never()).sendMediaButton(Key.PLAY)
+    }
     @Test fun aVerifiedMediaHandoffCanRecoverFocusForExactlyOneNextCommand() {
         Preparation.enabled = true
         CarPlayMediaKeys.onMediaAudioChanged(true); idle()

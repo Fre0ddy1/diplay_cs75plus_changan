@@ -30,7 +30,6 @@ class ChanganAudioCustomization : VehicleCustomization {
     }
     override fun onWirelessAudioHandoff(context: Context, connection: WirelessAudioConnection) = onMain {
         wireless = connection
-        if (!enabled(context)) return@onMain
         val bridge = handoff ?: TargetBluetoothHandoff(
             open = { address -> AndroidTargetBluetoothLink(context, address, ::diagnostics) },
             report = ::diagnostics,
@@ -43,7 +42,7 @@ class ChanganAudioCustomization : VehicleCustomization {
         handoff?.end(owner)
     }
     override fun prepareMediaPlayback(context: Context, completed: (Boolean) -> Unit): Boolean =
-        enabled(context) && handoff?.prepare(completed) == true
+        handoff?.prepare(completed) == true
     private fun enabled(context: Context) = context.getSharedPreferences(PREFS, 0)
         .getBoolean("carplay_media_controls", true)
     override fun mediaKeyRoute(context: Context) =
@@ -53,9 +52,8 @@ class ChanganAudioCustomization : VehicleCustomization {
         listOf(CustomizationToggle(R.string.audio_carplay_controls, R.string.audio_carplay_description,
             enabled(context)) { value ->
             context.getSharedPreferences(PREFS, 0).edit().putBoolean("carplay_media_controls", value).commit()
-            wireless?.let { connection ->
-                if (value) onWirelessAudioHandoff(context, connection) else handoff?.end(connection.owner)
-            }
+            // This preference changes key arbitration only. Audio always uses the same CarPlay
+            // handoff and channel policy; it must not silently reconnect Bluetooth media.
         }),
     ))
     companion object { const val PREFS = "diplay_changan_audio" }

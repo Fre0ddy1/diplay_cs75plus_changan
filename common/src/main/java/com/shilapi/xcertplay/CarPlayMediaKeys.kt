@@ -162,7 +162,7 @@ internal object CarPlayMediaKeys {
                         if (artworkCache.containsKey(id)) artworkCache[id] else null
                     }
                 }
-                if (nowPlaying.elapsedMillis != update.elapsedMillis) elapsedUpdatedAt = SystemClock.elapsedRealtime()
+                if (nowPlaying.elapsedMillis != update.elapsedMillis || nowPlaying.elapsedRevision != update.elapsedRevision) elapsedUpdatedAt = SystemClock.elapsedRealtime()
                 val metadataChanged = metadataChanged(nowPlaying, update) || artwork !== previousArtwork
                 nowPlaying = update
                 // The iPhone repeats NowPlayingUpdate about twice a second for the position alone.
@@ -335,8 +335,8 @@ internal object CarPlayMediaKeys {
         val context = appContext ?: return
         val owner = customizationMediaOwner ?: return
         val snapshot = customizationMedia.update(nowPlaying,
-            focusHeld && !transientFocusInterrupted && mainAudioOwner.allowsMedia,
-            SystemClock.elapsedRealtime())
+            focusHeld && mainAudioOwner.allowsMedia,
+            SystemClock.elapsedRealtime(), sourceSelected = mainAudioOwner == CarPlayAudioOwner.PHONE && focusHeld)
         VehicleCustomizations.onMediaSnapshot(context, owner, snapshot)
     }
 
@@ -423,7 +423,9 @@ internal object CarPlayMediaKeys {
                 }
             }
             val context = appContext ?: return@sendCarPlay
-            if (expectStream && (!mediaAudioActive || transientFocusInterrupted)) {
+            // An active media stream is not proof that the wireless Bluetooth handoff finished.
+            // Every explicit action that expects playback checks the current lease first.
+            if (expectStream) {
                 val once = java.util.concurrent.atomic.AtomicBoolean()
                 val complete: (Boolean) -> Unit = { verified ->
                     if (once.compareAndSet(false, true)) mainHandler.post {
@@ -458,7 +460,7 @@ internal object CarPlayMediaKeys {
 
     /** Whether [next] changes what the media session's metadata shows; position and play state do not. */
     internal fun metadataChanged(previous: CarPlayNowPlaying, next: CarPlayNowPlaying): Boolean =
-        previous.copy(elapsedMillis = null, playing = false) != next.copy(elapsedMillis = null, playing = false)
+        previous.copy(elapsedMillis = null, playing = false, elapsedRevision = 0) != next.copy(elapsedMillis = null, playing = false, elapsedRevision = 0)
 
     internal fun androidMetadata(info: CarPlayNowPlaying, artwork: Bitmap? = null): MediaMetadata =
         MediaMetadata.Builder().apply {

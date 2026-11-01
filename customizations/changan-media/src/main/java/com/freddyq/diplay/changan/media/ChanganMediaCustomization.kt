@@ -13,12 +13,12 @@ import java.util.concurrent.atomic.AtomicInteger
 import java.util.concurrent.atomic.AtomicReference
 
 /** One current snapshot, one pending image and one queued wake; Binder/file work never holds the UI lock. */
-class ChanganMediaCustomization internal constructor(private val testWorker: Handler?, private val random: java.util.Random = java.util.Random()) : VehicleCustomization {
+class ChanganMediaCustomization internal constructor(private val testWorker: Handler?) : VehicleCustomization {
     constructor() : this(null)
     override val id = "changan-native-media"
     private val main = Handler(Looper.getMainLooper())
     private val worker by lazy { testWorker ?: Handler(HandlerThread("diplay-native-media").apply { start() }.looper) }
-    private val localItemIndices = AtomicInteger(0)
+    private val displaySessionIds = AtomicInteger(100000 + (SystemClock.elapsedRealtime() % 1_000_000).toInt())
     private var current: Session? = null
     private data class Cover(val key: CoverKey, val bitmap: Bitmap)
 
@@ -32,7 +32,8 @@ class ChanganMediaCustomization internal constructor(private val testWorker: Han
     @Synchronized override fun onMediaSnapshot(context: Context, owner: Any, snapshot: MediaSnapshot) {
         val session = current?.takeIf { it.owner === owner } ?: return
         val previous = session.latest.getAndSet(snapshot)
-        if (previous?.playing == true && snapshot.playing && previous.outputOwned != snapshot.outputOwned) session.refreshDisplay.set(true)
+        session.observeDecision(snapshot)
+        if (previous?.sourceSelected == false && snapshot.sourceSelected) session.refreshDisplay.set(true)
         if (session.eligible(snapshot)) session.wake(urgent = previous?.item != snapshot.item || previous?.playing != snapshot.playing)
         // No synthetic paused item and no clearing/unbinding on an empty phone update.
     }
@@ -72,8 +73,22 @@ class ChanganMediaCustomization internal constructor(private val testWorker: Han
         @Volatile private var remoteEpoch = 0
         private var bound = false // Main thread only.
         @Volatile private var attempts = 0 // Written on main; maximum three binds per phone session.
-        private var track: TrackKey? = null
-        private var sourceId = 0
+        // This is our local display-session token, never a guessed iPhone library item ID.
+        private val sourceId = displaySessionIds.getAndUpdate { if (it == Int.MAX_VALUE) 100000 else it + 1 }
+        private var lastDecision: String? = null // Accessed only under the outer snapshot lock.
+        fun observeDecision(snapshot: MediaSnapshot) {
+            val decision = when {
+                snapshot.item.title.isNullOrBlank() -> "metadata-empty"
+                !snapshot.sourceSelected -> "source-not-selected"
+                snapshot.playing && !snapshot.outputOwned -> "output-not-owned"
+                snapshot.playing -> "playing"
+                else -> "paused"
+            }
+            if (lastDecision != decision) {
+                report("publication decision=$decision sourceID=$sourceId")
+                lastDecision = decision
+            }
+        }
         private var coverKey: CoverKey? = null
         private var coverFile: File? = null
         private var sentCover: Triple<Int, Int, File>? = null
@@ -99,7 +114,7 @@ class ChanganMediaCustomization internal constructor(private val testWorker: Han
         }
         // Paused metadata is valid. It stays cached at the native receiver, without an invented heartbeat.
         fun eligible(snapshot: MediaSnapshot?) = live.get() && snapshot != null &&
-            !snapshot.item.title.isNullOrBlank() && (!snapshot.playing || snapshot.outputOwned)
+            !snapshot.item.title.isNullOrBlank() && snapshot.sourceSelected && (!snapshot.playing || snapshot.outputOwned)
         fun wake(delay: Long = 0, urgent: Boolean = false): Unit = synchronized(scheduleLock) {
             if (!live.get()) return@synchronized
             if (scheduled) {
@@ -132,16 +147,6 @@ class ChanganMediaCustomization internal constructor(private val testWorker: Han
             val epoch = remoteEpoch
             if (binder?.isBinderAlive != true) { main.post { connect() }; return }
             if (binder.interfaceDescriptor != IncallMediaProtocol.TOKEN) throw java.io.IOException("unexpected native descriptor")
-            val key = TrackKey(snapshot.item)
-            if (track != key) {
-                track = key
-                // OEM Utils.getRandomNum: 100000 + itemIndex + random(0..999).
-                // CarPlay has no WecarFlow SDK itemIndex; use this session's local item index.
-                val index = localItemIndices.getAndUpdate { (it + 1) % 1_000_000 }
-                sourceId = 100000 + index + random.nextInt(1000)
-                sentCover = null
-                report("track changed sourceID=$sourceId")
-            }
             if (!same(snapshot)) return
             val protocol = IncallMediaProtocol(binder)
             if (refreshDisplay.getAndSet(false)) { lastMetadata = null; sentCover = null }

@@ -14,6 +14,8 @@ data class MediaSnapshot(
     val positionUpdatedAtMillis: Long,
     /** Observation only; consumers must never acquire focus or select an audio source. */
     val outputOwned: Boolean,
+    /** Protocol/native-source selection, independent of a temporary Android focus interruption. */
+    val sourceSelected: Boolean = true,
 ) {
     fun positionAt(now: Long): Long? = positionMillis?.let { position ->
         val delta = if (playing) (now - positionUpdatedAtMillis).coerceAtLeast(0) else 0L

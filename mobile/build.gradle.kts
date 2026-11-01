@@ -20,8 +20,8 @@ android {
         applicationId = "com.shihab.diplay.hudtest"
         minSdk = 25
         targetSdk = 37
-        versionCode = 66
-        versionName = "0.2.22-ca75plus.24-media.2"
+        versionCode = 67
+        versionName = "0.2.22-ca75plus.25-media.3"
 
     }
 

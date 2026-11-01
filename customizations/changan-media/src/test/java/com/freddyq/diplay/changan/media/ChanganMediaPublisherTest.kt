@@ -55,9 +55,7 @@ class ChanganMediaPublisherTest {
         }
         override fun unbindService(connection: ServiceConnection) { unbinds++ }
     }
-    private val module = ChanganMediaCustomization(Handler(Looper.getMainLooper()), object : java.util.Random() {
-        override fun nextInt(bound: Int) = 0
-    })
+    private val module = ChanganMediaCustomization(Handler(Looper.getMainLooper()))
     private val owner = Any()
     private fun idle(ms: Long) = Shadows.shadowOf(Looper.getMainLooper()).idleFor(ms, TimeUnit.MILLISECONDS)
     private fun snapshot(title: String = "QQ歌曲A", playing: Boolean = true, position: Long = 2000, owned: Boolean = true) =
@@ -93,13 +91,14 @@ class ChanganMediaPublisherTest {
         assertEquals("今宵离别后", metadata.last().getString("songName"))
         module.onMediaSnapshot(context, owner, value.copy(item = value.item.copy(artist = "下一首真实曲名")))
         idle(1200)
-        assertEquals(2, metadata.map { it.getInt("sourceID") }.distinct().size)
+        assertEquals(1, metadata.map { it.getInt("sourceID") }.distinct().size)
+        assertEquals("下一首真实曲名", metadata.last().getString("singerName"))
     }
     @Test fun regainingTheExistingOutputResendsItsCoverOnceWithoutAPeriodicImageLoop() {
         val value = snapshot(); begin(value)
         val bitmap = image(Color.BLUE); module.onMediaArtwork(context, owner, value.item, bitmap); bitmap.recycle()
         idle(1200); assertEquals(1, covers.size)
-        module.onMediaSnapshot(context, owner, value.copy(outputOwned = false)); idle(1200)
+        module.onMediaSnapshot(context, owner, value.copy(outputOwned = false, sourceSelected = false)); idle(1200)
         module.onMediaSnapshot(context, owner, value.copy(positionUpdatedAtMillis = SystemClock.elapsedRealtime())); idle(3200)
         assertEquals(2, covers.size)
         assertEquals(1, covers.map { it.first }.distinct().size)
@@ -210,7 +209,7 @@ class ChanganMediaPublisherTest {
         module.onMediaSnapshot(context, owner, snapshot()); idle(12000)
         assertEquals(3, binds); assertTrue(transactions.isEmpty())
     }
-    @Test fun sourceIdChangesForNewTrackButNotForDurationCorrectionOrPause() {
+    @Test fun localDisplaySessionIdSurvivesTextCorrectionsPauseAndNextTrack() {
         val value = snapshot(); begin(value); idle(1200)
         val first = metadata.last().getInt("sourceID")
         module.onMediaSnapshot(context, owner, value.copy(item = value.item.copy(durationMillis = 61000), playing = false))
@@ -218,6 +217,34 @@ class ChanganMediaPublisherTest {
         module.onMediaSnapshot(context, owner, value.copy(item = value.item.copy(artworkId = 77)))
         idle(1200); assertEquals(first, metadata.last().getInt("sourceID"))
         module.onMediaSnapshot(context, owner, snapshot("第二首")); idle(1200)
-        assertNotEquals(first, metadata.last().getInt("sourceID"))
+        assertEquals(first, metadata.last().getInt("sourceID"))
+        assertEquals("第二首", metadata.last().getString("songName"))
+    }
+
+    @Test fun recordedQqFieldsCanSwapWithoutReallocatingTheDisplayOrResendingTheSameCover() {
+        val value = snapshot().copy(item = MediaItem("没有我你怎么办", "郑杰伦", "没有我你怎么办", 225000, 3, "QQ音乐"))
+        begin(value)
+        val bitmap = image(Color.BLUE); module.onMediaArtwork(context, owner, value.item, bitmap); idle(1200)
+        val next = value.copy(item = value.item.copy(title = "没有我你怎么办 - 郑杰伦", artist = "没有我你怎么办", album = "郑杰伦"))
+        module.onMediaSnapshot(context, owner, next)
+        module.onMediaArtwork(context, owner, next.item, bitmap); idle(2200)
+        bitmap.recycle()
+        assertEquals(1, metadata.map { it.getInt("sourceID") }.distinct().size)
+        assertEquals(1, covers.size)
+        assertEquals("没有我你怎么办", metadata.last().getString("singerName"))
+        assertTrue(progress.isNotEmpty())
+    }
+    @Test fun focusInterruptionDoesNotRebuildTheNativeCoverAndPausedNativeSourceSelectionIsRespected() {
+        val value = snapshot(); begin(value)
+        val bitmap = image(Color.BLUE); module.onMediaArtwork(context, owner, value.item, bitmap); bitmap.recycle(); idle(1200)
+        repeat(4) {
+            module.onMediaSnapshot(context, owner, value.copy(outputOwned = false)); idle(200)
+            module.onMediaSnapshot(context, owner, value); idle(200)
+        }
+        assertEquals(1, covers.size)
+        val before = transactions.size
+        module.onMediaSnapshot(context, owner, value.copy(playing = false, outputOwned = false, sourceSelected = false)); idle(2200)
+        assertEquals(before, transactions.size)
+        assertEquals(0, unbinds)
     }
 }

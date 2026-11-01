@@ -9,6 +9,8 @@ internal enum class LinkState { UNKNOWN, DISCONNECTED, CONNECTING, CONNECTED, DI
 internal interface TargetBluetoothLink : Closeable {
     fun start(changed: () -> Unit)
     fun states(): Map<Int, LinkState>
+    /** Physical connection to this peer; null must not be treated as disconnected. */
+    fun peerConnected(): Boolean? = null
     fun canDisconnect(): Boolean
     fun supportsDisconnect(profile: Int): Boolean = true
     fun disconnect(profile: Int): Boolean
@@ -86,12 +88,13 @@ internal class TargetBluetoothHandoff(
         if (lease !== current) return
         val now = SystemClock.uptimeMillis()
         val states = current.link.states()
-        if (states.isNotEmpty() && states.values.all { it == LinkState.DISCONNECTED }) {
-            finish(current, true, "profiles disconnected; physical phone output still unverified")
+        val peerConnected = current.link.peerConnected()
+        if (states.isNotEmpty() && states.values.all { it == LinkState.DISCONNECTED } && peerConnected == false) {
+            finish(current, true, "target profiles and ACL disconnected; physical phone output still unverified")
             return
         }
         if (now >= current.deadline || current.budget <= 0) {
-            finish(current, false, "handoff incomplete states=$states; no global Bluetooth fallback")
+            finish(current, false, "handoff incomplete states=$states targetAcl=$peerConnected; no global Bluetooth fallback")
             return
         }
         if (current.link.canDisconnect()) {

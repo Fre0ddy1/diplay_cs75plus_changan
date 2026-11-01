@@ -9,11 +9,8 @@ import java.io.File
 import java.io.IOException
 
 internal data class TrackKey(val title: String?, val artist: String?, val album: String?) {
-    // Observed QQ live-title mode keeps the real song/artist in the other two text fields.
-    // This is a display association, not a fabricated phone library/database identifier.
-    constructor(item: MediaItem) : this(
-        if (item.sourceApp == "QQ音乐" && !item.artist.isNullOrBlank() && !item.album.isNullOrBlank()) null else item.title,
-        item.artist, item.album)
+    // Only rejects a stale artwork callback at arrival; never allocates a display identifier.
+    constructor(item: MediaItem) : this(item.title, item.artist, item.album)
 }
 internal data class CoverKey(val track: TrackKey?, val artworkId: Int?) {
     // A valid transfer belongs to this phone session and may precede the final text fields.

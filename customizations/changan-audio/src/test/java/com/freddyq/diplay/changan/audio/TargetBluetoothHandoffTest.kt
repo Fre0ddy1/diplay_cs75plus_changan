@@ -21,13 +21,15 @@ class TargetBluetoothHandoffTest {
         var closed = false
         var call = false
         var accepts = true
+        var acl: Boolean? = true
         override fun start(changed: () -> Unit) { this.changed = changed }
         override fun states() = state.toMap()
+        override fun peerConnected() = acl
         override fun canDisconnect() = !call
         override fun supportsDisconnect(profile: Int) = profile != 12
         override fun disconnect(profile: Int): Boolean { requests += profile; return accepts }
         override fun close() { closed = true }
-        fun disconnected() { state.keys.toList().forEach { state[it] = LinkState.DISCONNECTED }; changed() }
+        fun disconnected() { state.keys.toList().forEach { state[it] = LinkState.DISCONNECTED }; acl = false; changed() }
     }
     private val links = mutableMapOf<String, Link>()
     private val report = mutableListOf<String>()
@@ -123,5 +125,15 @@ class TargetBluetoothHandoffTest {
         val unavailable = TargetBluetoothHandoff({ throw SecurityException("denied") }, {})
         unavailable.begin(Any(), "selected"); idle()
         assertFalse(unavailable.prepare {})
+    }
+    @Test fun closedProfilesCannotClaimFullHandoffWhileThePeerAclIsConnectedOrUnknown() {
+        val link = start(); link.state.keys.toList().forEach { link.state[it] = LinkState.DISCONNECTED }
+        val results = mutableListOf<Boolean>()
+        bridge.prepare { results += it }; idle(2200)
+        assertEquals(listOf(false), results)
+        link.acl = null; bridge.prepare { results += it }; idle(2200)
+        assertEquals(listOf(false, false), results)
+        link.acl = false; bridge.prepare { results += it }
+        assertEquals(listOf(false, false, true), results)
     }
 }
