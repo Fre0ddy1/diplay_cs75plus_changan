@@ -82,7 +82,7 @@ internal class AndroidTargetBluetoothLink(
             }
         }
     }
-    override fun states(): Map<Int, LinkState> = PROFILES.associateWith { profile ->
+    override fun states(): Map<Int, LinkState> = MEDIA_PROFILES.associateWith { profile ->
         val proxy = proxies[profile]
         if (proxy == null || target == null || profile in unavailable) LinkState.UNKNOWN
         else try {
@@ -101,8 +101,8 @@ internal class AndroidTargetBluetoothLink(
     }
     override fun canDisconnect(): Boolean {
         if (!permitted || app.getSystemService(AudioManager::class.java)?.mode != AudioManager.MODE_NORMAL) return false
-        val hfp = proxies[16] ?: return false
         val device = target ?: return false
+        val hfp = proxies[16] ?: return true // Only A2DP may be disconnected; no phone profile is touched.
         return try {
             if (hfp.getConnectionState(device) == BluetoothProfile.STATE_DISCONNECTED) true
             else {
@@ -110,6 +110,10 @@ internal class AndroidTargetBluetoothLink(
                     .invoke(hfp, device) as? List<*>
                 calls != null && calls.isEmpty()
             }
+        } catch (error: NoSuchMethodException) {
+            if (!callStateFailureReported) report("HFP call method not exposed; media-only handoff; phone profile untouched")
+            callStateFailureReported = true
+            true
         } catch (error: Exception) {
             if (!callStateFailureReported) report("target call state unavailable=${(error.cause ?: error).javaClass.simpleName}; handoff deferred")
             callStateFailureReported = true
@@ -140,13 +144,12 @@ internal class AndroidTargetBluetoothLink(
     }
     companion object {
         // Car-side client/sink roles; AVRCP is observed and goes down with its A2DP connection.
-        private val ACTIVE_PROFILES = setOf(11, 16, 17, 5) // A2DP sink, HFP client, PBAP client, PAN
-        private val PROFILES = ACTIVE_PROFILES + 12 // AVRCP controller has no independent disconnect API
+        private val ACTIVE_PROFILES = setOf(11) // Media only: A2DP sink. Never disconnect HFP, PBAP or PAN.
+        private val MEDIA_PROFILES = ACTIVE_PROFILES + 12 // AVRCP is observed, not separately disconnected.
+        private val PROFILES = MEDIA_PROFILES + 16 // Optional read-only call guard when exposed by the ROM.
         private val ACTIONS = listOf(
             "android.bluetooth.a2dp-sink.profile.action.CONNECTION_STATE_CHANGED",
             "android.bluetooth.headsetclient.profile.action.CONNECTION_STATE_CHANGED",
-            "android.bluetooth.pbapclient.profile.action.CONNECTION_STATE_CHANGED",
-            "android.bluetooth.pan.profile.action.CONNECTION_STATE_CHANGED",
             "android.bluetooth.avrcp-controller.profile.action.CONNECTION_STATE_CHANGED",
         )
     }

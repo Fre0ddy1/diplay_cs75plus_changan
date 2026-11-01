@@ -10,10 +10,10 @@ internal class PhoneMediaSnapshotAdapter {
     private var retained: MediaSnapshot? = null
 
     fun update(info: CarPlayNowPlaying, outputOwned: Boolean, now: Long): MediaSnapshot {
-        val item = MediaItem(info.title, info.artist, info.album, info.durationMillis, info.artworkTransferId)
+        val item = MediaItem(info.title, info.artist, info.album, info.durationMillis, info.artworkTransferId, info.sourceApp)
         val old = retained
-        val sameTrack = old?.item?.let { it.title == item.title && it.artist == item.artist && it.album == item.album } == true
-        val position = if (!sameTrack || previous?.elapsedMillis != info.elapsedMillis) {
+        // Captions can be live lyrics. Only an actual elapsed update resets the monotonic anchor.
+        val position = if (old == null || previous?.elapsedMillis != info.elapsedMillis) {
             info.elapsedMillis
         } else old?.positionAt(now)
         return MediaSnapshot(item, info.playing, position, now, outputOwned).also {

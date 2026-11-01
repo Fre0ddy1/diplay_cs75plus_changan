@@ -19,6 +19,11 @@ import org.robolectric.util.ReflectionHelpers
 @RunWith(RobolectricTestRunner::class)
 @Config(sdk = [28], manifest = Config.NONE)
 class AndroidTargetBluetoothLinkTest {
+    class HfpWithoutTheHiddenCallMethod : BluetoothProfile {
+        override fun getConnectedDevices() = emptyList<BluetoothDevice>()
+        override fun getDevicesMatchingConnectionStates(states: IntArray) = emptyList<BluetoothDevice>()
+        override fun getConnectionState(device: BluetoothDevice) = BluetoothProfile.STATE_CONNECTED
+    }
     class Profile : BluetoothProfile {
         var state = BluetoothProfile.STATE_CONNECTED
         var calls = emptyList<Any>()
@@ -45,6 +50,14 @@ class AndroidTargetBluetoothLinkTest {
         assertTrue(link.disconnect(11))
         assertEquals(listOf(selected), media.disconnected.map { it.address })
         assertEquals(LinkState.CONNECTED, link.states()[11]) // accepted is not confirmed
+        link.close()
+    }
+    @Test fun missingHfpCallIntrospectionCannotBlockAMediaOnlyHandoffOrDisconnectThePhoneRole() {
+        ReflectionHelpers.getField<MutableMap<Int, BluetoothProfile>>(link, "proxies")[16] = HfpWithoutTheHiddenCallMethod()
+        assertTrue(link.disconnect(11))
+        assertEquals(listOf(selected), media.disconnected.map { it.address })
+        assertFalse(link.disconnect(16)); assertFalse(link.disconnect(17)); assertFalse(link.disconnect(5))
+        assertEquals(setOf(11, 12), link.states().keys)
         link.close()
     }
     @Test fun nativeCallBlocksEvenWhenAudioManagerStillReportsNormalMode() {

@@ -344,7 +344,7 @@ internal object CarPlayMediaKeys {
         val context = appContext ?: return
         val owner = customizationMediaOwner ?: return
         val item = com.freddyq.diplay.customization.MediaItem(nowPlaying.title, nowPlaying.artist,
-            nowPlaying.album, nowPlaying.durationMillis, nowPlaying.artworkTransferId)
+            nowPlaying.album, nowPlaying.durationMillis, nowPlaying.artworkTransferId, nowPlaying.sourceApp)
         VehicleCustomizations.onMediaArtwork(context, owner, item, artwork)
     }
 
@@ -393,7 +393,7 @@ internal object CarPlayMediaKeys {
             }
             val generation = audioCallbackGeneration
             val preparation = mediaPreparationGeneration
-            val deliver = deliver@{
+            val deliver: (Boolean?) -> Unit = deliver@{ profilesVerified ->
                 synchronized(this) {
                     if (controller !== expected || expected.mediaSessionIdentity() !== phoneIdentity ||
                         generation != audioCallbackGeneration ||
@@ -401,11 +401,14 @@ internal object CarPlayMediaKeys {
                         (fromWheel && appContext?.let { AirPlayPersistence.loadMediaViaCarBluetooth(it) } == true) ||
                         appContext?.getSystemService(AudioManager::class.java)?.mode != AudioManager.MODE_NORMAL ||
                         CarPlayVideo.activity != null) return@deliver
-                    if (expectStream) {
+                    val skipDuringUnresolvedLoss = index in setOf(CarPlayMediaButton.NEXT, CarPlayMediaButton.PREVIOUS) &&
+                        transientFocusInterrupted && profilesVerified == false
+                    if (expectStream && !skipDuringUnresolvedLoss) {
                         val hadFocus = focusHeld && !transientFocusInterrupted
                         regainFocusLocked(userRequested = true)
                         if (!mediaAudioActive && focusHeld && !hadFocus) userRecoveryFocus = true
                     }
+                    if (skipDuringUnresolvedLoss) report("skip preserves unresolved focus; media handoff unverified; no extra PLAY")
                     val sent = expected.sendMediaButton(index)
                     report("media key $source wheel=$fromWheel -> CarPlay $index queued=$sent")
                     val intent = ++mediaIntentSerial
@@ -420,18 +423,18 @@ internal object CarPlayMediaKeys {
                 }
             }
             val context = appContext ?: return@sendCarPlay
-            if (expectStream && !mediaAudioActive) {
+            if (expectStream && (!mediaAudioActive || transientFocusInterrupted)) {
                 val once = java.util.concurrent.atomic.AtomicBoolean()
                 val complete: (Boolean) -> Unit = { verified ->
                     if (once.compareAndSet(false, true)) mainHandler.post {
                         report("user audio recovery profilesVerified=$verified; one media command only")
-                        deliver()
+                        deliver(verified)
                     }
                 }
                 if (com.freddyq.diplay.customization.VehicleCustomizations.prepareMediaPlayback(context, complete)) {
                     mainHandler.postDelayed({ complete(false) }, 2_500L)
-                } else deliver()
-            } else deliver()
+                } else deliver(null)
+            } else deliver(null)
         }
     }
 

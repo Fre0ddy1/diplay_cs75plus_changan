@@ -7,6 +7,7 @@ import android.net.Uri
 import android.os.*
 import com.freddyq.diplay.customization.*
 import java.io.File
+import java.lang.ref.WeakReference
 import java.util.concurrent.atomic.AtomicBoolean
 import java.util.concurrent.atomic.AtomicInteger
 import java.util.concurrent.atomic.AtomicReference
@@ -31,15 +32,25 @@ class ChanganMediaCustomization internal constructor(private val testWorker: Han
     @Synchronized override fun onMediaSnapshot(context: Context, owner: Any, snapshot: MediaSnapshot) {
         val session = current?.takeIf { it.owner === owner } ?: return
         val previous = session.latest.getAndSet(snapshot)
+        if (previous?.playing == true && snapshot.playing && previous.outputOwned != snapshot.outputOwned) session.refreshDisplay.set(true)
         if (session.eligible(snapshot)) session.wake(urgent = previous?.item != snapshot.item || previous?.playing != snapshot.playing)
         // No synthetic paused item and no clearing/unbinding on an empty phone update.
     }
     @Synchronized override fun onMediaArtwork(context: Context, owner: Any, item: MediaItem, bitmap: Bitmap?) {
         val session = current?.takeIf { it.owner === owner } ?: return
-        if (bitmap == null) { session.pending.getAndSet(null)?.bitmap?.recycle(); return }
+        val latest = session.latest.get()?.item ?: return
+        if (CoverKey(latest) != CoverKey(item) || TrackKey(latest) != TrackKey(item)) return
+        if (bitmap == null) {
+            session.pending.getAndSet(null)?.bitmap?.recycle()
+            session.lastOfferedKey = null; session.lastOffered = WeakReference(null)
+            return
+        }
+        val key = CoverKey(item)
+        if (session.lastOfferedKey == key && session.lastOffered.get() === bitmap) return
         if (bitmap.width !in 1..384 || bitmap.height !in 1..384) return
         val copy = bitmap.copy(Bitmap.Config.ARGB_8888, false) ?: return
-        session.pending.getAndSet(Cover(CoverKey(item), copy))?.bitmap?.recycle()
+        session.lastOfferedKey = key; session.lastOffered = WeakReference(bitmap)
+        session.pending.getAndSet(Cover(key, copy))?.bitmap?.recycle()
         session.wake(urgent = true)
     }
     @Synchronized override fun onMediaSessionEnded(owner: Any) {
@@ -51,6 +62,9 @@ class ChanganMediaCustomization internal constructor(private val testWorker: Han
     private inner class Session(val context: Context, val owner: Any) {
         val latest = AtomicReference<MediaSnapshot?>()
         val pending = AtomicReference<Cover?>()
+        val refreshDisplay = AtomicBoolean()
+        var lastOfferedKey: CoverKey? = null // Compared synchronously only; never read bitmap pixels later.
+        var lastOffered = WeakReference<Bitmap>(null)
         private val live = AtomicBoolean(true)
         private val scheduleLock = Any()
         private var scheduled = false
@@ -130,6 +144,7 @@ class ChanganMediaCustomization internal constructor(private val testWorker: Han
             }
             if (!same(snapshot)) return
             val protocol = IncallMediaProtocol(binder)
+            if (refreshDisplay.getAndSet(false)) { lastMetadata = null; sentCover = null }
             val json = IncallMediaProtocol.metadataJson(sourceId, snapshot)
             val signature = epoch to json
             if (snapshot.playing || lastMetadata != signature || pending.get()?.key == CoverKey(snapshot.item)) {

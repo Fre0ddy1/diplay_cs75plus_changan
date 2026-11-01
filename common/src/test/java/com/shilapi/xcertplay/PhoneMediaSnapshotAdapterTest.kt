@@ -5,6 +5,15 @@ import org.junit.Assert.*
 import org.junit.Test
 
 class PhoneMediaSnapshotAdapterTest {
+    @Test fun liveTitleUpdatesDoNotRewindTheRealProgressAnchor() {
+        val adapter = PhoneMediaSnapshotAdapter()
+        val first = CarPlayNowPlaying(title = "歌词甲", artist = "曲名", album = "歌手", sourceApp = "QQ音乐",
+            durationMillis = 225000, elapsedMillis = 1000, playing = true)
+        adapter.update(first, true, 1000)
+        val second = adapter.update(first.copy(title = "歌词乙"), true, 4000)
+        assertEquals(4000L, second.positionMillis)
+        assertEquals("QQ音乐", second.item.sourceApp)
+    }
     @Test fun pauseAndResumeKeepElapsedTimeWithoutCountingPausedWallTime() {
         val adapter = PhoneMediaSnapshotAdapter()
         val playing = CarPlayNowPlaying(title = "QQ", durationMillis = 60000, elapsedMillis = 1000, playing = true)

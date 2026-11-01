@@ -76,6 +76,52 @@ class ChanganMediaPublisherTest {
         assertTrue(transactions.all { it == 37 || it == 38 })
         assertNull(Shadows.shadowOf(app.getSystemService(AudioManager::class.java)).lastAudioFocusRequest)
     }
+    @Test fun qqLiveLyricsKeepOneIdentityAndOneCoverWhileTheCaptionChanges() {
+        val value = snapshot().copy(item = MediaItem("藕虽断了丝还连", "爱江山更爱美人 (Live)", "任贤齐/刘宇宁", 225000, 3, "QQ音乐"))
+        begin(value)
+        val bitmap = image(Color.BLUE)
+        module.onMediaArtwork(context, owner, value.item, bitmap); idle(1200)
+        for (line in listOf("壮志豪情四海远名扬", "愁情烦事别放心头", "今宵离别后")) {
+            val next = value.copy(item = value.item.copy(title = line), positionMillis = 4000, positionUpdatedAtMillis = SystemClock.elapsedRealtime())
+            module.onMediaSnapshot(context, owner, next)
+            module.onMediaArtwork(context, owner, next.item, bitmap)
+            idle(1200)
+        }
+        bitmap.recycle()
+        assertEquals(1, metadata.map { it.getInt("sourceID") }.distinct().size)
+        assertEquals(1, covers.size)
+        assertEquals("今宵离别后", metadata.last().getString("songName"))
+        module.onMediaSnapshot(context, owner, value.copy(item = value.item.copy(artist = "下一首真实曲名")))
+        idle(1200)
+        assertEquals(2, metadata.map { it.getInt("sourceID") }.distinct().size)
+    }
+    @Test fun regainingTheExistingOutputResendsItsCoverOnceWithoutAPeriodicImageLoop() {
+        val value = snapshot(); begin(value)
+        val bitmap = image(Color.BLUE); module.onMediaArtwork(context, owner, value.item, bitmap); bitmap.recycle()
+        idle(1200); assertEquals(1, covers.size)
+        module.onMediaSnapshot(context, owner, value.copy(outputOwned = false)); idle(1200)
+        module.onMediaSnapshot(context, owner, value.copy(positionUpdatedAtMillis = SystemClock.elapsedRealtime())); idle(3200)
+        assertEquals(2, covers.size)
+        assertEquals(1, covers.map { it.first }.distinct().size)
+    }
+    @Test fun aPausedNextCoverCanPrecedeFinalTextAndStillBeAvailableOnResume() {
+        val old = snapshot(); begin(old); idle(1200)
+        module.onMediaSnapshot(context, owner, old.copy(playing = false)); idle(100)
+        val early = old.copy(item = old.item.copy(title = "下一首", artworkId = 4), playing = false, positionMillis = 0)
+        module.onMediaSnapshot(context, owner, early)
+        val bitmap = image(Color.RED); module.onMediaArtwork(context, owner, early.item, bitmap); bitmap.recycle()
+        val complete = early.copy(item = early.item.copy(artist = "新的歌手", album = "新的专辑"))
+        module.onMediaSnapshot(context, owner, complete); idle(1200)
+        assertEquals(1, covers.size)
+        val nextId = metadata.last().getInt("sourceID")
+        assertEquals(nextId, covers.single().first)
+        val before = progress.size
+        module.onMediaSnapshot(context, owner, complete.copy(playing = true, positionUpdatedAtMillis = SystemClock.elapsedRealtime()))
+        idle(2200)
+        assertTrue(progress.size > before)
+        assertEquals(nextId, progress.last().first)
+        assertEquals(1, covers.size)
+    }
     @Test fun aPhonePlayingThroughAnotherSourceDoesNotCauseNativeSourceCompetition() {
         begin(snapshot(owned = false)); idle(3200)
         assertEquals(0, binds); assertTrue(transactions.isEmpty())

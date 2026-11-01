@@ -4,6 +4,7 @@ package com.freddyq.diplay.customization
 data class MediaItem(
     val title: String?, val artist: String?, val album: String?,
     val durationMillis: Long?, val artworkId: Int?,
+    val sourceApp: String? = null,
 )
 
 data class MediaSnapshot(
