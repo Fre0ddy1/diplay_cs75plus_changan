@@ -22,7 +22,7 @@ public final class MainActivity extends Activity {
         super.onCreate(state);
         ScrollView scroll = new ScrollView(this); LinearLayout root = new LinearLayout(this);
         root.setOrientation(LinearLayout.VERTICAL); root.setPadding(24,20,24,20); scroll.addView(root); setContentView(scroll);
-        TextView title = new TextView(this); title.setTextSize(24); title.setText("原车封面色通道验证 0.1"); root.addView(title);
+        TextView title = new TextView(this); title.setTextSize(24); title.setText("原车封面色通道验证 0.2"); root.addView(title);
         TextView help = new TextView(this); help.setText("驻车手动试验。保留现有灯光/律动设置；启动不连接、不写入。\n仅测试当前颜色属性，读取成功后才能写色号4/48或恢复原色。它们是原厂已使用的色号，不预言具体RGB。此包不做自动封面换色。"); root.addView(help);
         button(root, "① 连接检查并读取原色", this::connect);
         first = button(root, "② 只写测试色号4", () -> write(4));

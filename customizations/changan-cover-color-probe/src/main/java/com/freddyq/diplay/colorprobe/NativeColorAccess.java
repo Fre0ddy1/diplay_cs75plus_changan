@@ -76,9 +76,8 @@ final class NativeColorAccess {
     void close() { active = false; manager = null; car = null; listener.ready(false); }
     private void checkConnected() throws Exception {
         if (!active || manager == null) throw new IllegalStateException("尚未连接或已退出");
-        if (!Boolean.TRUE.equals(manager.getClass().getMethod("isConnected").invoke(manager))) {
-            throw new IllegalStateException("原厂服务已断开");
-        }
+        // The property manager exposes no public isConnected(). Readiness comes from the SDK callback;
+        // getValue/setValue themselves report a failed or disconnected transport.
     }
     static String describe(Throwable error) {
         while (error instanceof InvocationTargetException && error.getCause() != null) error = error.getCause();

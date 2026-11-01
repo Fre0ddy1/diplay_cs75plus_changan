@@ -6,7 +6,6 @@ import static org.junit.Assert.*;
 public class NativeColorAccessTest {
     public static class Manager {
         int calls, property, area; Object value = 33; boolean denied;
-        public boolean isConnected() { return true; }
         public Object getValue(int property, int area) { return value; }
         public int setValue(int property, int area, Object value) {
             calls++; this.property=property; this.area=area;
@@ -17,6 +16,10 @@ public class NativeColorAccessTest {
     private final NativeColorAccess.Listener listener = new NativeColorAccess.Listener() {
         public void log(String message) {} public void ready(boolean ready) {}
     };
+    @Test public void readUsesThePropertyManagerApiWithoutInventingAConnectionMethod() throws Exception {
+        Manager manager = new Manager(); NativeColorAccess client = new NativeColorAccess(listener,manager,33);
+        assertEquals(33,client.read()); assertEquals(0,manager.calls);
+    }
     @Test public void unreadOriginalAndArbitraryColorsAreRejected() {
         try { ColorWritePolicy.validate(4,null); fail(); } catch (IllegalStateException expected) {}
         try { ColorWritePolicy.validate(12,33); fail(); } catch (IllegalArgumentException expected) {}
