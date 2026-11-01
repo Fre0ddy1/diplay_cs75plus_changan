@@ -454,6 +454,14 @@ class CarPlayHostActivity : ComponentActivity() {
     private var paintWaitingScreen: () -> Unit = {}
     private var carPlayNightMode = CarPlayNightMode.SYSTEM
     private var nightModeDiagnosticSource = ThemeModeDiagnostics.Source.CARPLAY_MODE
+    /** The panel's own day/night sensor: it is what dims the screen in a tunnel. */
+    private val carNightSensor by lazy {
+        CarNightSensor(this) { night ->
+            nightModeDiagnosticSource = ThemeModeDiagnostics.Source.CARPLAY_MODE
+            nightModeController.systemChanged(night)
+        }
+    }
+
     private val nightModeController by lazy {
         CarPlayNightModeController(initialNight = darkMode) { night ->
             darkMode = night
@@ -1021,6 +1029,7 @@ class CarPlayHostActivity : ComponentActivity() {
     }
 
     private fun configureNightMode() {
+        carNightSensor.start()
         nightModeController.configure(
             carPlayNightMode,
             nightModeOrNull(resources.configuration.uiMode) ?: false,
@@ -5994,6 +6003,7 @@ class CarPlayHostActivity : ComponentActivity() {
         // Hand the lamps back before the session goes away; a rhythm left running would keep
         // following a session that no longer plays.
         runCatching { ambientRhythm.release() }
+        runCatching { carNightSensor.stop() }
         Log.i(TAG, "shutdown reason=$reason terminateProcess=$terminateProcess")
         teardownExecutor.execute {
             oldController?.close()
