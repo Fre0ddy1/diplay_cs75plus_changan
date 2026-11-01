@@ -53,6 +53,8 @@ class IncallMusicRhythm(
         private const val PAUSED = 0
         /** The sink's prebuffer (startMs ~1000) must be over before the Visualizer can capture. */
         private const val HANDOFF_DELAY_MS = 1_500L
+        /** Twice a second is enough to absorb a reboot, a failed init or a menu toggle. */
+        private const val RECONCILE_MS = 2_000L
         /** No session queued. */
         private const val NONE = -1
         /** The session to hand over: 0 means "media stopped". */
@@ -76,6 +78,7 @@ class IncallMusicRhythm(
     private var ownsSwitch = false
     /** True while a pause has parked the car's rhythm; the next track takes it back. */
     private var switchSuspended = false
+    private var ticks = 0
     private var lastLoggedSession = NONE
     /** Last session the sink reported, kept even while the switch is off. */
     @Volatile private var lastSessionId = 0
@@ -144,15 +147,6 @@ class IncallMusicRhythm(
             stop("switch off")
             return@Runnable
         }
-        // A2DP present = the phone can put music on the car's Bluetooth player. Handing a session
-        // over in that state makes iOS re-route and tear the CarPlay media stream down 5-8 s later
-        // (field 2026-11-01 12:13 and 12:14, five to eight seconds after every hand-over, with the
-        // audio-focus switch on and off alike). Nothing is touched in that case: the driver keeps
-        // his music, and the lamps simply do not follow.
-        if (bluetoothMediaOutputPresent()) {
-            log("Ambient: car Bluetooth media is enabled, not handing over (it would cut the music)")
-            return@Runnable
-        }
         Thread {
             val peak = measureSpectrumPeak(session)
             handler.post {
@@ -166,18 +160,6 @@ class IncallMusicRhythm(
             }
         }.start()
     }
-
-    /**
-     * True when the phone has an A2DP output to play music on.
-     *
-     * Asked of the output device list rather than isBluetoothA2dpOn(): the latter is false while
-     * nothing is streaming, which is precisely the state this guard has to catch.
-     */
-    private fun bluetoothMediaOutputPresent(): Boolean = runCatching {
-        val manager = context.getSystemService(android.media.AudioManager::class.java)
-        manager?.getDevices(android.media.AudioManager.GET_DEVICES_OUTPUTS)
-            ?.any { it.type == android.media.AudioDeviceInfo.TYPE_BLUETOOTH_A2DP } == true
-    }.getOrDefault(false)
 
     /**
      * Loudest waveform sample of [sessionId] over ~700 ms, 0 when nothing is captured.
@@ -291,6 +273,15 @@ class IncallMusicRhythm(
                 log("Ambient: rhythm off (we turned it on) -> $off")
             }
         }
+        handler.removeCallbacks(reconcile)
+        ticks = 0
+        // Handing the lamps back before we let go keeps them on the car's own colour instead of
+        // leaving the manager pointed at a socket that is about to disappear (field 12:45: dark
+        // until the next successful connect).
+        if (service != null && lastLoggedSession != NONE) {
+            val off = call(TX_RHYTHM_ON) { it.writeInt(0) }
+            log("Ambient: rhythm parked on release -> $off")
+        }
         ownsSwitch = false
         switchSuspended = false
         pendingSession = NONE
@@ -349,6 +340,50 @@ class IncallMusicRhythm(
         // default - which is what this client used to send (field 2026-11-01 09:57).
         val playing = call(TX_PLAY_STATUS) { it.writeInt(PLAYING) }
         log("Ambient: play status $PLAYING accepted=$playing")
+        startReconcile()
+    }
+
+    /**
+     * Keeps the manager in the state this client wants, instead of trusting one shot.
+     *
+     * The service is a system process that outlives us: it survives disconnects, reboots and its
+     * own failed Visualizer inits, and every one of those leaves the switch, the session or the
+     * play status out of step (field 2026-11-01 12:45 dark until a reconnect, 12:50 fine, 12:57
+     * lit but not following). Re-reading its state twice a second and correcting only what is
+     * wrong costs two binder calls and removes the timing question entirely.
+     */
+    private fun startReconcile() {
+        handler.removeCallbacks(reconcile)
+        handler.postDelayed(reconcile, RECONCILE_MS)
+    }
+
+    private val reconcile = object : Runnable {
+        override fun run() {
+            if (!AirPlayPersistence.loadAmbientRhythmEnabled(context)) {
+                stop("switch off")
+                return
+            }
+            val session = lastSessionId
+            if (session <= 0 || service == null) {
+                handler.postDelayed(this, RECONCILE_MS)
+                return
+            }
+            ticks += 1
+            if (readSwitchState() == false) {
+                val on = call(TX_RHYTHM_ON) { it.writeInt(1) }
+                ownsSwitch = on
+                log("Ambient: manager switch was off, turned on -> $on")
+            }
+            // The manager only re-inits its Visualizer when the id it holds differs from the one
+            // it was given, so the same id is re-sent now and then to retry a failed init.
+            if (ticks % 5 == 0) {
+                val handed = call(TX_AUDIO_SESSION) { it.writeInt(session) }
+                log("Ambient: re-handed session $session -> $handed")
+            }
+            val playing = call(TX_PLAY_STATUS) { it.writeInt(PLAYING) }
+            if (ticks % 5 == 0) log("Ambient: play status $PLAYING accepted=$playing")
+            handler.postDelayed(this, RECONCILE_MS)
+        }
     }
 
     /** Sends the session id once per change; the manager ignores an id it already holds. */
