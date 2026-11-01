@@ -655,4 +655,17 @@
     <string name="settings_developer_options_hint">USB 诊断、VPN root 授权、屏幕诊断信息、清除日志。</string>
     <string name="iphone_accepted_but_did_not_start_carplay">iPhone 已接受连接，但没有发起 CarPlay。请在 iPhone 上打开“设置 → 通用 → CarPlay”，忽略这辆车后重新配对。</string>
     <string name="resolution_percent_value">%1$d%%（更省带宽）</string>
+    <string name="settings_group_help">问题</string>
+    <string name="issue_amap_voice_close">1. 连接后如手动打开原车高德，再让小安语音关闭高德，可能触发卡死并重连。</string>
+    <string name="issue_audio_abnormal">2. 音频异常（刚启动就暂停或相反、一次切两首歌）时，请检查「蓝牙设置 → 媒体音频」与「音频路由 → 方向盘媒体键交给车机蓝牙」，这两项必须同时开或同时关。此模式下音频交由车机蓝牙播放，首次连上 CarPlay 时车机可能还不知道是否正在播放，需要在 CarPlay 界面手动开始播放，或用 iOS 快捷指令自动播放。</string>
+    <string name="issue_no_auto_project_after_ignition">3. 未点火先连接、之后再点火，可能不会自动飞屏。可三指滑动或从方向盘进入仪表；若仍无效，先打开原车高德再重试。</string>
+    <string name="issue_reboot_projection_scramble">4. 车机强制重启前，若反复强杀本软件进程并反复开关原车高德，重启后可能出现投屏混乱。</string>
+    <string name="issue_stutter_buffer">5. 画面或音乐卡顿时，先确认手机是否发烫。音频可把缓冲调大到 1000ms。音乐或导航仍可能偶尔滑音、卡一两个字，无线连接下如此，暂无更好的处理方式。</string>
+    <string name="issue_cluster_return">6. 三指右滑只能把仪表归还给车机导航仪表。若需回到原始 MCU 画面，请从方向盘 → 导航 → 关闭。</string>
+    <string name="issue_apple_map_card_colour">7. 「Apple 地图 + 卡片（单流）」投屏后，导航卡片可能白底黑字或黑底白字。该卡片由 iPhone 自绘，本软件无法控制，原因尚未确认。</string>
+    <string name="issue_duck_by_car">8. 车机会自行压低音乐音量，因此即便把压低比例设为 100%，仍会有一部分压低效果。</string>
+    <string name="issue_apple_full_nav_placeholder">9. 选择「Apple 完整导航」模式时，导航中仪表可能显示「仅导航页面支持仪表盘显示」等异常画面，重新导航或断开重连可恢复。</string>
+    <string name="issue_flyscreen_is_amap_channel">10. 飞屏不会自动打开车载高德。若在本软件已运行时再打开高德也没有问题，但此时让小安关闭高德，本软件会卡死数秒后断连（飞屏本身即借用高德通道）。</string>
+    <string name="issue_stop_music_on_disconnect">11. 将「方向盘媒体键交给车机蓝牙」设为关、并把「蓝牙设置 → 媒体音频」也设为关，断开 CarPlay 时可自动停止音乐。这两项要么全开，要么全关。</string>
+    <string name="issue_ambient_rhythm_requires_bt_media_off">12. 氛围灯跟随 CarPlay 音乐：需在车机氛围灯菜单里打开「音乐律动」，并关闭车机蓝牙中本机的「媒体音频」。媒体音频开启时，车机会把律动交给自己的播放器，CarPlay 侧不会律动。</string>
 </resources>

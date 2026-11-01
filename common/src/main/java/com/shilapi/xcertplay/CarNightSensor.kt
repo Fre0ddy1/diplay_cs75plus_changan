@@ -12,6 +12,7 @@ package com.shilapi.xcertplay
  */
 internal class CarNightSensor(
     private val context: android.content.Context,
+    private val log: (String) -> Unit,
     private val onNight: (Boolean) -> Unit,
 ) {
     private companion object {
@@ -54,7 +55,7 @@ internal class CarNightSensor(
                 Int::class.javaPrimitiveType,
             ).invoke(manager, callback, SENSOR_TYPE_NIGHT, 0) as? Int
             if (registered != null && registered <= 0) {
-                android.util.Log.i(TAG, "night sensor rejected, registerListener=$registered")
+                log("Night: sensor rejected, registerListener=$registered")
                 return
             }
             // Report the current value at once so a session started after dark is not stuck.
@@ -63,9 +64,9 @@ internal class CarNightSensor(
                     .invoke(manager, SENSOR_TYPE_NIGHT)
                 event?.let(::handleEvent)
             }
-            android.util.Log.i(TAG, "night sensor registered")
+            log("Night: sensor registered")
         }.onFailure {
-            android.util.Log.i(TAG, "night sensor unavailable: ${it.javaClass.simpleName}")
+            log("Night: sensor unavailable ${it.javaClass.simpleName}: ${it.message}")
         }
     }
 
@@ -92,7 +93,7 @@ internal class CarNightSensor(
         }.getOrNull() ?: return
         if (lastNight == night) return
         lastNight = night
-        android.util.Log.i(TAG, "car night=$night")
+        log("Night: car night=$night")
         main.post { onNight(night) }
     }
 }

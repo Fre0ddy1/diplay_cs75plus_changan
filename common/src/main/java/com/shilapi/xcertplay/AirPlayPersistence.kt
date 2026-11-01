@@ -235,7 +235,7 @@ object AirPlayPersistence {
      */
     fun loadMediaViaCarBluetooth(context: Context): Boolean =
         context.getSharedPreferences(PREFS, Context.MODE_PRIVATE)
-            .getBoolean(KEY_MEDIA_AUDIO_VIA_BLUETOOTH, false)
+            .getBoolean(KEY_MEDIA_AUDIO_VIA_BLUETOOTH, true)
 
     fun saveMediaViaCarBluetooth(context: Context, enabled: Boolean) {
         // commit(), not apply(): the driver usually flips this right before switching the head unit

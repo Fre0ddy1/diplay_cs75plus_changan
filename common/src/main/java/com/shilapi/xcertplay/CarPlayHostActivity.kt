@@ -456,7 +456,7 @@ class CarPlayHostActivity : ComponentActivity() {
     private var nightModeDiagnosticSource = ThemeModeDiagnostics.Source.CARPLAY_MODE
     /** The panel's own day/night sensor: it is what dims the screen in a tunnel. */
     private val carNightSensor by lazy {
-        CarNightSensor(this) { night ->
+        CarNightSensor(this, ::appendLog) { night ->
             nightModeDiagnosticSource = ThemeModeDiagnostics.Source.CARPLAY_MODE
             nightModeController.systemChanged(night)
         }

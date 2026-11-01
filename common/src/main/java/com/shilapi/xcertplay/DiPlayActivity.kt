@@ -536,6 +536,12 @@ class DiPlayActivity : ComponentActivity() {
             card.addView(label(getString(R.string.choose_how_to_connect_follow_the_setup_steps_and_save_your), 16, MUTED))
             card.addView(button(getString(R.string.open_connection_setup), false) { page = "connection"; render() }, matchButton(12, 60))
         }
+        activeSectionGroups = GROUP_HELP
+        section(content, getString(R.string.settings_group_help), R.drawable.ic_dp_diagnostics) { card ->
+            for (item in knownIssues()) {
+                card.addView(label(item, 14, MUTED).apply { setPadding(0, dp(2), 0, dp(12)) })
+            }
+        }
         activeSectionGroups = GROUP_SYSTEM
         section(content, getString(R.string.diagnostics), R.drawable.ic_dp_diagnostics) { card ->
             exportButton = button(if (exportInProgress) getString(R.string.saving_report) else getString(R.string.save_diagnostic_report), false) {
@@ -3496,6 +3502,22 @@ class DiPlayActivity : ComponentActivity() {
      * and keeps its own highlight in sync without touching the section column, so switching groups
      * never re-renders the page and never loses in-progress state such as a pending ADB prompt.
      */
+    /** The known-issue list shown under the Help rail entry, one string per paragraph. */
+    private fun knownIssues(): List<String> = listOf(
+        getString(R.string.issue_amap_voice_close),
+        getString(R.string.issue_audio_abnormal),
+        getString(R.string.issue_no_auto_project_after_ignition),
+        getString(R.string.issue_reboot_projection_scramble),
+        getString(R.string.issue_stutter_buffer),
+        getString(R.string.issue_cluster_return),
+        getString(R.string.issue_apple_map_card_colour),
+        getString(R.string.issue_duck_by_car),
+        getString(R.string.issue_apple_full_nav_placeholder),
+        getString(R.string.issue_flyscreen_is_amap_channel),
+        getString(R.string.issue_stop_music_on_disconnect),
+        getString(R.string.issue_ambient_rhythm_requires_bt_media_off),
+    )
+
     private fun buildSettingsRail(rail: LinearLayout) {
         rail.removeAllViews()
         rail.setPadding(0, dp(26), 0, dp(16))
@@ -3506,6 +3528,7 @@ class DiPlayActivity : ComponentActivity() {
             R.string.settings_group_sound to GROUP_SOUND,
             R.string.settings_group_cluster to GROUP_CLUSTER,
             R.string.settings_group_system to GROUP_SYSTEM,
+            R.string.settings_group_help to GROUP_HELP,
         )
         for ((titleRes, group) in items) {
             val selected = settingsGroup == group
@@ -3589,7 +3612,8 @@ class DiPlayActivity : ComponentActivity() {
         const val GROUP_SOUND = 1 shl 3
         const val GROUP_CLUSTER = 1 shl 4
         const val GROUP_SYSTEM = 1 shl 5
-        const val GROUP_ALL = (1 shl 6) - 1
+        const val GROUP_HELP = 1 shl 6
+        const val GROUP_ALL = (1 shl 7) - 1
         // Accent follows the CarPlay menu (MENU_ACCENT in CarPlayHostActivity): one palette across
         // both screens instead of a blue settings page next to a green menu.
         private val BG = Color.rgb(12, 17, 27)
