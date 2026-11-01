@@ -12,8 +12,6 @@ internal class ThemeModeDiagnostics {
         CALLBACK("configuration-callback"),
         CARPLAY_MODE("carplay-mode"),
         WINDOW_FOCUS("window-focus"),
-        /** Configuration.uiMode read directly by the standing watch. */
-        SYSTEM_POLL("ui-mode-watch"),
         SESSION_ACTIVE("session-active", true),
     }
 
