@@ -43,6 +43,14 @@ class IncallMusicRhythm(
         private const val TX_PLAY_STATUS = 1
         private const val TX_AUDIO_SESSION = 2
         private const val TX_RHYTHM_ON = 3
+        /** Read-only: getMusicRhythmSwitchState(). Proves we reached the real manager object. */
+        private const val TX_GET_SWITCH = 10
+        /**
+         * MusicRhythmManager.onPlayingMusic(): 2 is the only value that starts the 200 ms
+         * spectrum loop. Anything else stops it, and the service's own default is 1.
+         */
+        private const val PLAYING = 2
+        private const val PAUSED = 0
         /** No session queued. */
         private const val NONE = -1
         /** The session to hand over: 0 means "media stopped". */
@@ -76,6 +84,11 @@ class IncallMusicRhythm(
             service = binder
             binding = false
             log("Ambient: vehicle setting service connected=${binder != null}")
+            // Read the manager's own switch state: it is the one call whose answer cannot be a
+            // hollow "true" from a stub, so the log proves which object we are talking to.
+            if (binder != null) {
+                log("Ambient: manager switch state=${call(TX_GET_SWITCH) { }}")
+            }
             pendingSession.takeIf { it != NONE }?.let(::applySession)
         }
 
@@ -179,8 +192,8 @@ class IncallMusicRhythm(
     private fun applySession(sessionId: Int) {
         pendingSession = NONE
         if (sessionId == STOPPED) {
-            val stopped = call(TX_PLAY_STATUS) { it.writeInt(0) }
-            log("Ambient: media stopped -> play status 0 accepted=$stopped")
+            val stopped = call(TX_PLAY_STATUS) { it.writeInt(PAUSED) }
+            log("Ambient: media stopped -> play status $PAUSED accepted=$stopped")
             return
         }
         if (!active) {
@@ -193,8 +206,12 @@ class IncallMusicRhythm(
             log("Ambient: audio session $sessionId -> $handed")
             lastLoggedSession = sessionId
         }
-        val playing = call(TX_PLAY_STATUS) { it.writeInt(1) }
-        log("Ambient: play status 1 accepted=$playing")
+        // 2 = playing is the ONLY value that starts the spectrum loop. The manager's
+        // onPlayingMusic() stops everything for any other value, and 1 is its "not playing"
+        // default - which is what this client used to send (field 2026-11-01 09:57: the call was
+        // accepted and nothing else ever happened).
+        val playing = call(TX_PLAY_STATUS) { it.writeInt(PLAYING) }
+        log("Ambient: play status $PLAYING accepted=$playing")
     }
 
     private fun call(transaction: Int, write: (Parcel) -> Unit): Boolean {
