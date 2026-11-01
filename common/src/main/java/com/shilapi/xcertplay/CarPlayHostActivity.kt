@@ -453,6 +453,7 @@ class CarPlayHostActivity : ComponentActivity() {
     private var darkMode = false
     private var paintWaitingScreen: () -> Unit = {}
     private var carPlayNightMode = CarPlayNightMode.SYSTEM
+    private var uiModeWatch: Runnable? = null
     private var nightModeDiagnosticSource = ThemeModeDiagnostics.Source.CARPLAY_MODE
     /** The panel's own day/night sensor: it is what dims the screen in a tunnel. */
     private val carNightSensor by lazy {
@@ -1034,6 +1035,41 @@ class CarPlayHostActivity : ComponentActivity() {
             carPlayNightMode,
             nightModeOrNull(resources.configuration.uiMode) ?: false,
         )
+        startUiModeWatch()
+    }
+
+    /**
+     * Watches Configuration.uiMode directly.
+     *
+     * onConfigurationChanged only fires when the system bothers to deliver it, and this head unit
+     * was seen keeping uiMode at UI_MODE_NIGHT_NO with the dash already dimmed. Polling the value
+     * once a second costs nothing and reports the raw mode, so the log says whether the head unit
+     * ever changes it at all - which is the open question behind "night mode does nothing here".
+     */
+    private fun startUiModeWatch() {
+        if (uiModeWatch != null) return
+        val watch = object : Runnable {
+            private var lastUiMode = -1
+            override fun run() {
+                val mode = resources.configuration.uiMode
+                if (mode != lastUiMode) {
+                    lastUiMode = mode
+                    val night = nightModeOrNull(mode)
+                    appendLog(
+                        "Night: uiMode=0x" + Integer.toHexString(mode) +
+                            " -> " + (night?.let { if (it) "night" else "day" } ?: "unknown"),
+                    )
+                    if (night != null) {
+                        nightModeDiagnosticSource = ThemeModeDiagnostics.Source.SYSTEM_POLL
+                        nightModeController.systemChanged(night)
+                        nightModeDiagnosticSource = ThemeModeDiagnostics.Source.CARPLAY_MODE
+                    }
+                }
+                mainHandler.postDelayed(this, UI_MODE_POLL_MS)
+            }
+        }
+        uiModeWatch = watch
+        mainHandler.post(watch)
     }
 
     private fun openPicturePanel() {
@@ -6004,6 +6040,8 @@ class CarPlayHostActivity : ComponentActivity() {
         // following a session that no longer plays.
         runCatching { ambientRhythm.release() }
         runCatching { carNightSensor.stop() }
+        uiModeWatch?.let { mainHandler.removeCallbacks(it) }
+        uiModeWatch = null
         Log.i(TAG, "shutdown reason=$reason terminateProcess=$terminateProcess")
         teardownExecutor.execute {
             oldController?.close()
@@ -7508,6 +7546,8 @@ class CarPlayHostActivity : ComponentActivity() {
         const val WARM_RECONNECT_WINDOW_MS = 6_000L
         const val IAP_TUNNEL_RECONNECT_DELAY_MILLIS = 15_000L
         const val CONTROLLER_CLOSE_TIMEOUT_MILLIS = 4_000L
+        /** uiMode is polled once a second; this head unit never pushes a configuration callback. */
+        private const val UI_MODE_POLL_MS = 1_000L
         /** How long the panel waits for AirPlay before naming the iPhone-side fix. */
         const val AIRPLAY_STALL_HINT_MILLIS = 60_000L
         const val AUDIO_CAPTURE_MARKER = "audio-capture.enabled"
