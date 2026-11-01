@@ -26,9 +26,21 @@ internal class CarNightSensor(
     private var connection: Any? = null
     private var connecting = false
     private var connected = false
+    /** Which reflection step last ran; the attach failure log names it. */
+    private var step = "start"
     private var lastNight: Boolean? = null
     /** Sensor callbacks arrive on a binder thread; the night-mode controller touches UI. */
     private val main = android.os.Handler(android.os.Looper.getMainLooper())
+
+    /** Reflection wraps the real failure in InvocationTargetException; its cause is the answer. */
+    private fun describe(error: Throwable): String {
+        val cause = error.cause
+        return if (cause == null) {
+            "${error.javaClass.simpleName}: ${error.message}"
+        } else {
+            "${error.javaClass.simpleName} <- ${cause.javaClass.name}: ${cause.message}"
+        }
+    }
 
     fun start() {
         if (car != null || connecting) return
@@ -75,7 +87,7 @@ internal class CarNightSensor(
             }
         }.onFailure {
             connecting = false
-            log("Night: car unavailable ${it.javaClass.simpleName}: ${it.message}")
+            log("Night: car unavailable " + describe(it))
         }
     }
 
@@ -84,10 +96,12 @@ internal class CarNightSensor(
         if (sensorManager != null) return
         runCatching {
             val car = this.car ?: return
+            step = "getCarManager"
             val manager = carClass.getMethod("getCarManager", String::class.java)
-                .invoke(car, "sensor") ?: return
+                .invoke(car, "sensor") ?: run { log("Night: getCarManager returned null"); return }
             sensorManager = manager
             val managerClass = manager.javaClass
+            step = "listenerClass"
             val listenerClass = Class.forName("android.car.hardware.CarSensorManager\$OnSensorChangedListener")
             val callback = java.lang.reflect.Proxy.newProxyInstance(
                 listenerClass.classLoader,
@@ -99,12 +113,14 @@ internal class CarNightSensor(
                 null
             }
             listener = callback
+            step = "registerListener"
             managerClass.getMethod(
                 "registerListener",
                 listenerClass,
                 Int::class.javaPrimitiveType,
                 Int::class.javaPrimitiveType,
             ).invoke(manager, callback, SENSOR_TYPE_NIGHT, 0)
+            step = "getLatestSensorEvent"
             runCatching {
                 val event = managerClass.getMethod("getLatestSensorEvent", Int::class.javaPrimitiveType)
                     .invoke(manager, SENSOR_TYPE_NIGHT)
@@ -112,7 +128,7 @@ internal class CarNightSensor(
             }
             log("Night: sensor registered")
         }.onFailure {
-            log("Night: sensor attach failed ${it.javaClass.simpleName}: ${it.message}")
+            log("Night: sensor attach failed at " + step + " -> " + describe(it))
         }
     }
 
@@ -150,7 +166,7 @@ internal class CarNightSensor(
             if (values == null || values.isEmpty()) return
             values[0] != 0
         }.onFailure {
-            log("Night: event parse failed " + it.javaClass.simpleName + ": " + it.message)
+            log("Night: event parse failed -> " + describe(it))
         }.getOrNull() ?: return
         if (lastNight == night) return
         lastNight = night
