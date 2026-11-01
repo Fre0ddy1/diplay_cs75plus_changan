@@ -1326,9 +1326,21 @@ private class VideoDecoder(
             DecoderAttempt(codecName = null, tuned = false),
         ) + softwareDecoderName(mime)?.let { listOf(DecoderAttempt(it, tuned = false)) }.orEmpty()
         var next: MediaCodec? = null
-        for (attempt in attempts) {
-            next = tryConfigure(mime, csd, surface, attempt)
+        // A cold start asks for three AVC decoders at once and this MTK unit refuses the third
+        // (native_configure -2, OMX_ErrorInsufficientResources). The old loop tried its three
+        // candidates within a few milliseconds and gave up while the other instances were still
+        // being created, which then tore the whole session down (field 2026-11-01 19:17, every
+        // cold start). One retry after a short settle catches the moment the resources come free.
+        for (round in 0..1) {
+            for (attempt in attempts) {
+                next = tryConfigure(mime, csd, surface, attempt)
+                if (next != null) break
+            }
             if (next != null) break
+            if (round == 0) {
+                report("decoder busy mime=$mime size=${width}x$height; retrying after settle")
+                runCatching { Thread.sleep(DECODER_SETTLE_MS) }
+            }
         }
         if (next == null) {
             report("decoder configuration failed mime=$mime size=${width}x$height")
@@ -1625,6 +1637,8 @@ private class VideoDecoder(
 
     private companion object {
         const val TAG = "xcertplay-usb"
+        /** Let the other streams' decoders finish allocating before the retry round. */
+        const val DECODER_SETTLE_MS = 800L
         const val MAX_INPUT_SIZE = 8 * 1024 * 1024
         const val INPUT_TIMEOUT_US = 10_000L
         const val MAX_FRAME_AGE_NS = 250_000_000L
