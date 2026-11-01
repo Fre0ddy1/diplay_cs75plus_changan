@@ -144,6 +144,15 @@ class IncallMusicRhythm(
             stop("switch off")
             return@Runnable
         }
+        // A2DP present = the phone can put music on the car's Bluetooth player. Handing a session
+        // over in that state makes iOS re-route and tear the CarPlay media stream down 5-8 s later
+        // (field 2026-11-01 12:13 and 12:14, five to eight seconds after every hand-over, with the
+        // audio-focus switch on and off alike). Nothing is touched in that case: the driver keeps
+        // his music, and the lamps simply do not follow.
+        if (bluetoothMediaOutputPresent()) {
+            log("Ambient: car Bluetooth media is enabled, not handing over (it would cut the music)")
+            return@Runnable
+        }
         Thread {
             val peak = measureSpectrumPeak(session)
             handler.post {
@@ -157,6 +166,18 @@ class IncallMusicRhythm(
             }
         }.start()
     }
+
+    /**
+     * True when the phone has an A2DP output to play music on.
+     *
+     * Asked of the output device list rather than isBluetoothA2dpOn(): the latter is false while
+     * nothing is streaming, which is precisely the state this guard has to catch.
+     */
+    private fun bluetoothMediaOutputPresent(): Boolean = runCatching {
+        val manager = context.getSystemService(android.media.AudioManager::class.java)
+        manager?.getDevices(android.media.AudioManager.GET_DEVICES_OUTPUTS)
+            ?.any { it.type == android.media.AudioDeviceInfo.TYPE_BLUETOOTH_A2DP } == true
+    }.getOrDefault(false)
 
     /**
      * Loudest waveform sample of [sessionId] over ~700 ms, 0 when nothing is captured.
