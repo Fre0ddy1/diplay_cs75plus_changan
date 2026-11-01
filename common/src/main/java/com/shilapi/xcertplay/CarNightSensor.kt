@@ -23,42 +23,84 @@ internal class CarNightSensor(
     private var car: Any? = null
     private var sensorManager: Any? = null
     private var listener: Any? = null
+    private var connection: Any? = null
+    private var connecting = false
+    private var connected = false
     private var lastNight: Boolean? = null
     /** Sensor callbacks arrive on a binder thread; the night-mode controller touches UI. */
     private val main = android.os.Handler(android.os.Looper.getMainLooper())
 
     fun start() {
-        if (sensorManager != null) return
+        if (car != null || connecting) return
+        connecting = true
         runCatching {
             val carClass = Class.forName("android.car.Car")
-            car = carClass.getMethod("createCar", android.content.Context::class.java)
-                .invoke(null, context)
-            val manager = carClass.getMethod("getSensorManager").invoke(car) ?: return
+            val connectionClass = Class.forName("android.content.ServiceConnection")
+            // This head unit's android.car (Android 9) only has the two- and three-argument
+            // createCar; the one-argument overload arrived later. Car.createCar(context) threw
+            // NoSuchMethodException on every session (field 2026-11-01 16:40).
+            val connection = java.lang.reflect.Proxy.newProxyInstance(
+                connectionClass.classLoader,
+                arrayOf(connectionClass),
+            ) { _, method, args ->
+                when (method.name) {
+                    "onServiceConnected" -> {
+                        connected = true
+                        attach(carClass)
+                    }
+                    "onServiceDisconnected" -> {
+                        connected = false
+                        log("Night: car service disconnected")
+                    }
+                }
+                null
+            }
+            this.connection = connection
+            val car = carClass.getMethod(
+                "createCar",
+                android.content.Context::class.java,
+                connectionClass,
+            ).invoke(null, context, connection)
+            this.car = car
+            log("Night: car created")
+            // createCar is asynchronous; if the service is already up, attach now instead of
+            // waiting for a callback that may have raced past us.
+            runCatching {
+                val ready = carClass.getMethod("isConnected").invoke(car) as? Boolean
+                if (ready == true) attach(carClass)
+            }
+        }.onFailure {
+            connecting = false
+            log("Night: car unavailable ${it.javaClass.simpleName}: ${it.message}")
+        }
+    }
+
+    /** getCarManager("sensor") - there is no getSensorManager() in this android.car build. */
+    private fun attach(carClass: Class<*>) {
+        if (sensorManager != null) return
+        runCatching {
+            val car = this.car ?: return
+            val manager = carClass.getMethod("getCarManager", String::class.java)
+                .invoke(car, "sensor") ?: return
             sensorManager = manager
             val managerClass = manager.javaClass
-            val listenerClass = Class.forName("android.car.hardware.CarSensorManager\$CarSensorEventListener")
+            val listenerClass = Class.forName("android.car.hardware.CarSensorManager\$OnSensorChangedListener")
             val callback = java.lang.reflect.Proxy.newProxyInstance(
                 listenerClass.classLoader,
                 arrayOf(listenerClass),
             ) { _, method, args ->
                 if (method.name == "onSensorChanged") {
-                    val event = args?.firstOrNull() ?: return@newProxyInstance null
-                    handleEvent(event)
+                    args?.firstOrNull()?.let(::handleEvent)
                 }
                 null
             }
             listener = callback
-            val registered = managerClass.getMethod(
+            managerClass.getMethod(
                 "registerListener",
                 listenerClass,
                 Int::class.javaPrimitiveType,
                 Int::class.javaPrimitiveType,
-            ).invoke(manager, callback, SENSOR_TYPE_NIGHT, 0) as? Int
-            if (registered != null && registered <= 0) {
-                log("Night: sensor rejected, registerListener=$registered")
-                return
-            }
-            // Report the current value at once so a session started after dark is not stuck.
+            ).invoke(manager, callback, SENSOR_TYPE_NIGHT, 0)
             runCatching {
                 val event = managerClass.getMethod("getLatestSensorEvent", Int::class.javaPrimitiveType)
                     .invoke(manager, SENSOR_TYPE_NIGHT)
@@ -66,23 +108,27 @@ internal class CarNightSensor(
             }
             log("Night: sensor registered")
         }.onFailure {
-            log("Night: sensor unavailable ${it.javaClass.simpleName}: ${it.message}")
+            log("Night: sensor attach failed ${it.javaClass.simpleName}: ${it.message}")
         }
     }
 
     fun stop() {
-        val manager = sensorManager ?: return
-        runCatching {
-            manager.javaClass.getMethod(
-                "unregisterListener",
-                Class.forName("android.car.hardware.CarSensorManager\$CarSensorEventListener"),
-            ).invoke(manager, listener)
+        val manager = sensorManager
+        if (manager != null) {
+            runCatching {
+                manager.javaClass.getMethod(
+                    "unregisterListener",
+                    Class.forName("android.car.hardware.CarSensorManager\$OnSensorChangedListener"),
+                ).invoke(manager, listener)
+            }
         }
         sensorManager = null
         listener = null
-        // Car.createCar hands out a framework client; release it or it keeps a binder alive.
         runCatching { car?.javaClass?.getMethod("disconnect")?.invoke(car) }
         car = null
+        connection = null
+        connected = false
+        connecting = false
     }
 
     /**
