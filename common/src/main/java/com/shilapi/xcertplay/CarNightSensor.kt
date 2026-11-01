@@ -23,6 +23,8 @@ internal class CarNightSensor(
     private var sensorManager: Any? = null
     private var listener: Any? = null
     private var lastNight: Boolean? = null
+    /** Sensor callbacks arrive on a binder thread; the night-mode controller touches UI. */
+    private val main = android.os.Handler(android.os.Looper.getMainLooper())
 
     fun start() {
         if (sensorManager != null) return
@@ -45,12 +47,16 @@ internal class CarNightSensor(
                 null
             }
             listener = callback
-            managerClass.getMethod(
+            val registered = managerClass.getMethod(
                 "registerListener",
                 listenerClass,
                 Int::class.javaPrimitiveType,
                 Int::class.javaPrimitiveType,
-            ).invoke(manager, callback, SENSOR_TYPE_NIGHT, 0)
+            ).invoke(manager, callback, SENSOR_TYPE_NIGHT, 0) as? Int
+            if (registered != null && registered <= 0) {
+                android.util.Log.i(TAG, "night sensor rejected, registerListener=$registered")
+                return
+            }
             // Report the current value at once so a session started after dark is not stuck.
             runCatching {
                 val event = managerClass.getMethod("getLatestSensorEvent", Int::class.javaPrimitiveType)
@@ -73,6 +79,8 @@ internal class CarNightSensor(
         }
         sensorManager = null
         listener = null
+        // Car.createCar hands out a framework client; release it or it keeps a binder alive.
+        runCatching { car?.javaClass?.getMethod("disconnect")?.invoke(car) }
         car = null
     }
 
@@ -85,6 +93,6 @@ internal class CarNightSensor(
         if (lastNight == night) return
         lastNight = night
         android.util.Log.i(TAG, "car night=$night")
-        onNight(night)
+        main.post { onNight(night) }
     }
 }
