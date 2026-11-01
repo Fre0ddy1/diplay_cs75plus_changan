@@ -136,23 +136,25 @@ internal class CarNightSensor(
     }
 
     /**
-     * CarSensorEvent carries a NightData payload. Its field is `isNightMode` (taken from the head
-     * unit's own android.car jar), and it is reached through getNightData(out) rather than a field
-     * read - reading a `nightData` field silently returned null on every event, which is why the
-     * headlights changed nothing (field 2026-11-01 15:49).
+     * CarSensorEvent.intValues[0] for SENSOR_TYPE_NIGHT: 1 when the panel considers it night.
+     *
+     * Read straight from the public array instead of through NightData: its constructor is private
+     * (only CarSensorEvent may build one through a synthetic accessor), so reflection had to bail
+     * out with InvocationTargetException and never produced a value (field 2026-11-01 17:02).
+     * getNightData() copies the same intValues[0] into NightData.isNightMode, so this is the same
+     * reading one step earlier.
      */
     private fun handleEvent(event: Any) {
         val night = runCatching {
-            val dataClass = Class.forName("android.car.hardware.CarSensorEvent\$NightData")
-            val out = dataClass.getDeclaredConstructor().newInstance()
-            event.javaClass.getMethod("getNightData", dataClass).invoke(event, out)
-            dataClass.getField("isNightMode").getBoolean(out)
+            val values = event.javaClass.getField("intValues").get(event) as? IntArray
+            if (values == null || values.isEmpty()) return
+            values[0] != 0
         }.onFailure {
-            log("Night: event parse failed ${it.javaClass.simpleName}: ${it.message}")
+            log("Night: event parse failed " + it.javaClass.simpleName + ": " + it.message)
         }.getOrNull() ?: return
         if (lastNight == night) return
         lastNight = night
-        log("Night: car night=$night")
+        log("Night: car night=" + night)
         main.post { onNight(night) }
     }
 }
