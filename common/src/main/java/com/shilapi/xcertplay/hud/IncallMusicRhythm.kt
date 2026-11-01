@@ -309,8 +309,7 @@ class IncallMusicRhythm(
             log("Ambient: media stopped -> play status $PAUSED accepted=$stopped")
             // iOS tears stream 102 down when music pauses, so this session is dead. Leaving the
             // manager pointing at it means it keeps reading an empty spectrum and the lamps go
-            // dark (field 2026-11-01 12:26). Handing the switch back returns them to the car's own
-            // static colour - the closest thing to "rhythm paused" this service offers.
+            // dark. Handing the switch back returns them to the car's own static colour.
             if (lastLoggedSession != NONE && !switchSuspended) {
                 val off = call(TX_RHYTHM_ON) { it.writeInt(0) }
                 switchSuspended = off
@@ -318,26 +317,19 @@ class IncallMusicRhythm(
             }
             return
         }
-        if (switchSuspended) {
-            handSession(sessionId)
-            val back = call(TX_RHYTHM_ON) { it.writeInt(1) }
-            switchSuspended = !back
-            log("Ambient: rhythm resumed after pause -> $back")
-            val playing = call(TX_PLAY_STATUS) { it.writeInt(PLAYING) }
-            log("Ambient: play status $PLAYING accepted=$playing")
-            return
-        }
-        val switchOn = readSwitchState()
-        if (switchOn == false) {
-            handSession(sessionId)
-            val on = call(TX_RHYTHM_ON) { it.writeInt(1) }
-            ownsSwitch = on
-            log("Ambient: rhythm on (was off) -> $on")
-        }
+        // Re-arm on every session start. switchOff releases the manager's Visualizer and switchOn
+        // re-creates it with the session it now holds, which is the only operation that provably
+        // re-initialises it - the same pair the driver performs by hand when the lamps stop
+        // following. Handing an id alone cannot retry: the manager skips it while its stored id is
+        // unchanged, even when the Visualizer behind that id has already died.
+        call(TX_RHYTHM_ON) { it.writeInt(0) }
         handSession(sessionId)
-        // 2 = playing is the ONLY value that starts the spectrum loop. The manager's
-        // onPlayingMusic() stops everything for any other value, and 1 is its "not playing"
-        // default - which is what this client used to send (field 2026-11-01 09:57).
+        val on = call(TX_RHYTHM_ON) { it.writeInt(1) }
+        ownsSwitch = on
+        switchSuspended = false
+        log("Ambient: rhythm re-armed with session $sessionId -> $on")
+        // 2 = playing is the ONLY value that starts the spectrum loop; anything else stops it and
+        // 1 is the service's own default.
         val playing = call(TX_PLAY_STATUS) { it.writeInt(PLAYING) }
         log("Ambient: play status $PLAYING accepted=$playing")
         startReconcile()
@@ -374,14 +366,11 @@ class IncallMusicRhythm(
                 ownsSwitch = on
                 log("Ambient: manager switch was off, turned on -> $on")
             }
-            // The manager only re-inits its Visualizer when the id it holds differs from the one
-            // it was given, so the same id is re-sent now and then to retry a failed init.
-            if (ticks % 5 == 0) {
-                val handed = call(TX_AUDIO_SESSION) { it.writeInt(session) }
-                log("Ambient: re-handed session $session -> $handed")
-            }
+            // A repeat of the same id is a no-op inside the manager, so the only useful repair
+            // here is the switch and the play status; a dead Visualizer needs a full re-arm, which
+            // happens on the next session start.
             val playing = call(TX_PLAY_STATUS) { it.writeInt(PLAYING) }
-            if (ticks % 5 == 0) log("Ambient: play status $PLAYING accepted=$playing")
+            if (ticks % 10 == 0) log("Ambient: play status $PLAYING accepted=$playing")
             handler.postDelayed(this, RECONCILE_MS)
         }
     }
