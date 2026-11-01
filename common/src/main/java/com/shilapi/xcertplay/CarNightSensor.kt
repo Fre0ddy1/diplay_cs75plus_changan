@@ -62,7 +62,11 @@ internal class CarNightSensor(
                 connectionClass,
             ).invoke(null, context, connection)
             this.car = car
-            log("Night: car created")
+            // createCar only builds the client; connect() is what starts the binding. The head
+            // unit's own CarAudioManagerUtil calls createCar(...) then connect(), and the manager
+            // is obtained in onServiceConnected.
+            carClass.getMethod("connect").invoke(car)
+            log("Night: car connecting")
             // createCar is asynchronous; if the service is already up, attach now instead of
             // waiting for a callback that may have raced past us.
             runCatching {
