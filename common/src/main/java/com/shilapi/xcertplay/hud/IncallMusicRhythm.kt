@@ -51,6 +51,8 @@ class IncallMusicRhythm(
          */
         private const val PLAYING = 2
         private const val PAUSED = 0
+        /** The sink's prebuffer (startMs ~1000) must be over before the Visualizer can capture. */
+        private const val HANDOFF_DELAY_MS = 1_500L
         /** No session queued. */
         private const val NONE = -1
         /** The session to hand over: 0 means "media stopped". */
@@ -70,7 +72,8 @@ class IncallMusicRhythm(
     private var binding = false
     private var bound = false
     private var pendingSession = NONE
-    private var active = false
+    /** True only when this client turned the car's rhythm switch on, so stopping can put it back. */
+    private var ownsSwitch = false
     private var lastLoggedSession = NONE
     /** Last session the sink reported, kept even while the switch is off. */
     @Volatile private var lastSessionId = 0
@@ -87,7 +90,7 @@ class IncallMusicRhythm(
             // Read the manager's own switch state: it is the one call whose answer cannot be a
             // hollow "true" from a stub, so the log proves which object we are talking to.
             if (binder != null) {
-                log("Ambient: manager switch state=${call(TX_GET_SWITCH) { }}")
+                log("Ambient: manager switch state=${readSwitchState()}")
             }
             pendingSession.takeIf { it != NONE }?.let(::applySession)
         }
@@ -104,9 +107,10 @@ class IncallMusicRhythm(
      */
     fun onMediaTrack(sessionId: Int) {
         lastSessionId = sessionId
+        handler.removeCallbacks(handoff)
         handler.post {
             if (!AirPlayPersistence.loadAmbientRhythmEnabled(context)) {
-                if (active) stop("switch off")
+                stop("switch off")
                 return@post
             }
             if (sessionId <= 0) {
@@ -114,9 +118,23 @@ class IncallMusicRhythm(
                 if (service != null) applySession(STOPPED)
                 return@post
             }
-            pendingSession = sessionId
-            if (service != null) applySession(sessionId) else bind()
+            // Bind now, hand over later: the sink prebuffers for startMs (~1 s) before the first
+            // PCM write, and a Visualizer attached to a session that is not playing yet captures
+            // nothing - which is a lamp that goes dark instead of dancing.
+            if (service == null) bind()
+            handler.postDelayed(handoff, HANDOFF_DELAY_MS)
         }
+    }
+
+    /** Hands over whatever session is live once the track has actually started playing. */
+    private val handoff = Runnable {
+        val session = lastSessionId
+        if (session <= 0) return@Runnable
+        if (!AirPlayPersistence.loadAmbientRhythmEnabled(context)) {
+            stop("switch off")
+            return@Runnable
+        }
+        if (service != null) applySession(session) else bind()
     }
 
     /**
@@ -168,11 +186,19 @@ class IncallMusicRhythm(
     }
 
     private fun stop(reason: String) {
-        if (service != null && active) {
-            val off = call(TX_RHYTHM_ON) { it.writeInt(0) }
-            log("Ambient: rhythm off ($reason) -> $off")
+        // Stop the spectrum loop, but leave the car's own switch exactly as we found it. Turning it
+        // off here took the driver's setting away with us: his menu still showed music rhythm on
+        // while the manager held "1" (off), so neither CarPlay nor the car's own player lit up
+        // until he toggled the menu again (field 2026-11-01 11:12-11:15).
+        if (service != null) {
+            val stopped = call(TX_PLAY_STATUS) { it.writeInt(PAUSED) }
+            log("Ambient: loop stopped ($reason) -> play status $PAUSED accepted=$stopped")
+            if (ownsSwitch) {
+                val off = call(TX_RHYTHM_ON) { it.writeInt(0) }
+                log("Ambient: rhythm off (we turned it on) -> $off")
+            }
         }
-        active = false
+        ownsSwitch = false
         pendingSession = NONE
         if (bound) {
             runCatching { context.unbindService(connection) }
@@ -184,10 +210,12 @@ class IncallMusicRhythm(
     }
 
     /**
-     * Hands one session to the car: rhythm on, then the session, then the play state. The order
-     * matters on this service - switchOn is what creates the Visualizer holder, and a session id
-     * sent before it is dropped (observed ordering in the car's own client: switch, session,
-     * status).
+     * Hands one session to the car.
+     *
+     * The manager's switch is the driver's setting and this client must not flip it: it is read
+     * first, and only turned on when it was off - in which case we remember that we were the ones
+     * who turned it on, so stopping can put it back. The session is handed before the switch so
+     * that switchOn's own init call already sees a valid session.
      */
     private fun applySession(sessionId: Int) {
         pendingSession = NONE
@@ -196,22 +224,56 @@ class IncallMusicRhythm(
             log("Ambient: media stopped -> play status $PAUSED accepted=$stopped")
             return
         }
-        if (!active) {
+        val switchOn = readSwitchState()
+        if (switchOn == false) {
+            handSession(sessionId)
             val on = call(TX_RHYTHM_ON) { it.writeInt(1) }
-            log("Ambient: rhythm on -> $on")
-            active = on
+            ownsSwitch = on
+            log("Ambient: rhythm on (was off) -> $on")
         }
-        if (sessionId != lastLoggedSession) {
-            val handed = call(TX_AUDIO_SESSION) { it.writeInt(sessionId) }
-            log("Ambient: audio session $sessionId -> $handed")
-            lastLoggedSession = sessionId
-        }
+        handSession(sessionId)
         // 2 = playing is the ONLY value that starts the spectrum loop. The manager's
         // onPlayingMusic() stops everything for any other value, and 1 is its "not playing"
-        // default - which is what this client used to send (field 2026-11-01 09:57: the call was
-        // accepted and nothing else ever happened).
+        // default - which is what this client used to send (field 2026-11-01 09:57).
         val playing = call(TX_PLAY_STATUS) { it.writeInt(PLAYING) }
         log("Ambient: play status $PLAYING accepted=$playing")
+    }
+
+    /** Sends the session id once per change; the manager ignores an id it already holds. */
+    private fun handSession(sessionId: Int) {
+        if (sessionId == lastLoggedSession) return
+        val handed = call(TX_AUDIO_SESSION) { it.writeInt(sessionId) }
+        log("Ambient: audio session $sessionId -> $handed")
+        lastLoggedSession = sessionId
+    }
+
+    /**
+     * The manager's own switch state, or null when the read itself failed. A read is the only call
+     * whose answer cannot be a hollow "true" from a stub, so it doubles as the probe that proves
+     * which object this client is bound to.
+     */
+    private fun readSwitchState(): Boolean? {
+        val binder = service ?: return null
+        val data = Parcel.obtain()
+        val reply = Parcel.obtain()
+        return try {
+            data.writeInterfaceToken(DESCRIPTOR)
+            if (!binder.transact(TX_GET_SWITCH, data, reply, 0)) {
+                null
+            } else {
+                reply.readException()
+                reply.readInt() != 0
+            }
+        } catch (error: Exception) {
+            log(
+                "Ambient: switch state read failed " +
+                    "${error.javaClass.simpleName}: ${error.message}",
+            )
+            null
+        } finally {
+            reply.recycle()
+            data.recycle()
+        }
     }
 
     private fun call(transaction: Int, write: (Parcel) -> Unit): Boolean {
