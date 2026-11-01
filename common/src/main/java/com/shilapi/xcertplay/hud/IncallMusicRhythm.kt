@@ -126,7 +126,15 @@ class IncallMusicRhythm(
         }
     }
 
-    /** Hands over whatever session is live once the track has actually started playing. */
+    /**
+     * Hands over whatever session is live once the track has actually started playing.
+     *
+     * Before touching the car it measures OUR OWN session: a Visualizer is created on it for a
+     * fraction of a second and the loudest waveform sample is taken. If that is zero, this
+     * platform does not expose our playback to a session Visualizer, the car would only be told
+     * "here is a session that never produces a spectrum" - which is exactly the dashboard that
+     * went dark and stayed dark until the menu was toggled (field 2026-11-01 11:36).
+     */
     private val handoff = Runnable {
         val session = lastSessionId
         if (session <= 0) return@Runnable
@@ -134,7 +142,69 @@ class IncallMusicRhythm(
             stop("switch off")
             return@Runnable
         }
-        if (service != null) applySession(session) else bind()
+        Thread {
+            val peak = measureSpectrumPeak(session)
+            handler.post {
+                if (session != lastSessionId) return@post
+                if (peak <= 0) {
+                    log("Ambient: our session yields no spectrum (peak=0), car lights untouched")
+                    return@post
+                }
+                log("Ambient: our session spectrum peak=$peak, handing it over")
+                if (service != null) applySession(session) else bind()
+            }
+        }.start()
+    }
+
+    /**
+     * Loudest waveform sample of [sessionId] over ~700 ms, 0 when nothing is captured.
+     *
+     * Runs on a worker thread: Visualizer construction and enablement are synchronous and the
+     * capture only fills in after a few callbacks.
+     */
+    private fun measureSpectrumPeak(sessionId: Int): Int {
+        var visualizer: android.media.audiofx.Visualizer? = null
+        val peak = java.util.concurrent.atomic.AtomicInteger(0)
+        return try {
+            visualizer = android.media.audiofx.Visualizer(sessionId)
+            val range = android.media.audiofx.Visualizer.getCaptureSizeRange()
+            visualizer.setCaptureSize(range[0])
+            visualizer.setDataCaptureListener(
+                object : android.media.audiofx.Visualizer.OnDataCaptureListener {
+                    override fun onWaveFormDataCapture(
+                        v: android.media.audiofx.Visualizer?,
+                        waveform: ByteArray?,
+                        samplingRate: Int,
+                    ) {
+                        waveform ?: return
+                        for (b in waveform) {
+                            val level = Math.abs(b.toInt() - 128)
+                            if (level > peak.get()) peak.set(level)
+                        }
+                    }
+
+                    override fun onFftDataCapture(
+                        v: android.media.audiofx.Visualizer?,
+                        fft: ByteArray?,
+                        samplingRate: Int,
+                    ) = Unit
+                },
+                android.media.audiofx.Visualizer.getMaxCaptureRate() / 2,
+                true,
+                false,
+            )
+            visualizer.setEnabled(true)
+            Thread.sleep(700)
+            peak.get()
+        } catch (error: Throwable) {
+            log("Ambient: spectrum probe failed ${error.javaClass.simpleName}: ${error.message}")
+            0
+        } finally {
+            runCatching {
+                visualizer?.setEnabled(false)
+                visualizer?.release()
+            }
+        }
     }
 
     /**
