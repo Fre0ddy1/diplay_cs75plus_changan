@@ -21,6 +21,7 @@ import com.shilapi.xcertplay.media.CarPlayNowPlaying
 import com.shilapi.xcertplay.orchestration.CarPlayController
 import java.util.concurrent.Executors
 import java.util.concurrent.Executor
+import com.freddyq.diplay.customization.VehicleCustomizations
 
 /**
  * Steering-wheel and other hardware media buttons for CarPlay.
@@ -65,6 +66,8 @@ internal object CarPlayMediaKeys {
     private var artwork: Bitmap? = null
     private var artworkListener: ((Bitmap?) -> Unit)? = null
     private val artworkCache = LinkedHashMap<Int, Bitmap?>()
+    private var customizationMediaOwner: Any? = null
+    private val customizationMedia = PhoneMediaSnapshotAdapter()
 
     @Synchronized
     fun attach(context: Context, next: CarPlayController) {
@@ -74,6 +77,7 @@ internal object CarPlayMediaKeys {
         }
         appContext = context.applicationContext
         controller = next
+        ensureCustomizationMediaOwnerLocked()
         next.playbackListener = { playing -> onIphonePlaying(next, playing) }
         next.nowPlayingListener = { update -> onNowPlayingChanged(next, update) }
         next.artworkListener = { id, bytes -> onArtworkChanged(next, id, bytes) }
@@ -109,6 +113,7 @@ internal object CarPlayMediaKeys {
     fun onPhoneSessionStarted() {
         mainAudioOwner = CarPlayAudioOwner.UNKNOWN
         val context = appContext ?: return
+        ensureCustomizationMediaOwnerLocked()
         if (controller != null && session == null) start(context)
     }
 
@@ -130,6 +135,7 @@ internal object CarPlayMediaKeys {
             transientFocusInterrupted = false
         } else if (mediaAudioActive && !previous.allowsMedia) regainFocusLocked()
         report("mainAudio owner=$owner streamActive=$mediaAudioActive focusHeld=$focusHeld")
+        publishCustomizationMediaLocked()
     }
 
     /** The iPhone started or stopped playing; may run on any thread. */
@@ -146,9 +152,10 @@ internal object CarPlayMediaKeys {
 
     /** Publishes the iPhone's retained metadata through Android's system media session. */
     private fun onNowPlayingChanged(expected: CarPlayController, update: CarPlayNowPlaying) {
+        val generation = synchronized(this) { audioCallbackGeneration }
         mainHandler.post {
             synchronized(this) {
-                if (controller !== expected) return@synchronized
+                if (controller !== expected || generation != audioCallbackGeneration) return@synchronized
                 val previousArtwork = artwork
                 if (nowPlaying.artworkTransferId != update.artworkTransferId) {
                     artwork = update.artworkTransferId?.let { id ->
@@ -164,6 +171,8 @@ internal object CarPlayMediaKeys {
                 // minutes. The position goes in the playback state.
                 if (metadataChanged) session?.setMetadata(androidMetadata(update, artwork))
                 publishPlaybackStateLocked()
+                publishCustomizationMediaLocked()
+                if (metadataChanged || artwork !== previousArtwork) publishCustomizationArtworkLocked()
             }
         }
     }
@@ -186,6 +195,7 @@ internal object CarPlayMediaKeys {
         if (nowPlaying.artworkTransferId == id) {
             artwork = decoded
             session?.setMetadata(androidMetadata(nowPlaying, artwork))
+            publishCustomizationArtworkLocked()
             val notify = artworkListener
             if (notify != null) mainHandler.post { notify(decoded) } else Unit
         }
@@ -221,6 +231,7 @@ internal object CarPlayMediaKeys {
         focusHeld = audio.requestAudioFocus(request) == AudioManager.AUDIOFOCUS_REQUEST_GRANTED
         if (focusHeld) transientFocusInterrupted = false
         report("Android media focus regained=$focusHeld mainAudio=$mainAudioOwner streamActive=$mediaAudioActive")
+        publishCustomizationMediaLocked()
     }
 
     private fun updateLocked(active: Boolean) {
@@ -230,6 +241,7 @@ internal object CarPlayMediaKeys {
         if (active) userRecoveryFocus = false
         if (active && session == null) start(context) else if (active) regainFocusLocked()
         publishPlaybackStateLocked()
+        publishCustomizationMediaLocked()
     }
 
     private fun start(context: Context) {
@@ -266,6 +278,7 @@ internal object CarPlayMediaKeys {
                             transientFocusInterrupted = false
                         }
                     }
+                    publishCustomizationMediaLocked()
                 }
             }, mainHandler)
             .build()
@@ -284,6 +297,9 @@ internal object CarPlayMediaKeys {
     }
 
     private fun releaseLocked() {
+        customizationMediaOwner?.let(VehicleCustomizations::onMediaSessionEnded)
+        customizationMediaOwner = null
+        customizationMedia.clear()
         audioCallbackGeneration++
         mediaIntentSerial++
         mediaPreparationGeneration++
@@ -305,6 +321,31 @@ internal object CarPlayMediaKeys {
         focusRequest = null
         focusHeld = false
         transientFocusInterrupted = false
+    }
+
+    private fun ensureCustomizationMediaOwnerLocked() {
+        val context = appContext ?: return
+        if (controller == null || customizationMediaOwner != null) return
+        val owner = Any()
+        customizationMediaOwner = owner
+        VehicleCustomizations.onMediaSessionStarted(context, owner)
+    }
+
+    private fun publishCustomizationMediaLocked() {
+        val context = appContext ?: return
+        val owner = customizationMediaOwner ?: return
+        val snapshot = customizationMedia.update(nowPlaying,
+            focusHeld && !transientFocusInterrupted && mainAudioOwner.allowsMedia,
+            SystemClock.elapsedRealtime())
+        VehicleCustomizations.onMediaSnapshot(context, owner, snapshot)
+    }
+
+    private fun publishCustomizationArtworkLocked() {
+        val context = appContext ?: return
+        val owner = customizationMediaOwner ?: return
+        val item = com.freddyq.diplay.customization.MediaItem(nowPlaying.title, nowPlaying.artist,
+            nowPlaying.album, nowPlaying.durationMillis, nowPlaying.artworkTransferId)
+        VehicleCustomizations.onMediaArtwork(context, owner, item, artwork)
     }
 
     private fun publishPlaybackStateLocked() {

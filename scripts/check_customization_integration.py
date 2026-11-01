@@ -81,6 +81,18 @@ checks['common/src/main/java/com/shilapi/xcertplay/InCallClusterBridge.kt'] += [
 checks['customizations/changan-projection/src/main/java/com/freddyq/diplay/changan/projection/ChanganProjectionCustomization.kt'] += ['override fun onProjectionLayoutConfirmed(']
 checks['common/src/main/java/com/shilapi/xcertplay/InCallClusterBridge.kt'] += ['fun invalidateProjectionChannel()', 'projectionDisplayAvailable', 'remoteServiceEpoch++']
 failures=[]
+checks['common/build.gradle.kts'] += ['implementation(project(":changan-media"))']
+checks['settings.gradle.kts'] += ['include(":changan-media")', 'customizations/changan-media']
+checks['common/src/main/java/com/shilapi/xcertplay/CarPlayMediaKeys.kt'] += [
+    'VehicleCustomizations.onMediaSessionStarted(context, owner)',
+    'VehicleCustomizations.onMediaSnapshot(context, owner, snapshot)',
+    'VehicleCustomizations.onMediaArtwork(context, owner, item, artwork)',
+    'VehicleCustomizations::onMediaSessionEnded',
+]
+media_manifest=ET.parse(ROOT/'customizations/changan-media/src/main/AndroidManifest.xml').getroot()
+media_provider=media_manifest.find('application/provider')
+if media_provider is None or media_provider.get('{http://schemas.android.com/apk/res/android}exported')!='false' or media_provider.get('{http://schemas.android.com/apk/res/android}name')!='com.freddyq.diplay.changan.media.ChanganMediaInitializer':
+    failures.append('Missing private native media initializer provider')
 checks['common/src/main/java/com/shilapi/xcertplay/InCallClusterBridge.kt'] += ['private fun startsFullscreen()', '!keepFullscreen && !startsFullscreen()']
 checks['customizations/changan-projection/src/main/java/com/freddyq/diplay/changan/projection/ChanganProjectionCustomization.kt'] += ['override fun initialProjectionLayout(']
 checks['customizations/hotspot-startup/src/main/java/com/freddyq/diplay/hotspot/HotspotStartupCustomization.kt'] += ['override fun platformHotspotCredentials(']

@@ -1,6 +1,7 @@
 package com.freddyq.diplay.customization
 
 import android.content.Context
+import android.graphics.Bitmap
 import android.util.Log
 import java.util.concurrent.CopyOnWriteArrayList
 
@@ -21,6 +22,11 @@ interface VehicleCustomization {
     fun mediaKeyRoute(context: Context): MediaKeyRoute? = null
     fun onWirelessAudioHandoff(context: Context, connection: WirelessAudioConnection) {}
     fun onWirelessAudioEnded(owner: Any) {}
+    fun onMediaSessionStarted(context: Context, owner: Any) {}
+    fun onMediaSnapshot(context: Context, owner: Any, snapshot: MediaSnapshot) {}
+    /** Bitmap is borrowed until this callback returns; asynchronous consumers must copy it. */
+    fun onMediaArtwork(context: Context, owner: Any, item: MediaItem, bitmap: Bitmap?) {}
+    fun onMediaSessionEnded(owner: Any) {}
     /** Return true only when taking responsibility for completing this explicit user request. */
     fun prepareMediaPlayback(context: Context, completed: (Boolean) -> Unit): Boolean = false
     fun onSessionStarted(context: Context) {}
@@ -116,6 +122,13 @@ open class VehicleCustomizationRegistry {
     fun onWirelessAudioHandoff(context: Context, connection: WirelessAudioConnection) =
         dispatch { it.onWirelessAudioHandoff(context.applicationContext, connection) }
     fun onWirelessAudioEnded(owner: Any) = dispatch { it.onWirelessAudioEnded(owner) }
+    fun onMediaSessionStarted(context: Context, owner: Any) =
+        dispatch { it.onMediaSessionStarted(context.applicationContext, owner) }
+    fun onMediaSnapshot(context: Context, owner: Any, snapshot: MediaSnapshot) =
+        dispatch { it.onMediaSnapshot(context.applicationContext, owner, snapshot) }
+    fun onMediaArtwork(context: Context, owner: Any, item: MediaItem, bitmap: Bitmap?) =
+        dispatch { it.onMediaArtwork(context.applicationContext, owner, item, bitmap) }
+    fun onMediaSessionEnded(owner: Any) = dispatch { it.onMediaSessionEnded(owner) }
     fun prepareMediaPlayback(context: Context, completed: (Boolean) -> Unit): Boolean {
         for (extension in extensions) {
             try {
