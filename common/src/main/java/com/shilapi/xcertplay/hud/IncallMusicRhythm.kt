@@ -5,6 +5,11 @@ import android.content.Context
 import android.content.Intent
 import android.content.ServiceConnection
 import android.graphics.Bitmap
+import android.graphics.Canvas
+import android.graphics.Color
+import android.graphics.LinearGradient
+import android.graphics.Paint
+import android.graphics.Shader
 import android.os.Handler
 import android.os.IBinder
 import android.os.Looper
@@ -13,7 +18,6 @@ import com.shilapi.xcertplay.AirPlayPersistence
 import java.io.File
 import java.io.FileOutputStream
 import java.util.concurrent.Executors
-import kotlin.math.max
 
 /**
  * Drives the head unit's ambient-light music rhythm from CarPlay's music.
@@ -64,9 +68,11 @@ class IncallMusicRhythm(
         private const val TX_LIGHT_STATUS = 9
         /** musicAlbumPicture(String): a file path the service decodes and runs Palette over. */
         private const val TX_ALBUM_PICTURE = 4
-        /** Longest edge the cover is scaled to; the service only samples it for a colour. */
-        private const val COVER_MAX_EDGE = 512
+        /** Square size of the redrawn cover; the service only samples it for a colour. */
+        private const val COVER_SIZE = 512
         private const val COVER_QUALITY = 92
+        /** The car quantises whatever it is given to 24 hues, so we rebuild the picture in one. */
+        private const val HUE_BUCKETS = 24
         /** 2 = playing; only this value starts the manager's spectrum loop. */
         private const val PLAYING = 2
         /** 1 = not playing; anything but 2 stops the loop. */
@@ -164,40 +170,114 @@ class IncallMusicRhythm(
     }
 
     /** Writes the cover where the service can decode it; its own uid reads the path directly. */
-    private fun writeCover(bitmap: Bitmap) {
+    private fun writeCover(artwork: Bitmap) {
         val dir = context.getExternalFilesDir("rhythm") ?: File(context.cacheDir, "rhythm")
         if (!dir.exists() && !dir.mkdirs()) {
             log("Ambient: cover dir unavailable ${dir.absolutePath}")
             return
         }
-        val longest = max(bitmap.width, bitmap.height)
-        val scale = if (longest > COVER_MAX_EDGE) COVER_MAX_EDGE.toFloat() / longest else 1f
-        val scaled = if (scale < 1f) {
-            Bitmap.createScaledBitmap(
-                bitmap,
-                max(1, (bitmap.width * scale).toInt()),
-                max(1, (bitmap.height * scale).toInt()),
-                true,
-            )
-        } else {
-            bitmap
-        }
+        val hue = dominantHue(artwork)
+        val cover = redraw(hue)
         val file = File(dir, "cover_${System.currentTimeMillis()}.jpg")
         try {
             FileOutputStream(file).use {
-                scaled.compress(Bitmap.CompressFormat.JPEG, COVER_QUALITY, it)
+                cover.compress(Bitmap.CompressFormat.JPEG, COVER_QUALITY, it)
             }
             file.setReadable(true, false)
             dir.listFiles { candidate -> candidate.name.startsWith("cover_") && candidate != file }
                 ?.forEach { it.delete() }
             coverPath = file.absolutePath
-            log("Ambient: cover ${file.length()} bytes -> ${file.absolutePath}")
+            log("Ambient: cover hue=${hue.toInt()} ${file.length()} bytes -> ${file.absolutePath}")
             handler.post { pushCover() }
         } catch (error: Exception) {
             log("Ambient: cover write failed ${error.javaClass.simpleName}: ${error.message}")
         } finally {
-            if (scaled !== bitmap) scaled.recycle()
+            cover.recycle()
         }
+    }
+
+    /**
+     * The hue the car would settle on, found the way its own picker does: drop grey, black and
+     * blown-out pixels, weight the rest by S²V, then take the heaviest 15-degree bucket. Handing it
+     * the raw artwork instead often lands further than 100 away from its 64-colour palette, which
+     * makes the service fall back to a fixed default colour.
+     */
+    private fun dominantHue(source: Bitmap): Float {
+        val sample = Bitmap.createScaledBitmap(source, 64, 64, true)
+        val weight = FloatArray(HUE_BUCKETS)
+        val sumR = FloatArray(HUE_BUCKETS)
+        val sumG = FloatArray(HUE_BUCKETS)
+        val sumB = FloatArray(HUE_BUCKETS)
+        val hsv = FloatArray(3)
+        var totalR = 0L
+        var totalG = 0L
+        var totalB = 0L
+        var pixels = 0
+        for (y in 0 until 64) {
+            for (x in 0 until 64) {
+                val pixel = sample.getPixel(x, y)
+                val r = (pixel shr 16) and 0xFF
+                val g = (pixel shr 8) and 0xFF
+                val b = pixel and 0xFF
+                totalR += r
+                totalG += g
+                totalB += b
+                pixels++
+                Color.RGBToHSV(r, g, b, hsv)
+                if (hsv[1] < 0.25f || hsv[2] < 0.12f || hsv[2] > 0.95f) continue
+                val gain = hsv[1] * hsv[1] * hsv[2]
+                val bucket = (hsv[0] / 15f).toInt().coerceIn(0, HUE_BUCKETS - 1)
+                weight[bucket] += gain
+                sumR[bucket] += r * gain
+                sumG[bucket] += g * gain
+                sumB[bucket] += b * gain
+            }
+        }
+        if (sample !== source) sample.recycle()
+        var best = -1
+        var bestWeight = 0f
+        for (i in 0 until HUE_BUCKETS) {
+            if (weight[i] > bestWeight) {
+                bestWeight = weight[i]
+                best = i
+            }
+        }
+        val rgb = if (best >= 0 && bestWeight > 0f) {
+            Color.rgb(
+                (sumR[best] / bestWeight).toInt().coerceIn(0, 255),
+                (sumG[best] / bestWeight).toInt().coerceIn(0, 255),
+                (sumB[best] / bestWeight).toInt().coerceIn(0, 255),
+            )
+        } else {
+            Color.rgb(
+                (totalR / pixels).toInt().coerceIn(0, 255),
+                (totalG / pixels).toInt().coerceIn(0, 255),
+                (totalB / pixels).toInt().coerceIn(0, 255),
+            )
+        }
+        Color.colorToHSV(rgb, hsv)
+        return hsv[0]
+    }
+
+    /** Repaints that one hue as a bright diagonal gradient so the palette match is a sure thing. */
+    private fun redraw(hue: Float): Bitmap {
+        val cover = Bitmap.createBitmap(COVER_SIZE, COVER_SIZE, Bitmap.Config.ARGB_8888)
+        val canvas = Canvas(cover)
+        val from = floatArrayOf(hue, 0.80f, 0.85f)
+        val to = floatArrayOf(hue, 0.95f, 0.98f)
+        val paint = Paint().apply {
+            shader = LinearGradient(
+                0f,
+                0f,
+                COVER_SIZE.toFloat(),
+                COVER_SIZE.toFloat(),
+                Color.HSVToColor(from),
+                Color.HSVToColor(to),
+                Shader.TileMode.CLAMP,
+            )
+        }
+        canvas.drawRect(0f, 0f, COVER_SIZE.toFloat(), COVER_SIZE.toFloat(), paint)
+        return cover
     }
 
     private fun pushCover() {
