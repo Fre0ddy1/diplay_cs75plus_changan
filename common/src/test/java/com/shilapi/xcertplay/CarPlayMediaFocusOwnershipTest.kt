@@ -10,6 +10,7 @@ import org.junit.Assert.*
 import org.junit.Test
 import org.junit.runner.RunWith
 import org.mockito.Mockito.mock
+import org.mockito.Mockito.`when`
 import org.robolectric.RobolectricTestRunner
 import org.robolectric.RuntimeEnvironment
 import org.robolectric.Shadows.shadowOf
@@ -29,6 +30,7 @@ class CarPlayMediaFocusOwnershipTest {
             .onAudioFocusChange(AudioManager.AUDIOFOCUS_LOSS_TRANSIENT)
     }
     private fun startPhoneMedia() {
+        `when`(controller.isPhoneMediaResourceReady()).thenReturn(true)
         CarPlayMediaKeys.attach(app, controller)
         CarPlayMediaKeys.onMainAudioOwner(com.shilapi.xcertplay.airplay.CarPlayAudioOwner.PHONE)
         CarPlayMediaKeys.onMediaAudioChanged(true)
@@ -42,6 +44,7 @@ class CarPlayMediaFocusOwnershipTest {
     @Test fun bluetoothKeyPreferenceKeepsMediaSessionAndFocus() {
         AirPlayPersistence.saveMediaViaCarBluetooth(app, true)
         CarPlayMediaKeys.attach(app, controller)
+        CarPlayMediaKeys.onMainAudioOwner(com.shilapi.xcertplay.airplay.CarPlayAudioOwner.PHONE)
         CarPlayMediaKeys.onMediaAudioChanged(true)
         shadowOf(Looper.getMainLooper()).idle()
         assertNotNull(ReflectionHelpers.getField<Any?>(CarPlayMediaKeys, "session"))
@@ -193,5 +196,32 @@ class CarPlayMediaFocusOwnershipTest {
         transientLoss()
         CarPlayMediaKeys.fromWindow(CarPlayMediaButton.PAUSE)
         assertTrue(ReflectionHelpers.getField<Boolean>(CarPlayMediaKeys, "transientFocusInterrupted"))
+    }
+    @Test fun unknownOwnershipCannotAcquireAndroidFocusFromAStreamStart() {
+        CarPlayMediaKeys.attach(app, controller)
+        CarPlayMediaKeys.onMediaAudioChanged(true); shadowOf(Looper.getMainLooper()).idle()
+        assertFalse(ReflectionHelpers.getField<Boolean>(CarPlayMediaKeys, "focusHeld"))
+    }
+    @Test fun temporaryNativeBorrowKeepsTheFocusListenerForTheReturn() {
+        startPhoneMedia(); transientLoss()
+        val request = ReflectionHelpers.getField<android.media.AudioFocusRequest>(CarPlayMediaKeys, "focusRequest")
+        `when`(controller.hasNativeAudioBorrow()).thenReturn(true)
+        CarPlayMediaKeys.onMainAudioOwner(com.shilapi.xcertplay.airplay.CarPlayAudioOwner.ACCESSORY, true)
+        ReflectionHelpers.callInstanceMethod<AudioManager.OnAudioFocusChangeListener>(request, "getOnAudioFocusChangeListener")
+            .onAudioFocusChange(AudioManager.AUDIOFOCUS_GAIN)
+        assertTrue(ReflectionHelpers.getField<Boolean>(CarPlayMediaKeys, "focusHeld"))
+        CarPlayMediaKeys.onMainAudioOwner(com.shilapi.xcertplay.airplay.CarPlayAudioOwner.PHONE)
+        assertFalse(ReflectionHelpers.getField<Boolean>(CarPlayMediaKeys, "transientFocusInterrupted"))
+    }
+    @Test fun aConfirmedReturnCanRecoverFocusEvenWhenTheOwnerLabelDidNotChange() {
+        startPhoneMedia()
+        ReflectionHelpers.setField(CarPlayMediaKeys, "focusHeld", false)
+        ReflectionHelpers.setField(CarPlayMediaKeys, "transientFocusInterrupted", true)
+        CarPlayMediaKeys.onMainAudioOwner(com.shilapi.xcertplay.airplay.CarPlayAudioOwner.PHONE, false, false)
+        CarPlayMediaKeys.onMediaAudioChanged(true); shadowOf(Looper.getMainLooper()).idle()
+        assertFalse(ReflectionHelpers.getField<Boolean>(CarPlayMediaKeys, "focusHeld"))
+        CarPlayMediaKeys.onMainAudioOwner(com.shilapi.xcertplay.airplay.CarPlayAudioOwner.PHONE, false, true)
+        assertTrue(ReflectionHelpers.getField<Boolean>(CarPlayMediaKeys, "focusHeld"))
+        assertFalse(ReflectionHelpers.getField<Boolean>(CarPlayMediaKeys, "transientFocusInterrupted"))
     }
 }

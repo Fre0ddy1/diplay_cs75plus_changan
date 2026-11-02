@@ -129,6 +129,7 @@ class CarPlayMediaEngine(
         audioCaptures.remove(streamKey)?.close()
         if (pendingMicrophone.remove(streamKey) != null) sink.onMicrophoneStopped(streamId)
         sink.onAudioStopped(streamId)
+        session.phoneManagedAudioStopped(streamId)
 
         // NOTE (2026-10-18, do not repeat): refusing the media SETUP here (`return null` for
         // audioType == "media") is NOT a way to push music onto the head unit's Bluetooth. The
@@ -166,6 +167,7 @@ class CarPlayMediaEngine(
                 override fun onStarted(firstSample: Int) {
                     meta.firstSample = firstSample
                     meta.originNs = System.nanoTime()
+                    session.phoneManagedAudioStarted(streamId)
                     sink.onAudioStarted(streamId, format, firstSample)
                     microphone?.let { sink.onMicrophoneStarted(streamId, it) }
                 }
@@ -343,6 +345,7 @@ class CarPlayMediaEngine(
             audioMeta.remove(key)
             audioCaptures.remove(key)?.close()
             sink.onAudioStopped(streamId)
+            session.phoneManagedAudioStopped(streamId)
             streams.remove(key)?.close()
         }
         if (isScreenStreamType(type)) sink.onScreenStreamActive(type, false)

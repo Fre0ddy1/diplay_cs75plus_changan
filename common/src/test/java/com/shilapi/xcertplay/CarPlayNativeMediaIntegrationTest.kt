@@ -60,7 +60,7 @@ class CarPlayNativeMediaIntegrationTest {
         assertEquals("新连接", snapshots.single().item.title)
     }
     @Test fun transientAndroidFocusLossDoesNotDeselectThePhonesDisplaySource() {
-        ReflectionHelpers.setField(CarPlayMediaKeys, "mainAudioOwner", com.shilapi.xcertplay.airplay.CarPlayAudioOwner.PHONE)
+        CarPlayMediaKeys.onMainAudioOwner(com.shilapi.xcertplay.airplay.CarPlayAudioOwner.PHONE)
         ReflectionHelpers.setField(CarPlayMediaKeys, "focusHeld", true)
         ReflectionHelpers.setField(CarPlayMediaKeys, "transientFocusInterrupted", true)
         update(CarPlayNowPlaying(title = "手机QQ", elapsedMillis = 9000, playing = true))
@@ -69,7 +69,7 @@ class CarPlayNativeMediaIntegrationTest {
         verify(controller, never()).sendMediaButton(anyInt())
     }
     @Test fun nativeAudioOwnerIsRespectedEvenForPausedMetadata() {
-        ReflectionHelpers.setField(CarPlayMediaKeys, "mainAudioOwner", com.shilapi.xcertplay.airplay.CarPlayAudioOwner.ACCESSORY)
+        CarPlayMediaKeys.onMainAudioOwner(com.shilapi.xcertplay.airplay.CarPlayAudioOwner.ACCESSORY)
         update(CarPlayNowPlaying(title = "暂停的手机QQ", playing = false))
         Shadows.shadowOf(Looper.getMainLooper()).idle()
         assertFalse(snapshots.last().sourceSelected)
@@ -77,7 +77,7 @@ class CarPlayNativeMediaIntegrationTest {
         verify(controller, never()).sendMediaButton(anyInt())
     }
     @Test fun permanentAndroidLeaseLossDoesNotRepublishAPausedCardOverTheNativeSource() {
-        ReflectionHelpers.setField(CarPlayMediaKeys, "mainAudioOwner", com.shilapi.xcertplay.airplay.CarPlayAudioOwner.PHONE)
+        CarPlayMediaKeys.onMainAudioOwner(com.shilapi.xcertplay.airplay.CarPlayAudioOwner.PHONE)
         ReflectionHelpers.setField(CarPlayMediaKeys, "focusHeld", false)
         update(CarPlayNowPlaying(title = "原车接管后的暂停音乐", playing = false))
         Shadows.shadowOf(Looper.getMainLooper()).idle()

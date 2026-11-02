@@ -32,6 +32,8 @@ interface AirPlaySessionListener {
     fun onDeviceInfo(session: AirPlaySession, info: AirPlayDeviceInfo) {}
     fun onHostUiRequested(session: AirPlaySession) {}
     fun onCommand(session: AirPlaySession, type: String, params: Map<String, Any?>) {}
+    fun onAudioResourceState(session: AirPlaySession, state: MainAudioResourceState) {}
+    fun onPhoneManagedAudioState(session: AirPlaySession, active: Boolean) {}
     /** Video in car: a playback message on a remote control session (X-Apple-StreamID). */
     fun onRemoteControlMessage(session: AirPlaySession, streamId: Long, message: Map<String, Any?>) {}
     /** Video in car: requestUI "videoplayback:", the iPhone asks the car to show its video player. */
@@ -86,6 +88,37 @@ class AirPlaySession(
     private var eventCseq = 0
     private var pendingNightMode: Boolean? = null
     private var pendingViewAreaIndex: Int? = null
+    private val pendingAudioModes = ArrayDeque<Pair<MainAudioTransfer, (Boolean) -> Unit>>()
+    @Volatile internal var lastMainAudioModes: Map<String, Any?>? = null
+        private set
+    internal fun rememberMainAudioModes(params: Map<String, Any?>) {
+        if (closed.get()) return
+        val parsed = CarPlayAudioResources()
+        if (!parsed.update(params)) return
+        val row = linkedMapOf<String, Any?>("resourceID" to 2, "entity" to parsed.entity)
+        parsed.permanentEntity?.let { row["permanentEntity"] = it }
+        lastMainAudioModes = mapOf("resources" to listOf(row))
+    }
+    private val phoneManagedAudioIds = mutableSetOf<AudioStreamId>()
+    internal fun hasPhoneManagedAudio(): Boolean = synchronized(phoneManagedAudioIds) { phoneManagedAudioIds.isNotEmpty() }
+    internal fun phoneManagedAudioStarted(id: AudioStreamId) {
+        if (closed.get() || id.audioType.lowercase() !in setOf("telephony", "speechrecognition", "alert")) return
+        val changed = synchronized(phoneManagedAudioIds) {
+            val before = phoneManagedAudioIds.isNotEmpty()
+            phoneManagedAudioIds.add(id)
+            before != phoneManagedAudioIds.isNotEmpty()
+        }
+        if (changed && !closed.get()) listener.onPhoneManagedAudioState(this, true)
+    }
+    internal fun phoneManagedAudioStopped(id: AudioStreamId) {
+        if (closed.get()) return
+        val changed = synchronized(phoneManagedAudioIds) {
+            val before = phoneManagedAudioIds.isNotEmpty()
+            phoneManagedAudioIds.remove(id)
+            before != phoneManagedAudioIds.isNotEmpty()
+        }
+        if (changed && !closed.get()) listener.onPhoneManagedAudioState(this, false)
+    }
     private val firstTouchSendLogged = AtomicBoolean(false)
     private val touchSendFailureLogged = AtomicBoolean(false)
     private val ntp = NtpClock()
@@ -130,6 +163,11 @@ class AirPlaySession(
 
     override fun close() {
         if (!closed.compareAndSet(false, true)) return
+        lastMainAudioModes = null
+        synchronized(phoneManagedAudioIds) { phoneManagedAudioIds.clear() }
+        synchronized(eventWriteLock) {
+            while (pendingAudioModes.isNotEmpty()) pendingAudioModes.removeFirst().second(false)
+        }
         safeClose(socket)
         try {
             media.onSessionClosed(this)
@@ -155,6 +193,20 @@ class AirPlaySession(
 
     fun sendCommand(command: Map<String, Any?>): Boolean = synchronized(eventWriteLock) {
         sendCommandLocked(command)
+    }
+
+    /** Deferred until the event channel is ready; preserves BORROW/UNBORROW ordering. */
+    fun changeMainAudio(transfer: MainAudioTransfer, completed: (Boolean) -> Unit) = synchronized(eventWriteLock) {
+        if (closed.get() || pendingAudioModes.size >= 8) { completed(false); return@synchronized }
+        if (eventSocket == null || eventCipher == null) pendingAudioModes.addLast(transfer to completed)
+        else completed(sendCommandLocked(mainAudioModeCommand(transfer)))
+    }
+
+    private fun sendPendingAudioModesLocked() {
+        while (!closed.get() && pendingAudioModes.isNotEmpty()) {
+            val (transfer, completed) = pendingAudioModes.removeFirst()
+            completed(sendCommandLocked(mainAudioModeCommand(transfer)))
+        }
     }
 
     /**
@@ -643,6 +695,7 @@ class AirPlaySession(
         val params = asMap(body["params"]) ?: emptyMap()
         debugLog("airplay command type=$type keys=${params.keys.sorted()}")
         if (type == "modesChanged") {
+            rememberMainAudioModes(params)
             debugLog("airplay modesChanged detail=${compact(params)}")
         }
         val streamId = request.headers["x-apple-streamid"]?.toLongOrNull()
@@ -769,6 +822,7 @@ class AirPlaySession(
             )
             eventCipher = ControlCipher(readKey, writeKey)
             synchronized(eventWriteLock) {
+                sendPendingAudioModesLocked()
                 sendPendingNightModeLocked()
                 sendPendingViewAreaLocked()
             }

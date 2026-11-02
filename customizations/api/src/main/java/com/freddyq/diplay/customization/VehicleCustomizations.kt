@@ -13,6 +13,8 @@ interface VehicleCustomization {
     fun applicationExitUi(): ApplicationExitUi? = null
     fun onManualApplicationLaunch(context: Context) {}
     fun requestApplicationExit(context: Context, control: ApplicationExitControl): Boolean = false
+    /** Asynchronous cleanup before this app's own process is terminated. */
+    fun prepareApplicationExit(context: Context, completed: () -> Unit): Boolean = false
     fun automaticHotspotDefault(context: Context): Boolean? = null
     fun platformHotspotStarter(context: Context): PlatformHotspotStarter? = null
     fun platformHotspotCredentials(context: Context): PlatformHotspotCredentials? = null
@@ -20,6 +22,9 @@ interface VehicleCustomization {
     /** True claims startup hotspot handling; work must be asynchronous. */
     fun onApplicationForeground(context: Context, control: ApplicationForegroundControl): Boolean = false
     fun mediaKeyRoute(context: Context): MediaKeyRoute? = null
+    /** Selected wireless peer before connection setup; not a claim that authentication finished. */
+    fun onBluetoothMediaConnectionStarting(context: Context, connection: WirelessAudioConnection) {}
+    fun onBluetoothMediaConnectionEnded(owner: Any) {}
     fun onWirelessAudioHandoff(context: Context, connection: WirelessAudioConnection) {}
     fun onWirelessAudioEnded(owner: Any) {}
     fun onMediaSessionStarted(context: Context, owner: Any) {}
@@ -115,10 +120,27 @@ open class VehicleCustomizationRegistry {
         return false
     }
 
+    fun prepareApplicationExit(context: Context, completed: () -> Unit) {
+        val remaining = java.util.concurrent.atomic.AtomicInteger(1)
+        fun finished() { if (remaining.decrementAndGet() == 0) completed() }
+        for (extension in extensions) {
+            remaining.incrementAndGet()
+            val once = java.util.concurrent.atomic.AtomicBoolean()
+            val done = { if (once.compareAndSet(false, true)) finished(); Unit }
+            val accepted = runCatching { extension.prepareApplicationExit(context.applicationContext, done) }
+                .onFailure { Log.w(TAG, "${extension.id} exit preparation failed", it) }.getOrDefault(false)
+            if (!accepted) done()
+        }
+        finished()
+    }
+
     fun onSessionStarted(context: Context) {
         if (allowAutomaticStartup(context)) dispatch { it.onSessionStarted(context.applicationContext) }
     }
 
+    fun onBluetoothMediaConnectionStarting(context: Context, connection: WirelessAudioConnection) =
+        dispatch { it.onBluetoothMediaConnectionStarting(context.applicationContext, connection) }
+    fun onBluetoothMediaConnectionEnded(owner: Any) = dispatch { it.onBluetoothMediaConnectionEnded(owner) }
     fun onWirelessAudioHandoff(context: Context, connection: WirelessAudioConnection) =
         dispatch { it.onWirelessAudioHandoff(context.applicationContext, connection) }
     fun onWirelessAudioEnded(owner: Any) = dispatch { it.onWirelessAudioEnded(owner) }

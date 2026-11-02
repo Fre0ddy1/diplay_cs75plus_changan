@@ -30,11 +30,12 @@ internal object DiPlayAppExit {
                 CarPlayBackgroundSession.releaseSettingsHold()
                 VehicleCustomizations.onSessionEnded()
                 com.shilapi.xcertplay.hud.BydNavigationOutputs.endNow()
-                if (CarPlayBackgroundSession.hasSession()) CarPlayBackgroundSession.stop(completed)
+                val restored = { VehicleCustomizations.prepareApplicationExit(activity.applicationContext, completed) }
+                if (CarPlayBackgroundSession.hasSession()) CarPlayBackgroundSession.stop(restored)
                 else {
                     // No owned session: discard queued local work without touching the factory map.
                     InCallClusterBridge.invalidateProjectionChannel()
-                    completed()
+                    restored()
                 }
             }
             override fun removeTasks() {

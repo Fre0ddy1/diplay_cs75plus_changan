@@ -56,8 +56,9 @@ internal object CarPlayMediaKeys {
     private var appContext: Context? = null
     private var mediaAudioActive = false
     private var mainAudioOwner = CarPlayAudioOwner.UNKNOWN
+    private var mainAudioResourceReady = false
     private var mediaIntentSerial = 0L
-    private var mediaPreparationGeneration = 0L
+    private var pendingUserResourceRecovery = false
     private var userRecoveryFocus = false
     private var audioCallbackGeneration = 0L
     private var nowPlaying = CarPlayNowPlaying()
@@ -112,6 +113,7 @@ internal object CarPlayMediaKeys {
     @Synchronized
     fun onPhoneSessionStarted() {
         mainAudioOwner = CarPlayAudioOwner.UNKNOWN
+        mainAudioResourceReady = false
         val context = appContext ?: return
         ensureCustomizationMediaOwnerLocked()
         if (controller != null && session == null) start(context)
@@ -119,21 +121,31 @@ internal object CarPlayMediaKeys {
 
     /** Protocol ownership is separate from the AudioManager focus grant. */
     @Synchronized
-    fun onMainAudioOwner(owner: CarPlayAudioOwner) {
+    fun onMainAudioOwner(owner: CarPlayAudioOwner, preserveTemporaryFocus: Boolean = false,
+        mediaAllowed: Boolean = owner == CarPlayAudioOwner.PHONE) {
         val previous = mainAudioOwner
-        if (owner == previous) {
+        val previousReady = mainAudioResourceReady
+        mainAudioResourceReady = owner == CarPlayAudioOwner.PHONE && mediaAllowed
+        val grantOpened = mainAudioResourceReady && !previousReady
+        val recoverExplicit = mainAudioResourceReady && pendingUserResourceRecovery &&
+            controller?.isPhoneMediaResourceReady() == true
+        if (owner == previous && !recoverExplicit && !grantOpened) {
             report("mainAudio unchanged=$owner; Android focus left unchanged")
             return
         }
         mainAudioOwner = owner
         session?.isActive = owner.allowsMedia
         if (!owner.allowsMedia) {
-            mediaPreparationGeneration++
             userRecoveryFocus = false
-            focusRequest?.let { appContext?.getSystemService(AudioManager::class.java)?.abandonAudioFocusRequest(it) }
-            focusHeld = false
-            transientFocusInterrupted = false
-        } else if (mediaAudioActive && !previous.allowsMedia) regainFocusLocked()
+            if (!preserveTemporaryFocus) {
+                focusRequest?.let { appContext?.getSystemService(AudioManager::class.java)?.abandonAudioFocusRequest(it) }
+                focusHeld = false
+                transientFocusInterrupted = false
+            }
+        } else if (mainAudioResourceReady && (recoverExplicit || (mediaAudioActive && (!previous.allowsMedia || grantOpened)))) {
+            pendingUserResourceRecovery = false
+            regainFocusLocked(userRequested = true)
+        }
         report("mainAudio owner=$owner streamActive=$mediaAudioActive focusHeld=$focusHeld")
         publishCustomizationMediaLocked()
     }
@@ -220,7 +232,7 @@ internal object CarPlayMediaKeys {
     // keys. When CarPlay starts playing again it becomes the car's media source again, as any player
     // would; only the start counts, so a car source picked while the iPhone plays on is not undone.
     private fun regainFocusLocked(userRequested: Boolean = false) {
-        if ((!mediaAudioActive && !userRequested) || !mainAudioOwner.allowsMedia) return
+        if ((!mediaAudioActive && !userRequested) || !mainAudioOwner.allowsMedia || !mainAudioResourceReady) return
         val request = focusRequest ?: return
         // Only an explicit media-control action can override an unresolved transient loss.
         // Repeated resource/metadata notifications must not trigger the native Bluetooth PAUSE.
@@ -263,7 +275,9 @@ internal object CarPlayMediaKeys {
                 // remembered so the next iPhone play can retry it (some units never send GAIN).
                 synchronized(this) {
                     if (generation != audioCallbackGeneration || focusRequest == null) return@synchronized
-                    if (change == AudioManager.AUDIOFOCUS_GAIN && !mainAudioOwner.allowsMedia) {
+                    controller?.onNativeAudioFocusChanged(change)
+                    if (change == AudioManager.AUDIOFOCUS_GAIN && !mainAudioOwner.allowsMedia &&
+                        controller?.hasNativeAudioBorrow() != true) {
                         report("ignored Android focus gain while mainAudio=$mainAudioOwner")
                         return@synchronized
                     }
@@ -282,7 +296,7 @@ internal object CarPlayMediaKeys {
                 }
             }, mainHandler)
             .build()
-        val granted = mediaAudioActive && mainAudioOwner.allowsMedia &&
+        val granted = mediaAudioActive && mainAudioOwner.allowsMedia && mainAudioResourceReady &&
             audio?.mode == AudioManager.MODE_NORMAL &&
             audio.requestAudioFocus(request) == AudioManager.AUDIOFOCUS_REQUEST_GRANTED
         focusRequest = request
@@ -302,9 +316,10 @@ internal object CarPlayMediaKeys {
         customizationMedia.clear()
         audioCallbackGeneration++
         mediaIntentSerial++
-        mediaPreparationGeneration++
+        pendingUserResourceRecovery = false
         userRecoveryFocus = false
         mainAudioOwner = CarPlayAudioOwner.UNKNOWN
+        mainAudioResourceReady = false
         wheelRouter.cancel()
         artworkOwner = null
         artworkQueue.clear()
@@ -335,7 +350,7 @@ internal object CarPlayMediaKeys {
         val context = appContext ?: return
         val owner = customizationMediaOwner ?: return
         val snapshot = customizationMedia.update(nowPlaying,
-            focusHeld && mainAudioOwner.allowsMedia,
+            focusHeld && mainAudioOwner.allowsMedia && mainAudioResourceReady,
             SystemClock.elapsedRealtime(), sourceSelected = mainAudioOwner == CarPlayAudioOwner.PHONE && focusHeld)
         VehicleCustomizations.onMediaSnapshot(context, owner, snapshot)
     }
@@ -370,6 +385,16 @@ internal object CarPlayMediaKeys {
     }
 
     private fun send(index: Int, source: String, fromWheel: Boolean) {
+        if (Looper.myLooper() != mainHandler.looper) {
+            val queuedController = controller
+            val queuedPhone = queuedController?.mediaSessionIdentity()
+            val queuedGeneration = audioCallbackGeneration
+            mainHandler.post {
+                if (controller === queuedController && queuedGeneration == audioCallbackGeneration &&
+                    queuedController?.mediaSessionIdentity() === queuedPhone) send(index, source, fromWheel)
+            }
+            return
+        }
         // While the car's video player is on screen the wheel drives it: a CarPlay play/pause would
         // make the iPhone end the video session.
         if (CarPlayVideo.onMediaKey(index)) {
@@ -387,56 +412,37 @@ internal object CarPlayMediaKeys {
             val expectStream = index == CarPlayMediaButton.PLAY ||
                 (index == CarPlayMediaButton.PLAY_PAUSE && !nowPlaying.playing) ||
                 (index in setOf(CarPlayMediaButton.NEXT, CarPlayMediaButton.PREVIOUS) && (nowPlaying.playing || mediaAudioActive))
-            if (!expectStream) synchronized(this) {
-                mediaPreparationGeneration++ // A pause cancels an older pending PLAY, not vice versa.
-                releaseRecoveryFocusLocked()
-            }
             val generation = audioCallbackGeneration
-            val preparation = mediaPreparationGeneration
-            val deliver: (Boolean?) -> Unit = deliver@{ profilesVerified ->
-                synchronized(this) {
-                    if (controller !== expected || expected.mediaSessionIdentity() !== phoneIdentity ||
-                        generation != audioCallbackGeneration ||
-                        preparation != mediaPreparationGeneration ||
-                        (fromWheel && appContext?.let { AirPlayPersistence.loadMediaViaCarBluetooth(it) } == true) ||
-                        appContext?.getSystemService(AudioManager::class.java)?.mode != AudioManager.MODE_NORMAL ||
-                        CarPlayVideo.activity != null) return@deliver
-                    val skipDuringUnresolvedLoss = index in setOf(CarPlayMediaButton.NEXT, CarPlayMediaButton.PREVIOUS) &&
-                        transientFocusInterrupted && profilesVerified == false
-                    if (expectStream && !skipDuringUnresolvedLoss) {
+            synchronized(this) {
+                if (controller !== expected || expected.mediaSessionIdentity() !== phoneIdentity ||
+                    generation != audioCallbackGeneration ||
+                    appContext?.getSystemService(AudioManager::class.java)?.mode != AudioManager.MODE_NORMAL ||
+                    CarPlayVideo.activity != null) return@sendCarPlay
+                if (expectStream) {
+                    expected.onUserMediaPlaybackRequested()
+                    pendingUserResourceRecovery = !expected.isPhoneMediaResourceReady()
+                    if (!pendingUserResourceRecovery && mainAudioOwner == CarPlayAudioOwner.PHONE) {
                         val hadFocus = focusHeld && !transientFocusInterrupted
                         regainFocusLocked(userRequested = true)
                         if (!mediaAudioActive && focusHeld && !hadFocus) userRecoveryFocus = true
                     }
-                    if (skipDuringUnresolvedLoss) report("skip preserves unresolved focus; media handoff unverified; no extra PLAY")
-                    val sent = expected.sendMediaButton(index)
-                    report("media key $source wheel=$fromWheel -> CarPlay $index queued=$sent")
-                    val intent = ++mediaIntentSerial
-                    if (sent && expectStream) mainHandler.postDelayed({ synchronized(this) {
-                        if (controller === expected && generation == audioCallbackGeneration &&
-                            intent == mediaIntentSerial && !mediaAudioActive) {
-                            releaseRecoveryFocusLocked()
-                            report("CarPlay media not restored after user key; mainAudio=$mainAudioOwner; phone output route unverified; no automatic replay")
-                        }
-                    } }, 5_000L)
-                    if (!sent) releaseRecoveryFocusLocked()
+                } else {
+                    pendingUserResourceRecovery = false
+                    releaseRecoveryFocusLocked()
                 }
-            }
-            val context = appContext ?: return@sendCarPlay
-            // An active media stream is not proof that the wireless Bluetooth handoff finished.
-            // Every explicit action that expects playback checks the current lease first.
-            if (expectStream) {
-                val once = java.util.concurrent.atomic.AtomicBoolean()
-                val complete: (Boolean) -> Unit = { verified ->
-                    if (once.compareAndSet(false, true)) mainHandler.post {
-                        report("user audio recovery profilesVerified=$verified; one media command only")
-                        deliver(verified)
+                // Resource messages are asynchronous. A normal key never waits for Bluetooth or an ACK.
+                val sent = expected.sendMediaButton(index)
+                report("media key $source wheel=$fromWheel -> CarPlay $index queued=$sent; no Bluetooth wait")
+                val intent = ++mediaIntentSerial
+                if (sent && expectStream) mainHandler.postDelayed({ synchronized(this) {
+                    if (controller === expected && generation == audioCallbackGeneration &&
+                        intent == mediaIntentSerial && !mediaAudioActive) {
+                        releaseRecoveryFocusLocked()
+                        report("CarPlay media not restored after user key; mainAudio=$mainAudioOwner; no automatic replay")
                     }
-                }
-                if (com.freddyq.diplay.customization.VehicleCustomizations.prepareMediaPlayback(context, complete)) {
-                    mainHandler.postDelayed({ complete(false) }, 2_500L)
-                } else deliver(null)
-            } else deliver(null)
+                } }, 5_000L)
+                if (!sent) { pendingUserResourceRecovery = false; releaseRecoveryFocusLocked() }
+            }
         }
     }
 

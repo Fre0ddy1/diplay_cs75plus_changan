@@ -4420,6 +4420,7 @@ class CarPlayHostActivity : ComponentActivity() {
             } },
             onNavigationGuidanceChanged = ::onNavigationGuidanceChanged,
         )
+        renderer.setMediaResourceAllowed(false)
         return renderer
     }
 
@@ -4715,8 +4716,13 @@ class CarPlayHostActivity : ComponentActivity() {
     private fun createSessionListener(controllerGeneration: Int): AirPlaySessionListener =
         object : AirPlaySessionListener {
             private val diagnosticLog = sessionLog
-            private val audioResources = com.shilapi.xcertplay.airplay.CarPlayAudioResources()
-            private var resourceSession: AirPlaySession? = null
+            override fun onAudioResourceState(session: AirPlaySession,
+                state: com.shilapi.xcertplay.airplay.MainAudioResourceState) = runOnUiThread {
+                if (controllerGeneration != restartGeneration || activeAirPlaySession !== session) return@runOnUiThread
+                sink?.setMediaResourceAllowed(state.mediaOutputAllowed)
+                CarPlayMediaKeys.onMainAudioOwner(state.owner, state.nativeBorrowActive, state.mediaOutputAllowed)
+                appendLog("CarPlay audio resource: owner=${state.owner} permanent=${state.permanentEntity} revision=${state.revision} mediaAllowed=${state.mediaOutputAllowed} nativeBorrow=${state.nativeBorrowActive} awaiting=${state.awaitingConfirmation}")
+            }
 
             /**
              * The phone's own audio-interruption commands. iOS sends these when one of its sounds
@@ -4728,14 +4734,6 @@ class CarPlayHostActivity : ComponentActivity() {
              */
             override fun onCommand(session: AirPlaySession, type: String, params: Map<String, Any?>) {
                 when (type) {
-                    "modesChanged" -> runOnUiThread {
-                        if (controllerGeneration != restartGeneration || resourceSession !== session || activeAirPlaySession !== session) return@runOnUiThread
-                        if (audioResources.update(params)) {
-                            sink?.setMediaResourceAllowed(audioResources.mediaOutputAllowed)
-                            CarPlayMediaKeys.onMainAudioOwner(audioResources.owner)
-                            appendLog("CarPlay audio resource: owner=${audioResources.owner} entity=${audioResources.entity} permanent=${audioResources.permanentEntity} revision=${audioResources.revision}; phone output route unverified")
-                        }
-                    }
                     "duckAudio" -> {
                         val durationMs = (params["durationMs"] as? Number)?.toLong() ?: 2_000L
                         appendLog("CarPlay audio: duckAudio durationMs=$durationMs")
@@ -4761,10 +4759,9 @@ class CarPlayHostActivity : ComponentActivity() {
                     projectionClosePending = false
                     manualProjectionRequest = 0L
                     lastKnownProjecting = false
-                    resourceSession = session
-                    audioResources.reset()
-                    sink?.setMediaResourceAllowed(true)
+                    sink?.setMediaResourceAllowed(false)
                     CarPlayMediaKeys.onPhoneSessionStarted()
+                    controller?.audioResourceState(session)?.let { onAudioResourceState(session, it) }
                     CarPlayBackgroundSession.active = true
                     // A new session is NOT proof that the dashboard picture is back: iAP2 comes up
                     // seconds before any video flows, and a reconnect that never delivers frames
@@ -4791,8 +4788,6 @@ class CarPlayHostActivity : ComponentActivity() {
                     clusterPresentation?.resetContentFrame()
                     if (activeAirPlaySession === session) {
                         CarPlayMediaKeys.onPhoneSessionEnded()
-                        resourceSession = null
-                        audioResources.reset()
                         activeAirPlaySession = null
                         clusterStreamBinding.reset()
                     }

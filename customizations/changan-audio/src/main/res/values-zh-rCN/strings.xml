@@ -1,5 +1,8 @@
 <resources>
     <string name="audio_customization_title">CS75PLUS媒体控制</string>
     <string name="audio_carplay_controls">CarPlay媒体控制（推荐）</string>
-    <string name="audio_carplay_description">通过CarPlay处理播放、暂停和切歌。无线交接就绪且原车无通话时，仅断开此iPhone的蓝牙连接，保留配对。关闭此开关只把原生媒体按键交给车机，不会将声音切到蓝牙。</string>
+    <string name="audio_carplay_description">通过CarPlay处理播放、暂停和切歌，按键不等待蓝牙交接。关闭此开关只把原生媒体按键交给车机，不改变音频通道或蓝牙媒体设置。</string>
+    <string name="audio_connection_title">CarPlay连接与音频</string>
+    <string name="audio_disable_bluetooth_media">连接期间关闭目标手机的蓝牙媒体音频</string>
+    <string name="audio_disable_bluetooth_media_description">点击连接手机、选定iPhone后关闭其媒体音频，避免蓝牙媒体重连。断开CarPlay或退出DiPlay时恢复关闭前的状态；原本关闭则保持关闭。不更改配对、通话和其他手机。仅支持本车Android 9接口。</string>
 </resources>

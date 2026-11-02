@@ -1,5 +1,8 @@
 <resources>
     <string name="audio_customization_title">CS75PLUS media controls</string>
     <string name="audio_carplay_controls">CarPlay media controls (recommended)</string>
-    <string name="audio_carplay_description">Control playback and track changes through CarPlay. Wireless handoff disconnects only this iPhone’s Bluetooth links when no native call is active; pairing is kept. Turning this switch off leaves native media keys to the car and does not switch audio to Bluetooth.</string>
+    <string name="audio_carplay_description">Control playback and track changes through CarPlay without waiting for Bluetooth handoff. Turning this switch off changes native media key routing only.</string>
+    <string name="audio_connection_title">CarPlay connection and audio</string>
+    <string name="audio_disable_bluetooth_media">Disable this iPhone’s Bluetooth media audio while connecting</string>
+    <string name="audio_disable_bluetooth_media_description">Disable the selected iPhone’s media profile after Connect Phone. Restore its previous setting on disconnect or DiPlay exit; an originally disabled profile stays disabled. Pairing, calls and other phones are unchanged. Uses this vehicle’s Android 9 interface.</string>
 </resources>

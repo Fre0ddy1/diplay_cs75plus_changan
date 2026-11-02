@@ -49,7 +49,15 @@ checks['shared/src/main/java/com/shilapi/xcertplay/orchestration/CarPlayControll
     'wirelessAudioHandoff.tunnelReady(owner)', 'wirelessAudioHandoff.close(session)',
 ]
 checks['common/src/main/java/com/shilapi/xcertplay/CarPlayMediaKeys.kt'] += [
-    'VehicleCustomizations.prepareMediaPlayback(context, complete)', 'releaseRecoveryFocusLocked()',
+    'expected.onUserMediaPlaybackRequested()', 'releaseRecoveryFocusLocked()',
+]
+checks['shared/src/main/java/com/shilapi/xcertplay/orchestration/CarPlayController.kt'] += [
+    'VehicleCustomizations.onBluetoothMediaConnectionStarting(appContext, connection)',
+    'VehicleCustomizations.onBluetoothMediaConnectionEnded(connection.owner)',
+    'beginBluetoothMediaPolicy(device.address)', 'endBluetoothMediaPolicy()', 'CarPlayMainAudioCoordinator(',
+]
+checks['customizations/changan-audio/src/main/java/com/freddyq/diplay/changan/audio/ChanganAudioCustomization.kt'] = [
+    'MediaAudioPolicyLease(', 'CustomizationSettingsArea.CONNECTION', 'prepareApplicationExit(',
 ]
 checks['settings.gradle.kts'] += ['include(":app-lifecycle")', 'customizations/app-lifecycle']
 checks['settings.gradle.kts'] += ['include(":glass-ui")', 'customizations/glass-ui']
@@ -81,6 +89,10 @@ checks['common/src/main/java/com/shilapi/xcertplay/InCallClusterBridge.kt'] += [
 checks['customizations/changan-projection/src/main/java/com/freddyq/diplay/changan/projection/ChanganProjectionCustomization.kt'] += ['override fun onProjectionLayoutConfirmed(']
 checks['common/src/main/java/com/shilapi/xcertplay/InCallClusterBridge.kt'] += ['fun invalidateProjectionChannel()', 'projectionDisplayAvailable', 'remoteServiceEpoch++']
 failures=[]
+keys_source=(ROOT/'common/src/main/java/com/shilapi/xcertplay/CarPlayMediaKeys.kt').read_text(encoding='utf-8')
+audio_source=(ROOT/'customizations/changan-audio/src/main/java/com/freddyq/diplay/changan/audio/ChanganAudioCustomization.kt').read_text(encoding='utf-8')
+if 'VehicleCustomizations.prepareMediaPlayback(' in keys_source or 'TargetBluetoothHandoff(' in audio_source:
+    failures.append('Legacy per-key Bluetooth wait or repeated profile teardown reintroduced')
 checks['common/build.gradle.kts'] += ['implementation(project(":changan-media"))']
 checks['settings.gradle.kts'] += ['include(":changan-media")', 'customizations/changan-media']
 checks['common/src/main/java/com/shilapi/xcertplay/CarPlayMediaKeys.kt'] += [
