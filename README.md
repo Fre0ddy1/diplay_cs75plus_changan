@@ -27,7 +27,7 @@
 | **最新版本** | [![最新版本](https://img.shields.io/gitee/release-date/jiuyueji/diplay_changan?style=flat-square&label=%E6%9C%80%E6%96%B0%E7%89%88)](https://gitee.com/jiuyueji/diplay_changan/releases/latest) | 直达最新一次发布，附件里是编译好的 APK |
 | **全部版本** | [![全部版本](https://img.shields.io/gitee/v/release/jiuyueji/diplay_changan?style=flat-square&label=%E7%89%88%E6%9C%AC)](https://gitee.com/jiuyueji/diplay_changan/releases) | 全部历史版本，按需挑选下载 |
 
-> 也可以直接下载最新 APK：[dica.apk](https://gitee.com/jiuyueji/diplay_changan/releases/download/v0.2.23-hud-test/dica.apk)　｜　精简版：[dica-release.apk](https://gitee.com/jiuyueji/diplay_changan/releases/download/v0.2.23-hud-test/dica-release.apk)
+> 也可以直接下载最新 APK：[dica.apk](https://gitee.com/jiuyueji/diplay_changan/releases/download/v0.2.23-hud-test-20261101/dica.apk)　｜　精简版：[dica-release.apk](https://gitee.com/jiuyueji/diplay_changan/releases/download/v0.2.23-hud-test-20261101/dica-release.apk)
 
 **系统要求**：APK 支持 Android 7.1+（API 25）；Android 7.1–8.1 支持为新增能力（尚未在实车上验证）。无线支持 Wi-Fi Direct、车机热点或同一局域网 / Existing Wi-Fi。Android 9 的 Wi-Fi Direct 使用依赖固件的旧路径（生成组凭据、频段未经核实）；Android 10+ 会校验协商后的组频段。
 
