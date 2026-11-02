@@ -37,6 +37,10 @@ internal class AndroidTargetBluetoothLink(
     private var registered = false
     private var changed: () -> Unit = {}
     private var callStateFailureReported = false
+    private var reflectiveCallsUnavailable = false
+    private var peerStateFailureReported = false
+    private var peerStateMethod: java.lang.reflect.Method? = null
+    private val calls = AndroidHfpCallState(app, report)
     private val listener = object : BluetoothProfile.ServiceListener {
         override fun onServiceConnected(profile: Int, proxy: BluetoothProfile) {
             if (closed) { adapter?.closeProfileProxy(profile, proxy); return }
@@ -54,7 +58,10 @@ internal class AndroidTargetBluetoothLink(
         override fun onReceive(context: Context, intent: Intent) {
             @Suppress("DEPRECATION")
             val device = intent.getParcelableExtra<BluetoothDevice>(BluetoothDevice.EXTRA_DEVICE)
-            if (!closed && device?.address == target?.address) changed()
+            val callRefresh = intent.action == "android.bluetooth.headsetclient.profile.action.AG_CALL_CHANGED" && device == null
+            // Some Android 9 call broadcasts carry only a private call Parcelable. They may
+            // trigger a fresh query of our selected peer, never supply another peer's state.
+            if (!closed && (device?.address == target?.address || callRefresh)) changed()
         }
     }
     override fun start(changed: () -> Unit) {
@@ -81,11 +88,19 @@ internal class AndroidTargetBluetoothLink(
                 report("profile=$profile binding unavailable=${error.javaClass.simpleName}")
             }
         }
+        calls.start { if (!closed) changed() }
     }
-    override fun states(): Map<Int, LinkState> = PROFILES.associateWith { profile ->
+    override fun states(): Map<Int, LinkState> = PROFILES.associateWith(::state)
+    private fun state(profile: Int): LinkState {
         val proxy = proxies[profile]
-        if (proxy == null || target == null || profile in unavailable) LinkState.UNKNOWN
-        else try {
+        if (target == null) return LinkState.UNKNOWN
+        return try {
+            // A globally disconnected role proves the target is disconnected even when an
+            // optional PAN/PBAP proxy never binds. A connection of another peer proves nothing.
+            if (proxy == null || profile in unavailable) {
+                return if (adapter?.getProfileConnectionState(profile) == BluetoothProfile.STATE_DISCONNECTED)
+                    LinkState.DISCONNECTED else LinkState.UNKNOWN
+            }
             when (proxy.getConnectionState(target)) {
                 BluetoothProfile.STATE_DISCONNECTED -> LinkState.DISCONNECTED
                 BluetoothProfile.STATE_CONNECTING -> LinkState.CONNECTING
@@ -101,8 +116,10 @@ internal class AndroidTargetBluetoothLink(
     }
     override fun canDisconnect(): Boolean {
         if (!permitted || app.getSystemService(AudioManager::class.java)?.mode != AudioManager.MODE_NORMAL) return false
-        val hfp = proxies[16] ?: return false
         val device = target ?: return false
+        if (state(16) == LinkState.DISCONNECTED) return true
+        val hfp = proxies[16]
+        if (hfp == null || reflectiveCallsUnavailable) return calls.idle(device) == true
         return try {
             if (hfp.getConnectionState(device) == BluetoothProfile.STATE_DISCONNECTED) true
             else {
@@ -110,6 +127,11 @@ internal class AndroidTargetBluetoothLink(
                     .invoke(hfp, device) as? List<*>
                 calls != null && calls.isEmpty()
             }
+        } catch (error: NoSuchMethodException) {
+            if (!callStateFailureReported) report("HFP Java call query not exposed; use permission-checked read-only service")
+            callStateFailureReported = true
+            reflectiveCallsUnavailable = true
+            calls.idle(device) == true
         } catch (error: Exception) {
             if (!callStateFailureReported) report("target call state unavailable=${(error.cause ?: error).javaClass.simpleName}; handoff deferred")
             callStateFailureReported = true
@@ -117,6 +139,18 @@ internal class AndroidTargetBluetoothLink(
         }
     }
     override fun supportsDisconnect(profile: Int): Boolean = profile in ACTIVE_PROFILES
+    override fun peerConnected(): Boolean? {
+        if (closed || !permitted || peerStateFailureReported) return null
+        val device = target ?: return null
+        return try {
+            val method = peerStateMethod ?: device.javaClass.getMethod("isConnected").also { peerStateMethod = it }
+            method.invoke(device) as? Boolean
+        } catch (error: Exception) {
+            if (!peerStateFailureReported) report("target ACL state unavailable=${(error.cause ?: error).javaClass.simpleName}; full handoff unverified")
+            peerStateFailureReported = true
+            null
+        }
+    }
 
     override fun disconnect(profile: Int): Boolean {
         if (closed || !canDisconnect() || profile !in ACTIVE_PROFILES) return false
@@ -133,18 +167,22 @@ internal class AndroidTargetBluetoothLink(
     }
     override fun close() {
         closed = true
+        calls.close()
         if (registered) runCatching { app.unregisterReceiver(receiver) }
         registered = false
         proxies.forEach { (profile, proxy) -> runCatching { adapter?.closeProfileProxy(profile, proxy) } }
         proxies.clear()
     }
     companion object {
-        // Car-side client/sink roles; AVRCP is observed and goes down with its A2DP connection.
-        private val ACTIVE_PROFILES = setOf(11, 16, 17, 5) // A2DP sink, HFP client, PBAP client, PAN
-        private val PROFILES = ACTIVE_PROFILES + 12 // AVRCP controller has no independent disconnect API
+        // Only the selected peer, after authenticated wireless handoff and a verified no-call state.
+        private val ACTIVE_PROFILES = setOf(11, 16, 17, 5)
+        private val PROFILES = ACTIVE_PROFILES + 12 // AVRCP is observed; no independent disconnect API.
         private val ACTIONS = listOf(
+            BluetoothDevice.ACTION_ACL_CONNECTED,
+            BluetoothDevice.ACTION_ACL_DISCONNECTED,
             "android.bluetooth.a2dp-sink.profile.action.CONNECTION_STATE_CHANGED",
             "android.bluetooth.headsetclient.profile.action.CONNECTION_STATE_CHANGED",
+            "android.bluetooth.headsetclient.profile.action.AG_CALL_CHANGED",
             "android.bluetooth.pbapclient.profile.action.CONNECTION_STATE_CHANGED",
             "android.bluetooth.pan.profile.action.CONNECTION_STATE_CHANGED",
             "android.bluetooth.avrcp-controller.profile.action.CONNECTION_STATE_CHANGED",

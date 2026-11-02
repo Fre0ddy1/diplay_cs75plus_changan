@@ -6,6 +6,15 @@ import org.junit.Test
 class CarPlayAudioResourcesTest {
     private val state = CarPlayAudioResources()
     private fun payload(id: Int = 2, entity: Int = 1) = mapOf("resources" to listOf(mapOf("resourceID" to id, "entity" to entity, "permanentEntity" to entity)))
+    @Test fun initialAndResetUnknownOwnershipCannotEnableMedia() {
+        assertFalse(state.mediaOutputAllowed)
+        state.update(payload()); state.reset()
+        assertFalse(state.mediaOutputAllowed)
+    }
+    @Test fun anInvalidPermanentOwnerDoesNotBecomeAKnownReturnTarget() {
+        assertTrue(state.update(mapOf("resources" to listOf(mapOf("resourceID" to 2, "entity" to 1, "permanentEntity" to 77)))))
+        assertEquals(CarPlayAudioOwner.PHONE, state.owner); assertNull(state.permanentEntity)
+    }
     @Test fun phoneOwnershipAllowsMedia() {
         assertTrue(state.update(payload()))
         assertEquals(CarPlayAudioOwner.PHONE, state.owner)

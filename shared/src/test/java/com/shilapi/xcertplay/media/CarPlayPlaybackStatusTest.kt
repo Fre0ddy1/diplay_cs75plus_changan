@@ -59,6 +59,7 @@ class CarPlayPlaybackStatusTest {
                 durationMillis = 257_000,
                 elapsedMillis = 12_500,
                 playing = true,
+                elapsedRevision = 1,
             ),
             status.acceptUpdate(update {
                 group(1) {
@@ -85,5 +86,16 @@ class CarPlayPlaybackStatusTest {
         assertNull(updated?.title)
         assertEquals(0x81, updated?.artworkTransferId)
         assertEquals(CarPlayNowPlaying(), status.clearAll())
+    }
+    @Test fun repeatedExplicitZeroElapsedIsANewSampleButLyricsAndMalformedFieldsAreNot() {
+        val status = CarPlayPlaybackStatus()
+        val first = status.acceptUpdate(update { group(1) { u32(1, 0) } })!!
+        val second = status.acceptUpdate(update { group(1) { u32(1, 0) } })!!
+        assertEquals(1L, first.elapsedRevision); assertEquals(2L, second.elapsedRevision)
+        assertEquals(0L, second.elapsedMillis)
+        val lyric = status.acceptUpdate(update { group(0) { string(1, "下一句歌词") } })!!
+        assertEquals(2L, lyric.elapsedRevision)
+        assertNull(status.acceptUpdate(update { group(1) { u8(1, 3) } }))
+        assertEquals(2L, status.nowPlaying.elapsedRevision)
     }
 }

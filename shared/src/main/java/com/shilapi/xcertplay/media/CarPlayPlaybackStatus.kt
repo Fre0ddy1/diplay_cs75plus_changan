@@ -14,6 +14,8 @@ data class CarPlayNowPlaying(
     val durationMillis: Long? = null,
     val elapsedMillis: Long? = null,
     val playing: Boolean = false,
+    /** Receiver-local progress sample revision; not a wire field or a media item identifier. */
+    val elapsedRevision: Long = 0,
 )
 
 /**
@@ -34,6 +36,9 @@ class CarPlayPlaybackStatus {
         val media = runCatching { body.optionalGroup(MEDIA_ITEM) }.getOrNull()
         val playback = runCatching { body.optionalGroup(PLAYBACK) }.getOrNull()
         val previous = nowPlaying
+        val elapsed = playback?.let { reader ->
+            if (reader.has(ELAPSED)) runCatching { reader.u32(ELAPSED) }.getOrNull() else null
+        }
         val next = previous.copy(
             title = media.updatedString(TITLE, previous.title),
             album = media.updatedString(ALBUM, previous.album),
@@ -41,7 +46,10 @@ class CarPlayPlaybackStatus {
             artworkTransferId = media.updatedU8(ARTWORK_TRANSFER_ID, previous.artworkTransferId),
             sourceApp = playback.updatedString(SOURCE_APP, previous.sourceApp),
             durationMillis = media.updatedU32(DURATION, previous.durationMillis),
-            elapsedMillis = playback.updatedU32(ELAPSED, previous.elapsedMillis),
+            elapsedMillis = elapsed ?: previous.elapsedMillis,
+            elapsedRevision = if (elapsed != null) {
+                if (previous.elapsedRevision == Long.MAX_VALUE) 0 else previous.elapsedRevision + 1
+            } else previous.elapsedRevision,
             playing = playback.updatedStatus(previous.playing),
         )
         if (next == previous) return null

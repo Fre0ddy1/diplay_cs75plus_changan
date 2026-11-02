@@ -309,6 +309,7 @@ class CarPlayHostActivity : ComponentActivity() {
     // FLY_CARD only: the small card window's Surface, bound to the SECOND cluster stream
     // (instruction card, SCREEN_TYPE_ALT_CARD). Created with the presentation; null everywhere else.
     private var cardClusterSurface: Surface? = null
+    private val clusterStreamBinding = ClusterStreamBinding()
     private var clusterMonitor: DiLink51ClusterMonitor? = null
     private var detectedCluster = ClusterActivityState.Snapshot(null, false)
     // Auto-project on connect: set when the pending delayed auto-projection was fired for
@@ -1417,7 +1418,8 @@ class CarPlayHostActivity : ComponentActivity() {
             presentation.setStreamActive(clusterStreamActive())
             // A window built while the card stream was already up must not wait for the next
             // stream event, which only comes on a transition.
-            presentation.setCardStreamActive(activeScreenStreamTypes.contains(SCREEN_TYPE_ALT_CARD))
+            presentation.setCardStreamActive(activeScreenStreamTypes.contains(clusterStreamBinding.cardType))
+            replayClusterStreamGeometry()
             // Invisible until the head unit is really in projection mode. Before activation incall
             // maps the ext-screen to a small placeholder box at the right of the panel, and this
             // window is created 4-5 s before the open sequence (measured 2026-10-18 14:18: window
@@ -1496,7 +1498,8 @@ class CarPlayHostActivity : ComponentActivity() {
             if (AirPlayPersistence.loadClusterAutoNavMode(this)) autoNavModePending = true
             presentation.setMode(currentClusterMirrorMode())
             presentation.setStreamActive(clusterStreamActive())
-            presentation.setCardStreamActive(activeScreenStreamTypes.contains(SCREEN_TYPE_ALT_CARD))
+            presentation.setCardStreamActive(activeScreenStreamTypes.contains(clusterStreamBinding.cardType))
+            replayClusterStreamGeometry()
             presentation.setMapVisible(false)
             applyClusterTurnOverlay()
             appendLog("Cluster map: quiet window shown display=${display.displayId}")
@@ -1550,7 +1553,7 @@ class CarPlayHostActivity : ComponentActivity() {
 
     /** Which CarPlay stream feeds the instrument cluster window (main-screen mirror or cluster stream). */
     private fun clusterStreamActive(): Boolean {
-        val type = if (currentClusterMirrorMode()) SCREEN_TYPE_MAIN else SCREEN_TYPE_ALT
+        val type = if (currentClusterMirrorMode()) SCREEN_TYPE_MAIN else clusterStreamBinding.mapType
         return type in activeScreenStreamTypes
     }
 
@@ -1794,10 +1797,14 @@ class CarPlayHostActivity : ComponentActivity() {
         if (navClusterSurface === surface) return
         val old = navClusterSurface
         navClusterSurface = surface
+        if (clusterUsesDualStreams()) {
+            sink?.let(::rebindClusterStreams)
+            return
+        }
         if (surface != null) {
-            sink?.setSurface(SCREEN_TYPE_ALT, surface)
+            sink?.setSurface(clusterStreamBinding.mapType, surface)
         } else if (old != null) {
-            sink?.clearSurface(SCREEN_TYPE_ALT, old)
+            sink?.clearSurface(clusterStreamBinding.mapType, old)
         }
     }
 
@@ -1809,13 +1816,8 @@ class CarPlayHostActivity : ComponentActivity() {
      */
     private fun onClusterCardSurface(surface: Surface?) {
         if (cardClusterSurface === surface) return
-        val old = cardClusterSurface
         cardClusterSurface = surface
-        if (surface != null) {
-            sink?.setSurface(SCREEN_TYPE_ALT_CARD, surface)
-        } else if (old != null) {
-            sink?.clearSurface(SCREEN_TYPE_ALT_CARD, old)
-        }
+        sink?.let(::rebindClusterStreams)
     }
 
     /**
@@ -1823,11 +1825,50 @@ class CarPlayHostActivity : ComponentActivity() {
      * Delivered on a media thread; the presentation window is re-laid out on the UI thread so the
      * FLY_CARD window is always exactly the size of the picture the phone sends.
      */
-    private fun onClusterCardVideoSize(width: Int, height: Int) {
-        appendLog("Cluster card stream size ${width}x$height")
+    private fun onClusterStreamOutputSize(expected: AndroidMediaSink, generation: Int,
+        type: Int, geometry: com.shilapi.xcertplay.media.ScreenStreamGeometry) {
         runOnUiThread {
-            clusterPresentation?.setCardVideoSize(width, height)
-            clusterLayers.values.forEach { it.setCardVideoSize(width, height) }
+            if (generation != restartGeneration || sink !== expected || shuttingDown.get() ||
+                expected.currentScreenGeometry(type) !== geometry ||
+                !clusterUsesDualStreams()) return@runOnUiThread
+            val moved = clusterStreamBinding.observe(type, geometry, watcherWidth)
+            if (moved) {
+                rebindClusterStreams(expected)
+                appendLog("Cluster: map/card rebound map=${clusterStreamBinding.mapType} card=${clusterStreamBinding.cardType}")
+            }
+            clusterPresentation?.setStreamActive(clusterStreamActive())
+            val card = clusterStreamBinding.cardGeometry()
+            if (card == null) {
+                clusterPresentation?.setCardStreamActive(false)
+                return@runOnUiThread
+            }
+            clusterPresentation?.setCardVideoGeometry(card)
+            clusterLayers.values.forEach { it.setCardVideoGeometry(card) }
+            clusterPresentation?.setCardStreamActive(clusterStreamBinding.cardType in activeScreenStreamTypes)
+        }
+    }
+
+    /** Do not attach either Surface until BOTH decoder workers have released their old producer. */
+    private fun rebindClusterStreams(expected: AndroidMediaSink) {
+        expected.rebindScreenPair(clusterStreamBinding.mapType, navClusterSurface,
+            clusterStreamBinding.cardType, cardClusterSurface)
+    }
+
+    private fun clusterUsesDualStreams(): Boolean = CarPlayClusterDisplay.isFlyCard(
+        clusterWindowContent ?: AirPlayPersistence.loadClusterContent(this))
+
+    /** A background sink may have reported its crop before this presentation existed. */
+    private fun replayClusterStreamGeometry() {
+        val expected = sink ?: return
+        if (!clusterUsesDualStreams()) {
+            if (clusterStreamBinding.mapType != SCREEN_TYPE_ALT) {
+                clusterStreamBinding.reset()
+                rebindClusterStreams(expected)
+            }
+            return
+        }
+        for (type in listOf(SCREEN_TYPE_ALT, SCREEN_TYPE_ALT_CARD)) {
+            expected.currentScreenGeometry(type)?.let { onClusterStreamOutputSize(expected, restartGeneration, type, it) }
         }
     }
 
@@ -4343,7 +4384,8 @@ class CarPlayHostActivity : ComponentActivity() {
     ): AndroidMediaSink {
         // Capture this session's log: late decoder shutdown must not write into a new session.
         val diagnosticLog = sessionLog
-        return AndroidMediaSink(
+        lateinit var renderer: AndroidMediaSink
+        renderer = AndroidMediaSink(
             surface = null,
             videoWidth = videoWidth,
             videoHeight = videoHeight,
@@ -4359,8 +4401,8 @@ class CarPlayHostActivity : ComponentActivity() {
             onScreenStreamActiveChanged = { type, active ->
                 onScreenStreamStateChanged(controllerGeneration, type, active)
             },
-            onScreenStreamOutputSize = { type, width, height ->
-                if (type == SCREEN_TYPE_ALT_CARD) onClusterCardVideoSize(width, height)
+            onScreenStreamOutputSize = { type, geometry ->
+                onClusterStreamOutputSize(renderer, controllerGeneration, type, geometry)
             },
             mediaBufferMillis = AirPlayPersistence.loadMediaBufferMillis(this),
             onAudioDiagnostic = { message ->
@@ -4378,6 +4420,8 @@ class CarPlayHostActivity : ComponentActivity() {
             } },
             onNavigationGuidanceChanged = ::onNavigationGuidanceChanged,
         )
+        renderer.setMediaResourceAllowed(false)
+        return renderer
     }
 
     /**
@@ -4672,8 +4716,13 @@ class CarPlayHostActivity : ComponentActivity() {
     private fun createSessionListener(controllerGeneration: Int): AirPlaySessionListener =
         object : AirPlaySessionListener {
             private val diagnosticLog = sessionLog
-            private val audioResources = com.shilapi.xcertplay.airplay.CarPlayAudioResources()
-            private var resourceSession: AirPlaySession? = null
+            override fun onAudioResourceState(session: AirPlaySession,
+                state: com.shilapi.xcertplay.airplay.MainAudioResourceState) = runOnUiThread {
+                if (controllerGeneration != restartGeneration || activeAirPlaySession !== session) return@runOnUiThread
+                sink?.setMediaResourceAllowed(state.mediaOutputAllowed)
+                CarPlayMediaKeys.onMainAudioOwner(state.owner, state.nativeBorrowActive, state.mediaOutputAllowed)
+                appendLog("CarPlay audio resource: owner=${state.owner} permanent=${state.permanentEntity} revision=${state.revision} mediaAllowed=${state.mediaOutputAllowed} nativeBorrow=${state.nativeBorrowActive} awaiting=${state.awaitingConfirmation}")
+            }
 
             /**
              * The phone's own audio-interruption commands. iOS sends these when one of its sounds
@@ -4685,14 +4734,6 @@ class CarPlayHostActivity : ComponentActivity() {
              */
             override fun onCommand(session: AirPlaySession, type: String, params: Map<String, Any?>) {
                 when (type) {
-                    "modesChanged" -> runOnUiThread {
-                        if (controllerGeneration != restartGeneration || resourceSession !== session || activeAirPlaySession !== session) return@runOnUiThread
-                        if (audioResources.update(params)) {
-                            sink?.setMediaResourceAllowed(audioResources.mediaOutputAllowed)
-                            CarPlayMediaKeys.onMainAudioOwner(audioResources.owner)
-                            appendLog("CarPlay audio resource: owner=${audioResources.owner} entity=${audioResources.entity} permanent=${audioResources.permanentEntity} revision=${audioResources.revision}; phone output route unverified")
-                        }
-                    }
                     "duckAudio" -> {
                         val durationMs = (params["durationMs"] as? Number)?.toLong() ?: 2_000L
                         appendLog("CarPlay audio: duckAudio durationMs=$durationMs")
@@ -4712,14 +4753,15 @@ class CarPlayHostActivity : ComponentActivity() {
                     }
                     mainHandler.removeCallbacks(airPlayStallHint)
                     activeAirPlaySession = session
+                    clusterStreamBinding.reset()
+                    if (clusterUsesDualStreams()) sink?.let(::rebindClusterStreams)
                     userClosedProjection = false
                     projectionClosePending = false
                     manualProjectionRequest = 0L
                     lastKnownProjecting = false
-                    resourceSession = session
-                    audioResources.reset()
-                    sink?.setMediaResourceAllowed(true)
+                    sink?.setMediaResourceAllowed(false)
                     CarPlayMediaKeys.onPhoneSessionStarted()
+                    controller?.audioResourceState(session)?.let { onAudioResourceState(session, it) }
                     CarPlayBackgroundSession.active = true
                     // A new session is NOT proof that the dashboard picture is back: iAP2 comes up
                     // seconds before any video flows, and a reconnect that never delivers frames
@@ -4746,9 +4788,8 @@ class CarPlayHostActivity : ComponentActivity() {
                     clusterPresentation?.resetContentFrame()
                     if (activeAirPlaySession === session) {
                         CarPlayMediaKeys.onPhoneSessionEnded()
-                        resourceSession = null
-                        audioResources.reset()
                         activeAirPlaySession = null
+                        clusterStreamBinding.reset()
                     }
                     CarPlayBackgroundSession.active = false
                     // A new session is a new connection: allow auto-project to fire again after
@@ -4922,8 +4963,9 @@ class CarPlayHostActivity : ComponentActivity() {
         snapshot.sink.setScreenStreamActiveChangedListener { type, active ->
             onScreenStreamStateChanged(restartGeneration, type, active)
         }
-        snapshot.sink.setScreenStreamOutputSizeListener { type, width, height ->
-            if (type == SCREEN_TYPE_ALT_CARD) onClusterCardVideoSize(width, height)
+        val attachmentGeneration = restartGeneration
+        snapshot.sink.setScreenStreamOutputSizeListener { type, geometry ->
+            onClusterStreamOutputSize(snapshot.sink, attachmentGeneration, type, geometry)
         }
         currentSurface?.let(::attachSurface)
         val serviceReused = snapshot.controller.hasActiveAirPlayAttachment()
@@ -5006,9 +5048,9 @@ class CarPlayHostActivity : ComponentActivity() {
             // Generic path: re-bind BOTH resident surfaces so 110 and 111 stay active in incall
             // (this is what suppresses the "全屏导航已开启" announcement on mode switches).
             mirrorClusterSurface?.let { renderer.setMirrorSurface(SCREEN_TYPE_MAIN, CLUSTER_MAIN_MIRROR, it) }
-            navClusterSurface?.let { renderer.setSurface(SCREEN_TYPE_ALT, it) }
+            navClusterSurface?.let { renderer.setSurface(clusterStreamBinding.mapType, it) }
             // FLY_CARD: the card window's stream is resident too.
-            cardClusterSurface?.let { renderer.setSurface(SCREEN_TYPE_ALT_CARD, it) }
+            cardClusterSurface?.let { renderer.setSurface(clusterStreamBinding.cardType, it) }
         }
         MapMirrors.reapply()
         val media = createMediaEngine(renderer)
@@ -6065,8 +6107,11 @@ class CarPlayHostActivity : ComponentActivity() {
         val display = watcherDisplay ?: return false
         if (runCatching { display.state }.getOrDefault(android.view.Display.STATE_UNKNOWN) != android.view.Display.STATE_ON) return false
         val size = runCatching { ClusterMapPresentation.sizeOf(display) }.getOrNull() ?: return false
+        val panelWidthChanged = watcherWidth != size.x
         watcherWidth = size.x
         watcherHeight = size.y
+        // Decoder geometry can arrive before the instrument reports its real size on cold start.
+        if (panelWidthChanged) mainHandler.post { replayClusterStreamGeometry() }
         // A mode that disagrees with the real size means the display is still being reconfigured
         // (or is still the pre-activation placeholder); either way the sequence must wait.
         val mode = runCatching { display.mode }.getOrNull()
@@ -6157,6 +6202,7 @@ class CarPlayHostActivity : ComponentActivity() {
                         val size = ClusterMapPresentation.sizeOf(display)
                         watcherWidth = size.x
                         watcherHeight = size.y
+                        mainHandler.post { replayClusterStreamGeometry() }
                         appendLog(
                             "Cluster watcher: 记录仪表 display=${display.displayId} " +
                                 "${watcherWidth}x${watcherHeight}",
@@ -6528,14 +6574,15 @@ class CarPlayHostActivity : ComponentActivity() {
                 if (clusterPresentation == null) ensureClusterWindowQuiet()
             } else {
                 activeScreenStreamTypes.remove(type)
+                clusterStreamBinding.forget(type)
             }
-            if (type == SCREEN_TYPE_ALT_CARD) {
+            if (type == clusterStreamBinding.cardType) {
                 // FLY_CARD's instruction-card window exists only while this stream is really up;
                 // the presentation destroys it when the stream goes away (no idle black slab).
                 Log.i(ClusterMapPresentation.TAG, "cluster card stream active=$active")
                 clusterPresentation?.setCardStreamActive(active)
             }
-            if (type == SCREEN_TYPE_ALT || (currentClusterMirrorMode() && type == SCREEN_TYPE_MAIN)) {
+            if (type == clusterStreamBinding.mapType || (currentClusterMirrorMode() && type == SCREEN_TYPE_MAIN)) {
                 Log.i(ClusterMapPresentation.TAG, "cluster stream active=$active")
                 appendLog("Cluster map: stream active=$active")
                 clusterPresentation?.setStreamActive(active)

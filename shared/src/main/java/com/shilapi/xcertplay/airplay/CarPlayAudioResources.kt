@@ -1,7 +1,7 @@
 package com.shilapi.xcertplay.airplay
 
 /** Wire identities used by this receiver; these are unrelated to Android stream/focus numbers. */
-enum class CarPlayAudioOwner(val allowsMedia: Boolean) { UNKNOWN(true), PHONE(true), ACCESSORY(false), UNASSIGNED(false) }
+enum class CarPlayAudioOwner(val allowsMedia: Boolean) { UNKNOWN(false), PHONE(true), ACCESSORY(false), UNASSIGNED(false) }
 
 /** Incremental modesChanged state. Missing, malformed and unknown rows never invent ownership. */
 class CarPlayAudioResources {
@@ -29,7 +29,7 @@ class CarPlayAudioResources {
         }
         owner = parsed
         entity = next
-        permanentEntity = wireInt(row["permanentEntity"])
+        permanentEntity = wireInt(row["permanentEntity"])?.takeIf { it in 0..2 }
         revision++
         return true
     }

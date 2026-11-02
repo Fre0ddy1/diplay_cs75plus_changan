@@ -29,6 +29,8 @@ import com.shilapi.xcertplay.airplay.AirPlayIdentity
 import com.shilapi.xcertplay.airplay.AirPlayMediaHandler
 import com.shilapi.xcertplay.airplay.AirPlaySession
 import com.shilapi.xcertplay.airplay.AirPlaySessionListener
+import com.shilapi.xcertplay.airplay.CarPlayMainAudioCoordinator
+import com.shilapi.xcertplay.airplay.MainAudioResourceState
 import com.shilapi.xcertplay.airplay.PairingStore
 import com.shilapi.xcertplay.airplay.VideoInCar
 import com.shilapi.xcertplay.airplay.VideoPlaybackDelivery
@@ -197,6 +199,60 @@ class CarPlayController(
     private val hostId = UUID.randomUUID().toString().uppercase(Locale.US)
     private val systemBuid = UUID.randomUUID().toString().uppercase(Locale.US)
     private val lifecycleLock = Any()
+    private var audioResourceCoordinator: CarPlayMainAudioCoordinator? = null
+    @Volatile private var audioResourceSession: AirPlaySession? = null
+    @Volatile private var audioResourceSnapshot: MainAudioResourceState? = null
+    private fun audioOnMain(action: () -> Unit) {
+        if (Looper.myLooper() == mainHandler.looper) action() else mainHandler.post(action)
+    }
+    private fun startAudioResources(session: AirPlaySession) = audioOnMain {
+        if (closed || activeSession !== session || audioResourceSession === session) return@audioOnMain
+        audioResourceCoordinator?.close()
+        audioResourceSession = session
+        val coordinator = CarPlayMainAudioCoordinator(
+            send = { transfer, completed ->
+                try {
+                    touchExecutor.execute {
+                        if (closed || activeSession !== session) audioOnMain { completed(false) }
+                        else session.changeMainAudio(transfer) { written -> audioOnMain { completed(written) } }
+                    }
+                } catch (_: java.util.concurrent.RejectedExecutionException) { completed(false) }
+            },
+            schedule = { delay, task ->
+                val runnable = Runnable(task)
+                mainHandler.postDelayed(runnable, delay)
+                val cancel: () -> Unit = { mainHandler.removeCallbacks(runnable) }
+                cancel
+            },
+            changed = { state ->
+                if (!closed && activeSession === session && audioResourceSession === session) {
+                    audioResourceSnapshot = state
+                    uiListener?.onAudioResourceState(session, state)
+                }
+            }, log = ::debugLog,
+        )
+        audioResourceCoordinator = coordinator
+        coordinator.phoneManagedAudio(session.hasPhoneManagedAudio())
+        coordinator.start()
+        session.lastMainAudioModes?.let(coordinator::modesChanged)
+    }
+    private fun endAudioResources(session: AirPlaySession? = null) = audioOnMain {
+        if (session != null && audioResourceSession !== session) return@audioOnMain
+        audioResourceCoordinator?.close(); audioResourceCoordinator = null
+        audioResourceSession = null; audioResourceSnapshot = null
+    }
+    fun audioResourceState(session: AirPlaySession? = activeSession): MainAudioResourceState? =
+        audioResourceSnapshot.takeIf { session != null && audioResourceSession === session }
+    fun hasNativeAudioBorrow() = audioResourceSnapshot?.nativeBorrowActive == true
+    fun isPhoneMediaResourceReady() = audioResourceSnapshot?.mediaOutputAllowed == true
+    fun onNativeAudioFocusChanged(change: Int) = audioOnMain {
+        when (change) {
+            android.media.AudioManager.AUDIOFOCUS_LOSS -> audioResourceCoordinator?.nativeFocusLost(temporary = false)
+            android.media.AudioManager.AUDIOFOCUS_LOSS_TRANSIENT -> audioResourceCoordinator?.nativeFocusLost(temporary = true)
+            android.media.AudioManager.AUDIOFOCUS_GAIN -> audioResourceCoordinator?.nativeFocusGained()
+        }
+    }
+    fun onUserMediaPlaybackRequested() = audioOnMain { audioResourceCoordinator?.userPlaybackRequested() }
     @Volatile private var uiListener: AirPlaySessionListener? = listener
     @Volatile private var uiStatusReporter: ((CarPlayStatus) -> Unit)? = reportStatus
     private val permissionGrant = AtomicBoolean(false)
@@ -256,6 +312,20 @@ class CarPlayController(
     private val wirelessGeneration = AtomicInteger(0)
     private val wirelessConnectionProof = WirelessConnectionProof<AirPlaySession>()
     @Volatile private var wirelessBluetoothTargetAddress: String? = null
+    private val bluetoothMediaPolicyLock = Any()
+    private var bluetoothMediaConnection: com.freddyq.diplay.customization.WirelessAudioConnection? = null
+    private fun beginBluetoothMediaPolicy(address: String) = synchronized(bluetoothMediaPolicyLock) {
+        if (closed || bluetoothMediaConnection?.deviceAddress == address) return@synchronized
+        bluetoothMediaConnection?.let { VehicleCustomizations.onBluetoothMediaConnectionEnded(it.owner) }
+        val connection = com.freddyq.diplay.customization.WirelessAudioConnection(Any(), address)
+        bluetoothMediaConnection = connection
+        VehicleCustomizations.onBluetoothMediaConnectionStarting(appContext, connection)
+    }
+    private fun endBluetoothMediaPolicy() = synchronized(bluetoothMediaPolicyLock) {
+        val connection = bluetoothMediaConnection ?: return@synchronized
+        bluetoothMediaConnection = null
+        VehicleCustomizations.onBluetoothMediaConnectionEnded(connection.owner)
+    }
     private val wirelessAudioHandoff = WirelessAudioHandoffGate(
         ready = { VehicleCustomizations.onWirelessAudioHandoff(appContext, it) },
         ended = { VehicleCustomizations.onWirelessAudioEnded(it) },
@@ -281,6 +351,11 @@ class CarPlayController(
     }
 
     private val sessionListener = object : AirPlaySessionListener {
+        override fun onPhoneManagedAudioState(session: AirPlaySession, active: Boolean) = audioOnMain {
+            if (!closed && activeSession === session && audioResourceSession === session) {
+                audioResourceCoordinator?.phoneManagedAudio(active)
+            }
+        }
         override fun onSessionActive(session: AirPlaySession) {
             if (activeSession !== session) {
                 VehicleCustomizations.onSessionStarted(appContext)
@@ -293,8 +368,10 @@ class CarPlayController(
                 }
             }
             activeSession = session
+            startAudioResources(session)
             if (config.transport == CarPlayTransport.WIRELESS) {
                 wirelessBluetoothTargetAddress?.let { address ->
+                    beginBluetoothMediaPolicy(address)
                     wirelessAudioHandoff.session(session, address,
                         wirelessBootstrapReleased.get())
                 }
@@ -309,6 +386,8 @@ class CarPlayController(
 
         override fun onSessionEnded(session: AirPlaySession) {
             if (activeSession === session) {
+                endAudioResources(session)
+                endBluetoothMediaPolicy()
                 wirelessAudioHandoff.close(session)
                 activeSession = null
                 VehicleCustomizations.onSessionEnded()
@@ -366,6 +445,11 @@ class CarPlayController(
             debugLog(
                 "AirPlay command type=$type params=${params.keys.sorted().joinToString(",")}",
             )
+            if (type == "modesChanged") audioOnMain {
+                if (!closed && activeSession === session && audioResourceSession === session) {
+                    audioResourceCoordinator?.modesChanged(params)
+                }
+            }
             if (config.transport == CarPlayTransport.WIRELESS && !closed &&
                 activeSession === session && isBluetoothHandoffCommand(type)) {
                 wirelessAudioHandoff.requested(session)
@@ -399,7 +483,10 @@ class CarPlayController(
         uiListener = listener
         uiStatusReporter = reportStatus
         mainHandler.post {
-            if (uiListener === listener) lastReportedStatus?.let(reportStatus)
+            if (uiListener === listener) {
+                lastReportedStatus?.let(reportStatus)
+                activeSession?.let { session -> audioResourceState(session)?.let { listener.onAudioResourceState(session, it) } }
+            }
         }
     }
 
@@ -541,8 +628,10 @@ class CarPlayController(
             closed = true
         }
         wiredStartWatchdog?.terminate()
+        endAudioResources()
         wiredStartTimer.shutdownNow()
         val teardownStarted = System.nanoTime()
+        endBluetoothMediaPolicy()
         wirelessAudioHandoff.close()
         connectionDiagnostic("teardown begin transport=${config.transport}")
         videoGate?.close()
@@ -1170,6 +1259,7 @@ class CarPlayController(
             if (!adapter.isEnabled) throw IOException(BluetoothRadioCheck.RADIO_OFF)
             val device = selectWirelessBluetoothDevice(adapter)
             wirelessBluetoothTargetAddress = device.address
+            beginBluetoothMediaPolicy(device.address)
             val hostBluetoothMac = accessoryBluetoothMac(adapter)
             debugLog(
                 "wireless selected Bluetooth target name=${device.name ?: "unknown"} " +
@@ -1356,6 +1446,7 @@ class CarPlayController(
                 }
                 Iap2WirelessControlTerminal.TIMED_OUT ->
                     if (!wirelessActiveReported.get()) {
+                        endBluetoothMediaPolicy()
                         onStatus(CarPlayStatus.ControlEnded)
                     }
             }
@@ -2262,6 +2353,7 @@ class CarPlayController(
     }
 
     private fun closeWirelessStack(service: CarPlayVpnService? = vpnService) {
+        endBluetoothMediaPolicy()
         wirelessAudioHandoff.close()
         wirelessBootstrapReleased.set(false)
         wirelessBluetoothTargetAddress = null

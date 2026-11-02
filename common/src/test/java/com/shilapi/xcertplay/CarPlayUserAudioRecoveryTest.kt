@@ -3,6 +3,7 @@ package com.shilapi.xcertplay
 import android.content.Context
 import android.media.AudioManager
 import android.os.Looper
+import android.os.SystemClock
 import com.freddyq.diplay.customization.VehicleCustomization
 import com.freddyq.diplay.customization.VehicleCustomizations
 import com.shilapi.xcertplay.airplay.CarPlayAudioOwner
@@ -22,6 +23,7 @@ import org.robolectric.annotation.LooperMode
 import org.robolectric.util.ReflectionHelpers
 import java.util.concurrent.TimeUnit
 
+/** v70 intentionally removes the v67 per-key Bluetooth preparation contract. */
 @RunWith(RobolectricTestRunner::class)
 @Config(sdk = [28], manifest = Config.NONE)
 @LooperMode(LooperMode.Mode.PAUSED)
@@ -44,72 +46,103 @@ class CarPlayUserAudioRecoveryTest {
         VehicleCustomizations.register(Preparation)
         AirPlayPersistence.saveMediaViaCarBluetooth(app, false)
         `when`(controller.sendMediaButton(anyInt())).thenReturn(true)
+        `when`(controller.isPhoneMediaResourceReady()).thenReturn(true)
         CarPlayMediaKeys.attach(app, controller)
         CarPlayMediaKeys.onPhoneSessionStarted()
         CarPlayMediaKeys.onMainAudioOwner(CarPlayAudioOwner.PHONE)
     }
     @After fun end() {
         Preparation.enabled = false; Preparation.callbacks.clear()
+        app.getSystemService(AudioManager::class.java).mode = AudioManager.MODE_NORMAL
         CarPlayMediaKeys.detach(controller)
     }
-    @Test fun explicitPlayCanClaimFocusWithoutAnExistingMediaStream() {
+    @Test fun explicitPlayCanClaimFocusWithAConfirmedPhoneResource() {
         CarPlayMediaKeys.fromWindow(Key.PLAY)
         assertTrue(ReflectionHelpers.getField<Boolean>(CarPlayMediaKeys, "focusHeld"))
         verify(controller, times(1)).sendMediaButton(Key.PLAY)
     }
-    @Test fun preparationRunsBeforeOneMediaCommandAndDuplicateCallbackCannotReplay() {
+    @Test fun legacyPreparationIsNeverCalledAndPlayHasNoBluetoothDeadline() {
         Preparation.enabled = true
+        val before = SystemClock.elapsedRealtime()
         CarPlayMediaKeys.fromWindow(Key.PLAY)
-        verify(controller, never()).sendMediaButton(anyInt())
-        assertEquals(1, Preparation.callbacks.size)
-        Preparation.callbacks.single()(true); Preparation.callbacks.single()(true); idle()
+        assertTrue(Preparation.callbacks.isEmpty())
         verify(controller, times(1)).sendMediaButton(Key.PLAY)
+        assertEquals(before, SystemClock.elapsedRealtime())
     }
-    @Test fun duplicateGestureWhileRecoveryPendingIsStillOneAction() {
+    @Test fun nextDuringUnresolvedResourceLossIsImmediateWithoutFocusReclaimOrExtraPlay() {
+        Preparation.enabled = true
+        CarPlayMediaKeys.onMediaAudioChanged(true); idle()
+        ReflectionHelpers.setField(CarPlayMediaKeys, "focusHeld", false)
+        ReflectionHelpers.setField(CarPlayMediaKeys, "transientFocusInterrupted", true)
+        `when`(controller.isPhoneMediaResourceReady()).thenReturn(false)
+        CarPlayMediaKeys.fromWindow(Key.NEXT)
+        assertTrue(Preparation.callbacks.isEmpty())
+        verify(controller, times(1)).sendMediaButton(Key.NEXT)
+        verify(controller, never()).sendMediaButton(Key.PLAY)
+        assertFalse(ReflectionHelpers.getField<Boolean>(CarPlayMediaKeys, "focusHeld"))
+    }
+    @Test fun activeMediaSendsOneNextWithoutWaitingForLegacyHandoff() {
+        Preparation.enabled = true
+        CarPlayMediaKeys.onMediaAudioChanged(true); idle()
+        CarPlayMediaKeys.fromWindow(Key.NEXT)
+        assertTrue(Preparation.callbacks.isEmpty())
+        verify(controller, times(1)).sendMediaButton(Key.NEXT)
+        verify(controller, never()).sendMediaButton(Key.PLAY)
+    }
+    @Test fun confirmedResourceCanRecoverFocusForExactlyOneNext() {
+        CarPlayMediaKeys.onMediaAudioChanged(true); idle()
+        ReflectionHelpers.setField(CarPlayMediaKeys, "focusHeld", false)
+        ReflectionHelpers.setField(CarPlayMediaKeys, "transientFocusInterrupted", true)
+        CarPlayMediaKeys.fromWindow(Key.NEXT)
+        verify(controller, times(1)).sendMediaButton(Key.NEXT)
+        verify(controller, never()).sendMediaButton(Key.PLAY)
+        assertTrue(ReflectionHelpers.getField<Boolean>(CarPlayMediaKeys, "focusHeld"))
+    }
+    @Test fun duplicateGestureIsStillOneAction() {
         Preparation.enabled = true
         CarPlayMediaKeys.fromWindow(Key.PLAY); CarPlayMediaKeys.fromWindow(Key.PLAY)
-        assertEquals(1, Preparation.callbacks.size)
-        Preparation.callbacks.single()(true); idle()
+        assertTrue(Preparation.callbacks.isEmpty())
         verify(controller, times(1)).sendMediaButton(Key.PLAY)
     }
-    @Test fun pauseCancelsAnOlderPendingPlay() {
-        Preparation.enabled = true
-        CarPlayMediaKeys.fromWindow(Key.PLAY)
-        CarPlayMediaKeys.fromWindow(Key.PAUSE)
-        Preparation.callbacks.single()(true); idle()
-        verify(controller, never()).sendMediaButton(Key.PLAY)
+    @Test fun pauseAfterPlayIsSentOnceAndLateOwnershipCannotReplayEitherKey() {
+        `when`(controller.isPhoneMediaResourceReady()).thenReturn(false)
+        CarPlayMediaKeys.onMainAudioOwner(CarPlayAudioOwner.ACCESSORY)
+        CarPlayMediaKeys.fromWindow(Key.PLAY); CarPlayMediaKeys.fromWindow(Key.PAUSE)
+        `when`(controller.isPhoneMediaResourceReady()).thenReturn(true)
+        CarPlayMediaKeys.onMainAudioOwner(CarPlayAudioOwner.PHONE); idle(2600)
+        verify(controller, times(1)).sendMediaButton(Key.PLAY)
         verify(controller, times(1)).sendMediaButton(Key.PAUSE)
+        assertFalse(ReflectionHelpers.getField<Boolean>(CarPlayMediaKeys, "focusHeld"))
     }
-    @Test fun oldRecoveryCannotSendIntoAReconnectedPhoneSession() {
-        Preparation.enabled = true
-        CarPlayMediaKeys.fromWindow(Key.PLAY)
+    @Test fun anOldFocusCallbackCannotAffectAReconnectedPhone() {
+        val request = ReflectionHelpers.getField<android.media.AudioFocusRequest>(CarPlayMediaKeys, "focusRequest")
         CarPlayMediaKeys.onPhoneSessionEnded(); CarPlayMediaKeys.onPhoneSessionStarted()
-        Preparation.callbacks.single()(true); idle()
-        verify(controller, never()).sendMediaButton(Key.PLAY)
+        ReflectionHelpers.callInstanceMethod<AudioManager.OnAudioFocusChangeListener>(request, "getOnAudioFocusChangeListener")
+            .onAudioFocusChange(AudioManager.AUDIOFOCUS_GAIN)
+        assertFalse(ReflectionHelpers.getField<Boolean>(CarPlayMediaKeys, "focusHeld"))
+        verify(controller, never()).sendMediaButton(anyInt())
     }
-    @Test fun phoneIdentityStopsLateDeliveryEvenBeforeUiReceivesDisconnect() {
-        Preparation.enabled = true
+    @Test fun aQueuedForeignThreadKeyCannotCrossThePhoneSessionBoundary() {
         `when`(controller.mediaSessionIdentity()).thenReturn(Any())
-        CarPlayMediaKeys.fromWindow(Key.PLAY)
+        Thread { CarPlayMediaKeys.fromWindow(Key.PLAY) }.apply { start(); join() }
         `when`(controller.mediaSessionIdentity()).thenReturn(Any())
-        Preparation.callbacks.single()(true); idle()
-        verify(controller, never()).sendMediaButton(Key.PLAY)
+        idle()
+        verify(controller, never()).sendMediaButton(anyInt())
     }
-    @Test fun switchingToExternalKeysCancelsPendingCarPlayKey() {
-        Preparation.enabled = true
-        CarPlayMediaKeys.fromWindow(Key.PLAY)
+    @Test fun externalKeyChoiceAppliesToFutureHardwareActions() {
         AirPlayPersistence.saveMediaViaCarBluetooth(app, true)
-        Preparation.callbacks.single()(true); idle()
-        verify(controller, never()).sendMediaButton(Key.PLAY)
+        CarPlayMediaKeys.fromWindow(Key.PLAY)
+        verify(controller, never()).sendMediaButton(anyInt())
+        assertTrue(Preparation.callbacks.isEmpty())
     }
-    @Test fun hungPreparationHasOneBoundedFallbackAndLateResultDoesNotReplay() {
+    @Test fun laterTimersCannotResendTheAlreadyForwardedCommand() {
         Preparation.enabled = true
         CarPlayMediaKeys.fromWindow(Key.PLAY); idle(2600)
+        assertTrue(Preparation.callbacks.isEmpty())
         verify(controller, times(1)).sendMediaButton(Key.PLAY)
-        Preparation.callbacks.single()(true); idle()
-        verify(controller, times(1)).sendMediaButton(Key.PLAY)
+        idle(4000); verify(controller, times(1)).sendMediaButton(Key.PLAY)
     }
-    @Test fun failedRecoveryDoesNotHoldFocusForeverOrAutoplayAgain() {
+    @Test fun failedPlaybackDoesNotHoldFocusForeverOrAutoplayAgain() {
         CarPlayMediaKeys.fromWindow(Key.PLAY); idle(5100)
         assertFalse(ReflectionHelpers.getField<Boolean>(CarPlayMediaKeys, "focusHeld"))
         verify(controller, times(1)).sendMediaButton(Key.PLAY)
@@ -119,12 +152,36 @@ class CarPlayUserAudioRecoveryTest {
         CarPlayMediaKeys.onMediaAudioChanged(true); idle(5100)
         assertTrue(ReflectionHelpers.getField<Boolean>(CarPlayMediaKeys, "focusHeld"))
     }
-    @Test fun ongoingCallCannotStartRecoveryOrSendMediaCommands() {
+    @Test fun ongoingCallCannotSendMediaCommands() {
         Preparation.enabled = true
         app.getSystemService(AudioManager::class.java).mode = AudioManager.MODE_IN_CALL
         CarPlayMediaKeys.fromWindow(Key.PLAY)
         assertTrue(Preparation.callbacks.isEmpty())
         verify(controller, never()).sendMediaButton(anyInt())
-        app.getSystemService(AudioManager::class.java).mode = AudioManager.MODE_NORMAL
+    }
+    @Test fun aPhoneGrantRestoresFocusAfterImmediatePlayWithoutResendingTheKey() {
+        CarPlayMediaKeys.onMainAudioOwner(CarPlayAudioOwner.ACCESSORY)
+        `when`(controller.isPhoneMediaResourceReady()).thenReturn(false)
+        CarPlayMediaKeys.fromWindow(Key.PLAY)
+        assertFalse(ReflectionHelpers.getField<Boolean>(CarPlayMediaKeys, "focusHeld"))
+        verify(controller, times(1)).sendMediaButton(Key.PLAY)
+        `when`(controller.isPhoneMediaResourceReady()).thenReturn(true)
+        CarPlayMediaKeys.onMainAudioOwner(CarPlayAudioOwner.PHONE)
+        assertTrue(ReflectionHelpers.getField<Boolean>(CarPlayMediaKeys, "focusHeld"))
+        verify(controller, times(1)).sendMediaButton(Key.PLAY)
+    }
+    @Test fun unknownResourceCannotClaimFocusButDoesNotBlockTheExplicitKey() {
+        CarPlayMediaKeys.onMainAudioOwner(CarPlayAudioOwner.UNKNOWN)
+        `when`(controller.isPhoneMediaResourceReady()).thenReturn(false)
+        CarPlayMediaKeys.fromWindow(Key.PLAY)
+        assertFalse(ReflectionHelpers.getField<Boolean>(CarPlayMediaKeys, "focusHeld"))
+        verify(controller, times(1)).sendMediaButton(Key.PLAY)
+    }
+    @Test fun pauseDoesNotStartResourceRecovery() {
+        Preparation.enabled = true
+        CarPlayMediaKeys.fromWindow(Key.PAUSE)
+        verify(controller, times(1)).sendMediaButton(Key.PAUSE)
+        verify(controller, never()).onUserMediaPlaybackRequested()
+        assertTrue(Preparation.callbacks.isEmpty())
     }
 }

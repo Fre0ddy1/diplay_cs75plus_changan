@@ -8,7 +8,7 @@ import java.util.concurrent.TimeUnit
 internal sealed interface VideoJob {
     data class Config(val codec: VideoCodec, val codecData: ByteArray) : VideoJob
     data class Frame(val nalus: ByteArray, val receivedNs: Long = System.nanoTime()) : VideoJob
-    data class SurfaceChanged(val surface: Surface?) : VideoJob
+    data class SurfaceChanged(val surface: Surface?, val applied: (() -> Unit)? = null) : VideoJob
     data object Resync : VideoJob
 }
 
@@ -48,6 +48,9 @@ internal class VideoDecodeQueue(
     }
 
     fun poll(timeoutMillis: Long): VideoJob? = jobs.poll(timeoutMillis, TimeUnit.MILLISECONDS)
+
+    /** Teardown must drain barriers even if a second close interrupts the worker again. */
+    fun pollNow(): VideoJob? = jobs.poll()
 
     /** True once every queued job has been taken; used to tell when a video catch-up is complete. */
     fun isEmpty(): Boolean = jobs.isEmpty()

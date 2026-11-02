@@ -1,6 +1,7 @@
 package com.freddyq.diplay.customization
 
 import android.content.Context
+import android.graphics.Bitmap
 import android.util.Log
 import java.util.concurrent.CopyOnWriteArrayList
 
@@ -12,6 +13,8 @@ interface VehicleCustomization {
     fun applicationExitUi(): ApplicationExitUi? = null
     fun onManualApplicationLaunch(context: Context) {}
     fun requestApplicationExit(context: Context, control: ApplicationExitControl): Boolean = false
+    /** Asynchronous cleanup before this app's own process is terminated. */
+    fun prepareApplicationExit(context: Context, completed: () -> Unit): Boolean = false
     fun automaticHotspotDefault(context: Context): Boolean? = null
     fun platformHotspotStarter(context: Context): PlatformHotspotStarter? = null
     fun platformHotspotCredentials(context: Context): PlatformHotspotCredentials? = null
@@ -19,8 +22,16 @@ interface VehicleCustomization {
     /** True claims startup hotspot handling; work must be asynchronous. */
     fun onApplicationForeground(context: Context, control: ApplicationForegroundControl): Boolean = false
     fun mediaKeyRoute(context: Context): MediaKeyRoute? = null
+    /** Selected wireless peer before connection setup; not a claim that authentication finished. */
+    fun onBluetoothMediaConnectionStarting(context: Context, connection: WirelessAudioConnection) {}
+    fun onBluetoothMediaConnectionEnded(owner: Any) {}
     fun onWirelessAudioHandoff(context: Context, connection: WirelessAudioConnection) {}
     fun onWirelessAudioEnded(owner: Any) {}
+    fun onMediaSessionStarted(context: Context, owner: Any) {}
+    fun onMediaSnapshot(context: Context, owner: Any, snapshot: MediaSnapshot) {}
+    /** Bitmap is borrowed until this callback returns; asynchronous consumers must copy it. */
+    fun onMediaArtwork(context: Context, owner: Any, item: MediaItem, bitmap: Bitmap?) {}
+    fun onMediaSessionEnded(owner: Any) {}
     /** Return true only when taking responsibility for completing this explicit user request. */
     fun prepareMediaPlayback(context: Context, completed: (Boolean) -> Unit): Boolean = false
     fun onSessionStarted(context: Context) {}
@@ -109,13 +120,37 @@ open class VehicleCustomizationRegistry {
         return false
     }
 
+    fun prepareApplicationExit(context: Context, completed: () -> Unit) {
+        val remaining = java.util.concurrent.atomic.AtomicInteger(1)
+        fun finished() { if (remaining.decrementAndGet() == 0) completed() }
+        for (extension in extensions) {
+            remaining.incrementAndGet()
+            val once = java.util.concurrent.atomic.AtomicBoolean()
+            val done = { if (once.compareAndSet(false, true)) finished(); Unit }
+            val accepted = runCatching { extension.prepareApplicationExit(context.applicationContext, done) }
+                .onFailure { Log.w(TAG, "${extension.id} exit preparation failed", it) }.getOrDefault(false)
+            if (!accepted) done()
+        }
+        finished()
+    }
+
     fun onSessionStarted(context: Context) {
         if (allowAutomaticStartup(context)) dispatch { it.onSessionStarted(context.applicationContext) }
     }
 
+    fun onBluetoothMediaConnectionStarting(context: Context, connection: WirelessAudioConnection) =
+        dispatch { it.onBluetoothMediaConnectionStarting(context.applicationContext, connection) }
+    fun onBluetoothMediaConnectionEnded(owner: Any) = dispatch { it.onBluetoothMediaConnectionEnded(owner) }
     fun onWirelessAudioHandoff(context: Context, connection: WirelessAudioConnection) =
         dispatch { it.onWirelessAudioHandoff(context.applicationContext, connection) }
     fun onWirelessAudioEnded(owner: Any) = dispatch { it.onWirelessAudioEnded(owner) }
+    fun onMediaSessionStarted(context: Context, owner: Any) =
+        dispatch { it.onMediaSessionStarted(context.applicationContext, owner) }
+    fun onMediaSnapshot(context: Context, owner: Any, snapshot: MediaSnapshot) =
+        dispatch { it.onMediaSnapshot(context.applicationContext, owner, snapshot) }
+    fun onMediaArtwork(context: Context, owner: Any, item: MediaItem, bitmap: Bitmap?) =
+        dispatch { it.onMediaArtwork(context.applicationContext, owner, item, bitmap) }
+    fun onMediaSessionEnded(owner: Any) = dispatch { it.onMediaSessionEnded(owner) }
     fun prepareMediaPlayback(context: Context, completed: (Boolean) -> Unit): Boolean {
         for (extension in extensions) {
             try {

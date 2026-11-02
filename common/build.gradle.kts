@@ -32,6 +32,7 @@ dependencies {
     implementation(project(":changan-hud"))
     implementation(project(":changan-projection"))
     implementation(project(":changan-audio"))
+    implementation(project(":changan-media"))
     implementation(project(":compact-logging"))
     implementation(project(":app-lifecycle"))
     implementation(project(":glass-ui"))
