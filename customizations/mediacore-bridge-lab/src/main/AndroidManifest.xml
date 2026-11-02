@@ -1,0 +1,10 @@
+<manifest xmlns:android="http://schemas.android.com/apk/res/android">
+    <application android:label="MediaCore桥·本地验证" android:icon="@android:drawable/ic_menu_info_details" android:allowBackup="false" android:theme="@android:style/Theme.Material.Light.NoActionBar">
+        <activity android:name=".BridgeLabActivity" android:exported="true">
+            <intent-filter><action android:name="android.intent.action.MAIN" /><category android:name="android.intent.category.LAUNCHER" /></intent-filter>
+        </activity>
+        <service android:name=".LocalModelService" android:exported="false" android:process=":receiver" />
+        <provider android:name="com.freddyq.diplay.mediabridge.receiver.BridgeCoverProvider"
+            android:authorities="${applicationId}.mediacore.bridge.covers" android:exported="false" android:grantUriPermissions="true" />
+    </application>
+</manifest>

@@ -23,6 +23,11 @@ dependencyResolutionManagement {
 }
 
 rootProject.name = "xcertplay"
+// Local bridge prototypes only; none is a dependency of the production application.
+include(":mediacore-bridge-contract", ":mediacore-bridge-publisher", ":mediacore-bridge-receiver", ":mediacore-bridge-lab")
+for (name in listOf("contract", "publisher", "receiver", "lab")) {
+    project(":mediacore-bridge-$name").projectDir = file("customizations/mediacore-bridge-$name")
+}
 include(":vehicle-customization-api", ":changan-hud")
 project(":vehicle-customization-api").projectDir = file("customizations/api")
 project(":changan-hud").projectDir = file("customizations/changan-hud")

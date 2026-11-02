@@ -1,0 +1,3 @@
+<resources>
+    <string name="bridge_status">仅本地模型，不代表原车接通\n结果=%1$s 阶段=%2$s\n连接=%3$s Provider=%4$d\n媒体=%5$s\n封面=%6$s</string>
+</resources>

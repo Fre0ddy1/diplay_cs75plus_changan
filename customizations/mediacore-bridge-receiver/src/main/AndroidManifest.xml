@@ -1,0 +1,2 @@
+<!-- The OEM host must explicitly register its service/provider. Nothing is exported by this library. -->
+<manifest />
