@@ -14,6 +14,7 @@ import android.graphics.SurfaceTexture
 import android.graphics.drawable.ColorDrawable
 import android.view.WindowManager
 import android.graphics.Point
+import com.shilapi.xcertplay.media.ScreenStreamGeometry
 import android.hardware.display.DisplayManager
 import android.os.Bundle
 import android.util.Log
@@ -82,6 +83,7 @@ internal class ClusterMapPresentation(
     private var genericTextureView: TextureView? = null
     private var navTextureView: TextureView? = null
     private var cardTextureView: TextureView? = null
+    private var cardContainer: FrameLayout? = null
     /** Root the card window is attached to while it exists (FLY_CARD only). */
     private var rootView: FrameLayout? = null
     /** The instruction-card stream is up right now (the phone is sending frames). */
@@ -89,6 +91,12 @@ internal class ClusterMapPresentation(
     /** Current decoded picture size of the instruction-card stream, in its own pixels. */
     private var cardVideoWidth = CarPlayClusterDisplay.CARD_WIDTH_PIXELS
     private var cardVideoHeight = CarPlayClusterDisplay.CARD_HEIGHT_PIXELS
+    private var cardStreamWidth = cardVideoWidth
+    private var cardStreamHeight = cardVideoHeight
+    private var cardCropLeft = 0
+    private var cardCropTop = 0
+    private var cardCropWidth = cardVideoWidth
+    private var cardCropHeight = cardVideoHeight
     /** Panel coordinates the card window was last laid out at, i.e. AFTER the clamp (FLY_CARD). */
     private var cardWindowLeft = CARD_LEFT_PX
     private var cardWindowTop = CARD_TOP_PX
@@ -537,11 +545,14 @@ internal class ClusterMapPresentation(
     private fun createCardWindow() {
         val root = rootView ?: return
         if (cardTextureView != null) return
+        val container = FrameLayout(context)
+        container.clipChildren = true
+        container.clipToOutline = true
         val cardView = TextureView(context)
         cardView.surfaceTextureListener = object : TextureView.SurfaceTextureListener {
             override fun onSurfaceTextureAvailable(texture: SurfaceTexture, width: Int, height: Int) {
                 Log.i(TAG, "cluster card surface created")
-                texture.setDefaultBufferSize(cardVideoWidth, cardVideoHeight)
+                texture.setDefaultBufferSize(cardStreamWidth, cardStreamHeight)
                 cardOutputSurface = Surface(texture).also(onCardSurface)
             }
 
@@ -558,11 +569,26 @@ internal class ClusterMapPresentation(
             }
         }
         cardTextureView = cardView
-        // Keep the rectangular video surface; do not round or crop its corners locally.
-        cardView.clipToOutline = false
-        root.addView(cardView, cardWindowParams())
+        cardContainer = container
+        // The decoded buffer is larger than the card's real content. Lay the full buffer out with
+        // a negative offset inside a container of the crop's size; the container clips the rest.
+        container.addView(
+            cardView,
+            FrameLayout.LayoutParams(cardStreamWidth, cardStreamHeight).apply {
+                leftMargin = -cardCropLeft
+                topMargin = -cardCropTop
+            },
+        )
+        // Preserve the rectangular CarPlay picture; only the crop rectangle clips it.
+        container.clipToOutline = false
+        root.addView(container, cardWindowParams())
         applyCardWindowVisibility()
-        Log.i(TAG, "cluster card window created ${cardVideoWidth}x$cardVideoHeight at $cardWindowLeft,$cardWindowTop")
+        Log.i(
+            TAG,
+            "cluster card window created buffer=${cardStreamWidth}x$cardStreamHeight " +
+                "crop=${cardCropLeft},${cardCropTop} ${cardCropWidth}x$cardCropHeight " +
+                "at $cardWindowLeft,$cardWindowTop",
+        )
     }
 
     /**
@@ -574,14 +600,15 @@ internal class ClusterMapPresentation(
      */
     private fun applyCardWindowVisibility() {
         if (!flyCard) return
-        cardTextureView?.visibility = if (mirrorMode) View.GONE else View.VISIBLE
+        cardContainer?.visibility = if (mirrorMode) View.GONE else View.VISIBLE
     }
 
     /** Drops the window and its surface; the host releases the decoder with it. */
     private fun destroyCardWindow() {
-        val view = cardTextureView ?: return
+        val container = cardContainer ?: return
+        cardContainer = null
         cardTextureView = null
-        (view.parent as? android.view.ViewGroup)?.removeView(view)
+        (container.parent as? android.view.ViewGroup)?.removeView(container)
         Log.i(TAG, "cluster card window destroyed")
     }
 
@@ -592,20 +619,42 @@ internal class ClusterMapPresentation(
      * it. Fires once per codec from the video output format's crop rectangle
      * (AndroidMediaSink.onScreenStreamOutputSize).
      */
-    fun setCardVideoSize(width: Int, height: Int) {
-        if (width <= 0 || height <= 0) return
-        if (width == cardVideoWidth && height == cardVideoHeight) return
-        cardVideoWidth = width
-        cardVideoHeight = height
-        val view = cardTextureView ?: return
-        view.surfaceTexture?.setDefaultBufferSize(width, height)
-        // A different picture size moves the clamp ceiling as well, so the position is resolved
-        // again from the saved (x, y) instead of reusing the previous layout.
-        view.layoutParams = cardWindowParams()
+    fun setCardVideoSize(width: Int, height: Int) =
+        setCardVideoGeometry(ScreenStreamGeometry(width, height, 0, 0, width, height))
+
+    fun setCardVideoGeometry(geometry: ScreenStreamGeometry) {
+        if (!geometry.valid) return
+        if (geometry.streamWidth == cardStreamWidth &&
+            geometry.streamHeight == cardStreamHeight &&
+            geometry.cropLeft == cardCropLeft &&
+            geometry.cropTop == cardCropTop &&
+            geometry.cropWidth == cardCropWidth &&
+            geometry.cropHeight == cardCropHeight
+        ) {
+            return
+        }
+        cardStreamWidth = geometry.streamWidth
+        cardStreamHeight = geometry.streamHeight
+        cardCropLeft = geometry.cropLeft
+        cardCropTop = geometry.cropTop
+        cardCropWidth = geometry.cropWidth
+        cardCropHeight = geometry.cropHeight
+        cardVideoWidth = cardCropWidth
+        cardVideoHeight = cardCropHeight
+        val texture = cardTextureView
+        if (texture != null) {
+            texture.surfaceTexture?.setDefaultBufferSize(cardStreamWidth, cardStreamHeight)
+            texture.layoutParams = FrameLayout.LayoutParams(cardStreamWidth, cardStreamHeight).apply {
+                leftMargin = -cardCropLeft
+                topMargin = -cardCropTop
+            }
+        }
+        cardContainer?.layoutParams = cardWindowParams()
         Log.i(
             TAG,
-            "cluster card picture ${width}x$height window=${cardVideoWidth}x$cardVideoHeight " +
-                "at $cardWindowLeft,$cardWindowTop",
+            "cluster card buffer=${cardStreamWidth}x$cardStreamHeight " +
+                "crop=${cardCropLeft},${cardCropTop} ${cardCropWidth}x$cardCropHeight " +
+                "window at $cardWindowLeft,$cardWindowTop",
         )
     }
 
@@ -623,7 +672,7 @@ internal class ClusterMapPresentation(
         // corrects an out-of-bounds saved value, and that has to keep working while no window
         // exists (a coordinate saved before the first stream must not stay impossible).
         val params = cardWindowParams()
-        val view = cardTextureView ?: return
+        val view = cardContainer ?: return
         val applied = view.layoutParams as? FrameLayout.LayoutParams
         // The host reaches this from applyClusterTurnOverlay(), which the guidance/ETA tick drives
         // once per second. Assigning layoutParams requests a layout pass of the whole window, and

@@ -49,4 +49,20 @@ class CarPlayMediaResourceGainTest {
         val entries = ReflectionHelpers.getField<Map<*, *>>(coordinator, "active")
         assertFalse(entries.containsKey(track))
     }
+    @Test fun guidanceDoesNotMultiplyThePcmGainByTheTrackVolume() {
+        coordinator.acquire(track, AudioChannel.MEDIA, attributes)
+        coordinator.setGuidanceDucking(true)
+        assertEquals(0.75f, coordinator.currentMediaGain(), 0.001f)
+        assertEquals(1f, ReflectionHelpers.getField<Float>(track, "mLeftVolume"), 0f)
+        assertEquals(1f, ReflectionHelpers.getField<Float>(track, "mRightVolume"), 0f)
+    }
+    @Test fun restoringOwnershipDuringGuidanceReopensTheTrackAtUnity() {
+        coordinator.acquire(track, AudioChannel.MEDIA, attributes)
+        coordinator.setGuidanceDucking(true)
+        coordinator.setMediaResourceAllowed(false)
+        assertEquals(0f, ReflectionHelpers.getField<Float>(track, "mLeftVolume"), 0f)
+        coordinator.setMediaResourceAllowed(true)
+        assertEquals(0.75f, coordinator.currentMediaGain(), 0.001f)
+        assertEquals(1f, ReflectionHelpers.getField<Float>(track, "mLeftVolume"), 0f)
+    }
 }

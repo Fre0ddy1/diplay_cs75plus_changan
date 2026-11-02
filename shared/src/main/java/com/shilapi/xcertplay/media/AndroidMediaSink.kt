@@ -72,6 +72,8 @@ internal class AudioFocusCoordinator(
     fun setMediaResourceAllowed(allowed: Boolean) {
         if (mediaResourceAllowed == allowed) return
         mediaResourceAllowed = allowed
+        active.entries.filter { it.value.channel == AudioChannel.MEDIA }
+            .forEach { (track, _) -> runCatching { track.setStereoVolume(if (allowed) 1f else 0f, if (allowed) 1f else 0f) } }
         if (enabled) refreshRequest()
         applyDuckVolume()
         report("Audio: mainAudio mediaAllowed=$allowed")
@@ -118,7 +120,7 @@ internal class AudioFocusCoordinator(
         // A track that appears while the music is ducked starts at that same level, so it cannot
         // play loud under a prompt. Prompts and calls are never attenuated this way.
         if (channel == AudioChannel.MEDIA) {
-            runCatching { track.setStereoVolume(appliedVolume, appliedVolume) }
+            runCatching { track.setStereoVolume(if (mediaResourceAllowed) 1f else 0f, if (mediaResourceAllowed) 1f else 0f) }
         }
     }
 
@@ -171,11 +173,12 @@ internal class AudioFocusCoordinator(
         // Only ever move toward the target once: repeated duck callbacks must not multiply.
         if (volume == appliedVolume) return
         appliedVolume = volume
-        // Music only. Turning down the prompt that caused the duck would defeat its purpose, and a
-        // call's audio must never be attenuated.
+        // PCM is the only attenuation stage. Track volume only gates resource ownership (0/1),
+        // so 60% is not multiplied into 36%. Prompts and calls are never attenuated here.
         val media = active.entries.filter { it.value.channel == AudioChannel.MEDIA }
         runCatching { report("Audio: duck gain=$volume mediaTracks=${media.size}/${active.size}") }
-        media.forEach { (track, _) -> runCatching { track.setStereoVolume(volume, volume) } }
+        // No AudioTrack volume call on a navigation duck: only PCM changes. The 0/1 ownership
+        // gate is applied separately when the resource owner changes.
     }
 
     /**
@@ -205,7 +208,7 @@ internal class AudioFocusCoordinator(
             appliedVolume = if (mediaResourceAllowed) FULL_VOLUME else 0f
             runCatching { report("Audio: music level forced to full ($reason)") }
             active.entries.filter { it.value.channel == AudioChannel.MEDIA }
-                .forEach { (track, _) -> runCatching { track.setStereoVolume(appliedVolume, appliedVolume) } }
+                .forEach { (track, _) -> runCatching { track.setStereoVolume(if (mediaResourceAllowed) 1f else 0f, if (mediaResourceAllowed) 1f else 0f) } }
         }
     }
 
@@ -297,7 +300,7 @@ class AndroidMediaSink(
      * from the output format's crop rectangle. The instruction-card stream (112) uses it to size
      * its dashboard window by the stream's own aspect instead of a guessed panel percentage.
      */
-    onScreenStreamOutputSize: ((Int, Int, Int) -> Unit)? = null,
+    onScreenStreamOutputSize: ((Int, ScreenStreamGeometry) -> Unit)? = null,
     private val mediaBufferMillis: Int = MediaAudioBuffer.DEFAULT_MILLIS,
     private val onAudioDiagnostic: (String) -> Unit = {},
     /** True while any music ("media") audio stream is running; called from media threads. */
@@ -322,7 +325,10 @@ class AndroidMediaSink(
     private val defaultSurface = surface
     @Volatile private var screenStreamActiveChanged = onScreenStreamActiveChanged
     @Volatile private var screenStreamOutputSize = onScreenStreamOutputSize
+    private val screenGeometries = ConcurrentHashMap<Int, ScreenStreamGeometry>()
+    fun currentScreenGeometry(type: Int): ScreenStreamGeometry? = screenGeometries[type]
     private val surfaces = ConcurrentHashMap<Int, Surface>()
+    private val surfaceHandoffGeneration = AtomicInteger()
     private val videoDecoders = ConcurrentHashMap<Int, VideoDecoder>()
     private val mediaAudioTypes = mutableSetOf<AudioStreamId>()
     private val navigationIds = mutableSetOf<AudioStreamId>()
@@ -479,6 +485,26 @@ class AndroidMediaSink(
         if (surfaces.remove(type, surface)) videoDecoders[type]?.setSurface(null)
     }
 
+    /** A Surface has one producer: both old workers acknowledge detachment before either attaches. */
+    @Synchronized
+    fun rebindScreenPair(firstType: Int, first: Surface?, secondType: Int, second: Surface?) {
+        val generation = surfaceHandoffGeneration.incrementAndGet()
+        val remaining = AtomicInteger(2)
+        val detached = {
+            if (remaining.decrementAndGet() == 0) synchronized(this) {
+                if (!closedForPoll && generation == surfaceHandoffGeneration.get()) {
+                    first?.let { setSurface(firstType, it) }
+                    second?.let { setSurface(secondType, it) }
+                }
+            }
+        }
+        for (type in listOf(firstType, secondType)) {
+            surfaces.remove(type)
+            val worker = videoDecoders[type]
+            if (worker == null) detached() else worker.setSurface(null, detached)
+        }
+    }
+
     /**
      * Also decodes stream [type] onto [surface] with its own decoder, one per [key], which
      * starts at the next keyframe it asks for; null stops it. The stream's own surface is not affected.
@@ -514,8 +540,9 @@ class AndroidMediaSink(
      * Installs the real-picture-size reporter on an ALREADY created sink (a reused background
      * session builds its sink before this activity attaches).
      */
-    fun setScreenStreamOutputSizeListener(listener: ((Int, Int, Int) -> Unit)?) {
+    fun setScreenStreamOutputSizeListener(listener: ((Int, ScreenStreamGeometry) -> Unit)?) {
         screenStreamOutputSize = listener
+        if (!closedForPoll) screenGeometries.forEach { (type, geometry) -> listener?.invoke(type, geometry) }
     }
 
     override fun onVideoCodec(type: Int, codec: VideoCodec) {
@@ -539,6 +566,7 @@ class AndroidMediaSink(
             videoRecoveryHandlers.remove(type)
             videoDiagnosticHandlers.remove(type)
             videoDecoders.remove(type)?.close()
+            screenGeometries.remove(type)
             synchronized(mirrorLock) {
                 mirrorDecoders.keys.filter { it.first == type }.forEach { mirrorDecoders.remove(it)?.close() }
             }
@@ -938,6 +966,8 @@ class AndroidMediaSink(
         }
         videoDecoders.values.forEach(VideoDecoder::close)
         videoDecoders.clear()
+        screenGeometries.clear()
+        screenStreamOutputSize = null
         synchronized(mirrorLock) {
             mirrorDecoders.values.forEach(VideoDecoder::close)
             mirrorDecoders.clear()
@@ -970,17 +1000,26 @@ class AndroidMediaSink(
     private fun videoDecoder(type: Int): VideoDecoder =
         videoDecoders.computeIfAbsent(type) { newVideoDecoder(type, surfaces[type] ?: defaultSurface) }
 
-    private fun newVideoDecoder(type: Int, surface: Surface?, statsLabel: String? = null) = VideoDecoder(
-        type,
-        surface,
-        videoWidth,
-        videoHeight,
-        preferSoftwareHevcDecoder,
-        requestKeyFrame = { requestVideoRecovery(type) },
-        report = { videoDiagnosticHandlers[type]?.invoke(it) },
-        statsLabel = statsLabel,
-        onOutputSize = { w, h -> screenStreamOutputSize?.invoke(type, w, h) },
-    )
+    private fun newVideoDecoder(type: Int, surface: Surface?, statsLabel: String? = null): VideoDecoder {
+        lateinit var worker: VideoDecoder
+        worker = VideoDecoder(
+            type, surface,
+            if (type == 112) 960 else videoWidth,
+            if (type == 112) 600 else videoHeight,
+            preferSoftwareHevcDecoder,
+            requestKeyFrame = { requestVideoRecovery(type) },
+            report = { videoDiagnosticHandlers[type]?.invoke(it) },
+            statsLabel = statsLabel,
+            onOutputSize = { geometry ->
+                // A closed/replaced decoder and a mirror must never rename the live cluster stream.
+                if (!closedForPoll && statsLabel == null && videoDecoders[type] === worker) {
+                    screenGeometries[type] = geometry
+                    screenStreamOutputSize?.invoke(type, geometry)
+                }
+            },
+        )
+        return worker
+    }
 
     @Synchronized
     private fun audioRenderer(id: AudioStreamId, format: AudioFormat): AudioRenderer {
@@ -1013,9 +1052,10 @@ private class VideoDecoder(
     private val report: (String) -> Unit,
     statsLabel: String? = null,
     /** Fires once per codec with the crop rectangle's real picture size (coded may be padded). */
-    private val onOutputSize: ((Int, Int) -> Unit)? = null,
+    private val onOutputSize: ((ScreenStreamGeometry) -> Unit)? = null,
 ) : Closeable {
     private val queue = VideoDecodeQueue()
+    private var workerReleased = false // Guarded by this, including final barrier draining.
     @Volatile private var running = true
     @Volatile private var decoder: MediaCodec? = null
     private var outputSurface: Surface? = surface
@@ -1055,8 +1095,10 @@ private class VideoDecoder(
         queue.offer(VideoJob.Frame(nalus))
     }
 
-    fun setSurface(surface: Surface?) {
-        queue.offer(VideoJob.SurfaceChanged(surface))
+    @Synchronized
+    fun setSurface(surface: Surface?, applied: (() -> Unit)? = null) {
+        if (workerReleased) { applied?.invoke(); return }
+        queue.offer(VideoJob.SurfaceChanged(surface, applied))
     }
 
     override fun close() {
@@ -1102,12 +1144,25 @@ private class VideoDecoder(
                 } catch (error: LinkageError) {
                     if (running) reportFailure("stage=${job?.javaClass?.simpleName ?: "drain"}", error)
                     throw error
+                } finally {
+                    if (job is VideoJob.SurfaceChanged) runCatching { job.applied?.invoke() }
                 }
             }
         } catch (_: InterruptedException) {
             // Worker shut down.
         } finally {
             releaseDecoder()
+            // A worker closed with pending detach requests must still release their barriers.
+            val pendingCompletions = mutableListOf<() -> Unit>()
+            synchronized(this) {
+                workerReleased = true
+                while (true) {
+                    val pending = queue.poll(0) ?: break
+                    if (pending is VideoJob.SurfaceChanged) pending.applied?.let(pendingCompletions::add)
+                }
+            }
+            // Callbacks can acquire the sink lock; never invoke them under the worker lock.
+            pendingCompletions.forEach { runCatching(it) }
         }
     }
 
@@ -1149,11 +1204,14 @@ private class VideoDecoder(
             DecoderAttempt(codecName = null, tuned = true),
             DecoderAttempt(codecName = null, tuned = false),
         ) + softwareDecoderName(mime)?.let { listOf(DecoderAttempt(it, tuned = false)) }.orEmpty()
-        var next: MediaCodec? = null
-        for (attempt in attempts) {
-            next = tryConfigure(mime, csd, surface, attempt)
-            if (next != null) break
-        }
+        val next = configureDecoderWithRetry(
+            running = { running },
+            configure = { attempts.firstNotNullOfOrNull { if (running) tryConfigure(mime, csd, surface, it) else null } },
+            settle = {
+                report("decoder busy mime=$mime size=${width}x$height; retrying after 800ms")
+                Thread.sleep(800L)
+            },
+        )
         if (next == null) {
             report("decoder configuration failed mime=$mime size=${width}x$height")
         }
@@ -1405,10 +1463,11 @@ private class VideoDecoder(
         val bottom = format.intOrNull("crop-bottom") ?: (codedHeight - 1)
         val realWidth = right - left + 1
         val realHeight = bottom - top + 1
-        if (realWidth <= 0 || realHeight <= 0) return
+        val geometry = ScreenStreamGeometry(codedWidth, codedHeight, left, top, realWidth, realHeight)
+        if (!geometry.valid || !running) return
         outputSizeReported = true
-        report("video output size ${realWidth}x${realHeight}")
-        onOutputSize?.invoke(realWidth, realHeight)
+        report("video output size ${realWidth}x${realHeight} crop=$left,$top buffer=${codedWidth}x$codedHeight")
+        onOutputSize?.invoke(geometry)
     }
 
     private fun reportFailure(context: String, error: Throwable) {
@@ -1491,6 +1550,7 @@ private class AudioRenderer(
     private var prebufferBytes = 0
     private var startThresholdBytes = 0
     private var fadeApplied = false
+    private val pcmGain = MediaPcmGain(format.channels)
     private var droppedPacketsLogged = false
     private var firstAacPayloadLogged = false
     private var firstOpusShortPacketLogged = false
@@ -2073,17 +2133,7 @@ private class AudioRenderer(
      * alone could be inaudible (field 2026-10-25).
      */
     private fun applyMediaGain(data: ByteArray, offset: Int, length: Int) {
-        val gain = audioFocusCoordinator.currentMediaGain()
-        if (gain >= 0.999f) return
-        var i = offset
-        val end = offset + (length / 2) * 2
-        while (i < end) {
-            val sample = (data[i + 1].toInt() shl 8) or (data[i].toInt() and 0xFF)
-            val scaled = (sample * gain).toInt().coerceIn(-32768, 32767)
-            data[i] = scaled.toByte()
-            data[i + 1] = (scaled shr 8).toByte()
-            i += 2
-        }
+        pcmGain.apply(data, offset, length, audioFocusCoordinator.currentMediaGain())
     }
 
     private fun writePcm(data: ByteArray, offset: Int = 0, length: Int = data.size) {
