@@ -121,6 +121,16 @@ class IncallMusicRhythm(
             service = binder
             binding = false
             log("Ambient: vehicle setting service connected=${binder != null}")
+            if (binder == null) return
+            // A fresh binding knows nothing about us, and the handoff that asked for it may have
+            // run while it was still connecting. Replay the whole state instead of waiting for the
+            // next track; without this a slow bind leaves the lamps dark until something changes.
+            switchedOn = false
+            handedSession = 0
+            if (lastSessionId > 0 && AirPlayPersistence.loadAmbientRhythmEnabled(context)) {
+                handler.removeCallbacks(handoff)
+                handler.postDelayed(handoff, HANDOFF_DELAY_MS)
+            }
         }
 
         override fun onServiceDisconnected(name: ComponentName?) {
@@ -155,6 +165,10 @@ class IncallMusicRhythm(
             return@Runnable
         }
         if (service != null) {
+            // Every start re-declares the source, the same way the reference app does. The car's
+            // media UI clears the flag whenever it wakes, and a paused-then-resumed track reuses
+            // its session id, so waiting for a session change leaves the lamps dark.
+            switchOn(force = true)
             handSession(session)
             report(PLAYING, "session $session playing")
             // After the play status: the service only decodes the picture once its status is > 0.
@@ -350,6 +364,7 @@ class IncallMusicRhythm(
                 return@post
             }
             if (service != null) {
+                switchOn(force = true)
                 handSession(session)
                 report(PLAYING, "session $session playing")
                 startReassert()
@@ -402,10 +417,6 @@ class IncallMusicRhythm(
 
     private fun handSession(sessionId: Int) {
         if (sessionId == handedSession) return
-        // Before the session: the switch handler re-runs the spectrum setup with whatever session
-        // the service already holds, so declaring the source first lets the id below pass straight
-        // through instead of being stored and ignored.
-        switchOn()
         val handed = call(TX_AUDIO_SESSION) { it.writeInt(sessionId) }
         handedSession = sessionId
         log("Ambient: audio session $sessionId -> $handed")
