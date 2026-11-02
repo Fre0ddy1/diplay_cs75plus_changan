@@ -1157,7 +1157,7 @@ private class VideoDecoder(
             synchronized(this) {
                 workerReleased = true
                 while (true) {
-                    val pending = queue.poll(0) ?: break
+                    val pending = queue.pollNow() ?: break
                     if (pending is VideoJob.SurfaceChanged) pending.applied?.let(pendingCompletions::add)
                 }
             }

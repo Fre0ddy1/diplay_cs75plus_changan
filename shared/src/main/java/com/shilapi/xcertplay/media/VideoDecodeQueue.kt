@@ -49,6 +49,9 @@ internal class VideoDecodeQueue(
 
     fun poll(timeoutMillis: Long): VideoJob? = jobs.poll(timeoutMillis, TimeUnit.MILLISECONDS)
 
+    /** Teardown must drain barriers even if a second close interrupts the worker again. */
+    fun pollNow(): VideoJob? = jobs.poll()
+
     /** True once every queued job has been taken; used to tell when a video catch-up is complete. */
     fun isEmpty(): Boolean = jobs.isEmpty()
 }
