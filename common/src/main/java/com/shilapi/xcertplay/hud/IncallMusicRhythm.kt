@@ -66,6 +66,8 @@ class IncallMusicRhythm(
         private const val TX_RHYTHM_SWITCH = 3
         /** setMusicLightPlayStatus(boolean); newer firmware wants this instead of the int status. */
         private const val TX_LIGHT_STATUS = 9
+        /** getMusicRhythmSwitchState(): true while the service still considers us the source. */
+        private const val TX_SWITCH_STATE = 10
         /** musicAlbumPicture(String): a file path the service decodes and runs Palette over. */
         private const val TX_ALBUM_PICTURE = 4
         /** Square size of the redrawn cover; the service only samples it for a colour. */
@@ -79,6 +81,15 @@ class IncallMusicRhythm(
         private const val NOT_PLAYING = 1
         /** The sink prebuffers for ~1 s before the first PCM write; the Visualizer needs audio. */
         private const val HANDOFF_DELAY_MS = 1_500L
+        /**
+         * How often to check whether we are still the service's rhythm source.
+         *
+         * The car's own media UI takes the flag back the moment it comes up (field 2026-11-02:
+         * opening the Bluetooth music screen killed the rhythm and nothing brought it back). The
+         * flag is memory only and the service reports it through transaction 10, so a light poll
+         * can put it back without waiting for the next track.
+         */
+        private const val REASSERT_INTERVAL_MS = 3_000L
 
         @Volatile private var current: IncallMusicRhythm? = null
 
@@ -96,6 +107,8 @@ class IncallMusicRhythm(
     private var handedSession = 0
     /** The source flag lives in the service's memory only, so it is re-sent per binding. */
     private var switchedOn = false
+    /** Set when the service turns out to lack the state query; polling would only churn. */
+    private var reassertDisabled = false
     /** Absolute path of the cover last written for the service, and the bitmap it came from. */
     @Volatile private var coverPath: String? = null
     private var coverIdentity = 0
@@ -146,6 +159,7 @@ class IncallMusicRhythm(
             report(PLAYING, "session $session playing")
             // After the play status: the service only decodes the picture once its status is > 0.
             pushCover()
+            startReassert()
         } else {
             bind()
         }
@@ -287,6 +301,42 @@ class IncallMusicRhythm(
         log("Ambient: album picture -> $sent")
     }
 
+    /**
+     * Puts the source flag back if the car's own media UI took it. Runs only while a track is
+     * loaded and the service is bound; a cleared flag means the session we handed over is being
+     * stored and ignored, so both calls are repeated.
+     */
+    private val reassert = object : Runnable {
+        override fun run() {
+            if (reassertDisabled) return
+            if (!AirPlayPersistence.loadAmbientRhythmEnabled(context)) return
+            val session = lastSessionId
+            if (session > 0 && service != null) {
+                val stillOurs = call(TX_SWITCH_STATE) { }
+                if (!stillOurs) {
+                    switchOn(force = true)
+                    call(TX_AUDIO_SESSION) { it.writeInt(session) }
+                    // Read it back: on firmware without transaction 10 every read looks "cleared",
+                    // and re-declaring every 3 s would rebuild the Visualizer and chop the rhythm.
+                    val confirmed = call(TX_SWITCH_STATE) { }
+                    if (!confirmed) {
+                        reassertDisabled = true
+                        log("Ambient: switch state unreadable, stopped polling")
+                        return
+                    }
+                    log("Ambient: source flag was cleared, re-asserted session $session")
+                }
+            }
+            handler.postDelayed(this, REASSERT_INTERVAL_MS)
+        }
+    }
+
+    private fun startReassert() {
+        if (reassertDisabled) return
+        handler.removeCallbacks(reassert)
+        handler.postDelayed(reassert, REASSERT_INTERVAL_MS)
+    }
+
     /** The settings switch changed. */
     fun refreshFromSettings() {
         handler.post {
@@ -302,6 +352,7 @@ class IncallMusicRhythm(
             if (service != null) {
                 handSession(session)
                 report(PLAYING, "session $session playing")
+                startReassert()
             } else {
                 bind()
             }
@@ -320,6 +371,7 @@ class IncallMusicRhythm(
 
     private fun stop(reason: String) {
         if (service != null) report(NOT_PLAYING, "loop stopped ($reason)")
+        handler.removeCallbacks(reassert)
         handedSession = 0
         switchedOn = false
         if (bound) {
@@ -359,12 +411,12 @@ class IncallMusicRhythm(
         log("Ambient: audio session $sessionId -> $handed")
     }
 
-    /** Tells the service that the rhythm source is us. Kept once per binding; the flag is not persisted. */
-    private fun switchOn() {
-        if (switchedOn) return
+    /** Tells the service that the rhythm source is us. The flag is memory only, so it can be taken back. */
+    private fun switchOn(force: Boolean = false) {
+        if (switchedOn && !force) return
         val ok = call(TX_RHYTHM_SWITCH) { it.writeInt(1) }
         switchedOn = ok
-        log("Ambient: music rhythm source -> $ok")
+        log("Ambient: music rhythm source -> $ok${if (force) " (re-assert)" else ""}")
     }
 
     private fun report(status: Int, what: String) {
