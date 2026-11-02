@@ -4,25 +4,41 @@ import android.content.ComponentName
 import android.content.Context
 import android.content.Intent
 import android.content.ServiceConnection
+import android.graphics.Bitmap
 import android.os.Handler
 import android.os.IBinder
 import android.os.Looper
 import android.os.Parcel
 import com.shilapi.xcertplay.AirPlayPersistence
+import java.io.File
+import java.io.FileOutputStream
+import java.util.concurrent.Executors
+import kotlin.math.max
 
 /**
  * Drives the head unit's ambient-light music rhythm from CarPlay's music.
  *
- * What the car's own player does, and therefore what this class does - nothing else:
+ * Transactions used, and what each one buys (ids verified against the service's Stub):
  *
- *   setAudioSessionId(int)   transaction 2 - the session of the music AudioTrack
- *   setMusicPlayStatus(int)  transaction 1 - 2 while playing, 1 when not
+ *   musicRhythmSwitchOn(boolean)  transaction 3 - declares this app the rhythm source. The
+ *                                 service keeps that in a runtime flag, and its spectrum loop
+ *                                 refuses to build a Visualizer while the flag is not "2" (it logs
+ *                                 "Visualizer不需要初始化：rhythmSwitchOn=1"). Without it a session
+ *                                 id is stored and then ignored, which is why the lamps only ever
+ *                                 followed the car's own player and needed its Bluetooth media
+ *                                 audio switched off.
+ *   setAudioSessionId(int)        transaction 2 - the session of the music AudioTrack.
+ *   setMusicPlayStatus(int)       transaction 1 - 2 while playing, 1 when not.
+ *   setMusicLightPlayStatus(bool) transaction 9 - the boolean form newer firmware reads.
+ *   musicAlbumPicture(String)     transaction 4 - absolute path of a cover image. The service
+ *                                 runs BitmapFactory.decodeFile + Palette over it to pick the
+ *                                 lamp colour; without it the colour never changes.
  *
- * It never calls musicRhythmSwitchOn: that switch is the driver's setting and the head unit's own
- * player leaves it alone too (its log shows only sendMusicPlayStatus(mediaSource, 3|5), which the
- * manager maps to 1 and 2).
+ * The flag is memory only, so it is re-sent for every binding. The car's own player never calls
+ * musicRhythmSwitchOn, so taking it over here does not fight anything - but it is not undone on
+ * stop either, matching what the reference app does.
  *
- * It also never attaches a Visualizer of its own. One session can carry a single Visualizer, so a
+ * It never attaches a Visualizer of its own. One session can carry a single Visualizer, so a
  * probe here would knock the manager's listener off the session it was just given (field
  * 2026-11-01 13:30: lamps went dark on connect, lit once playback started).
  */
@@ -46,6 +62,11 @@ class IncallMusicRhythm(
         private const val TX_RHYTHM_SWITCH = 3
         /** setMusicLightPlayStatus(boolean); newer firmware wants this instead of the int status. */
         private const val TX_LIGHT_STATUS = 9
+        /** musicAlbumPicture(String): a file path the service decodes and runs Palette over. */
+        private const val TX_ALBUM_PICTURE = 4
+        /** Longest edge the cover is scaled to; the service only samples it for a colour. */
+        private const val COVER_MAX_EDGE = 512
+        private const val COVER_QUALITY = 92
         /** 2 = playing; only this value starts the manager's spectrum loop. */
         private const val PLAYING = 2
         /** 1 = not playing; anything but 2 stops the loop. */
@@ -69,6 +90,12 @@ class IncallMusicRhythm(
     private var handedSession = 0
     /** The source flag lives in the service's memory only, so it is re-sent per binding. */
     private var switchedOn = false
+    /** Absolute path of the cover last written for the service, and the bitmap it came from. */
+    @Volatile private var coverPath: String? = null
+    private var coverIdentity = 0
+    private val coverIo = Executors.newSingleThreadExecutor { task ->
+        Thread(task, "diplay-ambient-cover").apply { isDaemon = true }
+    }
 
     private val connection = object : ServiceConnection {
         override fun onServiceConnected(name: ComponentName?, binder: IBinder?) {
@@ -111,9 +138,73 @@ class IncallMusicRhythm(
         if (service != null) {
             handSession(session)
             report(PLAYING, "session $session playing")
+            // After the play status: the service only decodes the picture once its status is > 0.
+            pushCover()
         } else {
             bind()
         }
+    }
+
+    /**
+     * CarPlay's artwork for the current item changed. Called on the main thread, null included.
+     *
+     * A null (the gap between two items) keeps whatever colour is already set; clearing it would
+     * blink the lamps back to the default every track change.
+     */
+    fun onArtwork(bitmap: Bitmap?) {
+        if (bitmap == null) return
+        handler.post {
+            if (coverIo.isShutdown) return@post
+            if (!AirPlayPersistence.loadAmbientRhythmEnabled(context)) return@post
+            val identity = System.identityHashCode(bitmap)
+            if (identity == coverIdentity) return@post
+            coverIdentity = identity
+            coverIo.execute { writeCover(bitmap) }
+        }
+    }
+
+    /** Writes the cover where the service can decode it; its own uid reads the path directly. */
+    private fun writeCover(bitmap: Bitmap) {
+        val dir = context.getExternalFilesDir("rhythm") ?: File(context.cacheDir, "rhythm")
+        if (!dir.exists() && !dir.mkdirs()) {
+            log("Ambient: cover dir unavailable ${dir.absolutePath}")
+            return
+        }
+        val longest = max(bitmap.width, bitmap.height)
+        val scale = if (longest > COVER_MAX_EDGE) COVER_MAX_EDGE.toFloat() / longest else 1f
+        val scaled = if (scale < 1f) {
+            Bitmap.createScaledBitmap(
+                bitmap,
+                max(1, (bitmap.width * scale).toInt()),
+                max(1, (bitmap.height * scale).toInt()),
+                true,
+            )
+        } else {
+            bitmap
+        }
+        val file = File(dir, "cover_${System.currentTimeMillis()}.jpg")
+        try {
+            FileOutputStream(file).use {
+                scaled.compress(Bitmap.CompressFormat.JPEG, COVER_QUALITY, it)
+            }
+            file.setReadable(true, false)
+            dir.listFiles { candidate -> candidate.name.startsWith("cover_") && candidate != file }
+                ?.forEach { it.delete() }
+            coverPath = file.absolutePath
+            log("Ambient: cover ${file.length()} bytes -> ${file.absolutePath}")
+            handler.post { pushCover() }
+        } catch (error: Exception) {
+            log("Ambient: cover write failed ${error.javaClass.simpleName}: ${error.message}")
+        } finally {
+            if (scaled !== bitmap) scaled.recycle()
+        }
+    }
+
+    private fun pushCover() {
+        val path = coverPath ?: return
+        if (service == null) return
+        val sent = call(TX_ALBUM_PICTURE) { it.writeString(path) }
+        log("Ambient: album picture -> $sent")
     }
 
     /** The settings switch changed. */
@@ -142,6 +233,7 @@ class IncallMusicRhythm(
         handler.post {
             stop("released")
             lastSessionId = 0
+            coverIo.shutdownNow()
             if (current === this) current = null
         }
     }

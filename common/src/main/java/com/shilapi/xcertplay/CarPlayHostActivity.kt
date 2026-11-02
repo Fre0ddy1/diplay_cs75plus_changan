@@ -5505,6 +5505,9 @@ class CarPlayHostActivity : ComponentActivity() {
         CarPlayMediaKeys.setArtworkListener { bitmap ->
             (clusterLayers.values + listOfNotNull(clusterPresentation)).distinct()
                 .forEach { it.setSongArtwork(bitmap) }
+            // The car's rhythm engine picks the lamp colour from this picture; without it the
+            // lamps keep a single fixed colour.
+            ambientRhythm.onArtwork(bitmap)
         }
         if (airPlayConfig.videoInCar) CarPlayVideo.attach(this, next)
         val display = CarPlaySessionDisplay(airPlayConfig.main.widthPixels, airPlayConfig.main.heightPixels,
