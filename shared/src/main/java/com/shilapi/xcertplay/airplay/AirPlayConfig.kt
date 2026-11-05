@@ -81,4 +81,6 @@ data class AirPlayConfig(
     val icons: List<AirPlayIcon> = emptyList(),
     /** iOS 27 video in car (see [VideoInCar]); video plays only while [VideoInCar.allowed]. */
     val videoInCar: Boolean = false,
+    val speechWithout8And16Khz: Boolean = false,
+    val callAtCallRate: Boolean = false,
 )

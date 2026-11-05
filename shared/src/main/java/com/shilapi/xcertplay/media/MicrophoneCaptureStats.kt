@@ -64,6 +64,10 @@ internal class MicrophoneCaptureStats(
     /** A frame the wall-clock pacing threw away because the device ran ahead of real time. */
     fun pacedDrop() { pacedDrops++ }
 
+    fun restarted(attempt: Int, reason: String, routeType: Int?) {
+        emit("Microphone: recording restarted $metadata attempt=$attempt reason=$reason routedDeviceType=${routeType ?: "unknown"}")
+    }
+
     fun failure(stage: MicrophoneFailureStage, error: Throwable? = null, code: Int? = null) {
         emit(failureMessage(metadata, stage, error, code))
     }
@@ -76,7 +80,7 @@ internal class MicrophoneCaptureStats(
             "captureBytes=$capturedBytes reads=$reads zeroReads=$zeroReads readErrors=$readErrors " +
             "readMaxMs=${readMaxNs / 1_000_000} encodedFrames=$encodedFrames " +
             "emptyEncodedFrames=$emptyEncodedFrames udpSent=$udpSent sendErrors=$sendErrors " +
-            "pacedDrops=$pacedDrops sendGapMaxMs=${sendGapMaxNs / 1_000_000} ended=$ended")
+            "sendGapMaxMs=${sendGapMaxNs / 1_000_000} pacedDrops=$pacedDrops ended=$ended")
         windowStart = now
         capturedBytes = 0
         reads = 0

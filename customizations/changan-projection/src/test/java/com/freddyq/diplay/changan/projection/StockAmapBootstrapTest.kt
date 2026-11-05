@@ -8,6 +8,7 @@ import com.freddyq.diplay.customization.ProjectionActivationControl
 import com.freddyq.diplay.customization.ProjectionEnvironment
 import org.junit.Assert.*
 import org.junit.Test
+import org.junit.Before
 import org.junit.runner.RunWith
 import org.robolectric.RobolectricTestRunner
 import org.robolectric.RuntimeEnvironment
@@ -20,6 +21,7 @@ import java.util.concurrent.TimeUnit
 @Config(manifest = Config.NONE, sdk = [28])
 @LooperMode(LooperMode.Mode.PAUSED)
 class StockAmapBootstrapTest {
+    @Before fun enablePrerequisite() { ChanganProjectionSettings.setStockAmapEnabled(app, true) }
     private val app get() = RuntimeEnvironment.getApplication()
     private val state = ProjectionEnvironment(1, true, true, 1, true, false, true, true, false, 0)
     private var rearms = 0
@@ -46,6 +48,26 @@ class StockAmapBootstrapTest {
         })
     }
     private fun idle(ms: Long) = shadowOf(Looper.getMainLooper()).idleFor(ms, TimeUnit.MILLISECONDS)
+
+    @Test fun disabledOptInNeverLaunchesMapEvenForManualRecovery() {
+        installLauncher()
+        ChanganProjectionSettings.setStockAmapEnabled(app, false)
+        assertTrue(bootstrap.ready(app, state, endpoint))
+        assertTrue(bootstrap.ready(app, state.copy(manualRequest = 1L), endpoint))
+        idle(5000)
+        assertEquals(0, endpoint.launches)
+        assertEquals(0, endpoint.returns)
+    }
+    @Test fun turningOffDuringPreparationCancelsDelayedForegroundReturn() {
+        installLauncher()
+        assertFalse(bootstrap.ready(app, state, endpoint))
+        ChanganProjectionSettings.setStockAmapEnabled(app, false)
+        assertTrue(bootstrap.ready(app, state, endpoint))
+        idle(5000)
+        assertEquals(1, endpoint.launches)
+        assertEquals(0, endpoint.returns)
+        assertEquals(0, rearms)
+    }
 
     @Test fun serviceVisibilityIsNotUsedAsMapReadiness() {
         installLauncher()

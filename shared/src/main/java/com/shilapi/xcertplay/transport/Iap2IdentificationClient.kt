@@ -58,6 +58,7 @@ data class Iap2IdentificationConfig(
     val chargingConnectors: EvChargingConnectors = EvChargingConnectors.CCS2_TYPE2,
     /** Also offer wheel speed ($PASCD) in the location component; needs [locationInformationEnabled]. */
     val vehicleSpeedEnabled: Boolean = false,
+    val laneGuidanceEnabled: Boolean = false,
 ) {
     constructor(
         name: String,
@@ -318,6 +319,7 @@ class Iap2IdentificationClient(private val session: Iap2Session) {
                     Iap2VehicleStatus.STOP_VEHICLE_STATUS_UPDATES,
                 )
             }
+            if (config.laneGuidanceEnabled) receivedMessages += 0x5204
             return Iap2Messages.build(Iap2Endpoints.IDENTIFICATION_INFORMATION) {
                 string(0, config.name)
                 string(1, config.modelIdentifier)
@@ -394,6 +396,7 @@ class Iap2IdentificationClient(private val session: Iap2Session) {
                     u16(2, 64) // MaxCurrentRoadNameLength
                     u16(4, 64) // MaxAfterManeuverRoadNameLength
                     u16(6, 8)
+                    if (config.laneGuidanceEnabled) u16(8, 8) // MaxLaneGuidanceStorageCapacity
                 }
             }
         }

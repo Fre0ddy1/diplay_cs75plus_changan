@@ -35,10 +35,10 @@ class ChanganProjectionAndroidTest {
     private fun start() = module.onProjectionStarted(app,true,endpoint)
 
     @Test fun `setting is always visible defaults on and preserves saved off`() {
-        val toggle = module.settings(app).single().toggles.single()
+        val toggle = module.settings(app).single().toggles.last()
         assertTrue(toggle.enabled)
         toggle.onChanged(false)
-        assertFalse(module.settings(app).single().toggles.single().enabled)
+        assertFalse(module.settings(app).single().toggles.last().enabled)
     }
     @Test fun `private initializer registers once without making projection requests`() {
         val initializer = ChanganProjectionInitializer()
@@ -87,8 +87,8 @@ class ChanganProjectionAndroidTest {
     @Test fun `disabling then enabling does not override current manual layout`() {
         start()
         module.onProjectionLayoutRequested(ProjectionLayout.CARD)
-        module.settings(app).single().toggles.single().onChanged(false)
-        module.settings(app).single().toggles.single().onChanged(true)
+        module.settings(app).single().toggles.last().onChanged(false)
+        module.settings(app).single().toggles.last().onChanged(true)
         idle(5000)
         assertTrue(requested.isEmpty())
     }

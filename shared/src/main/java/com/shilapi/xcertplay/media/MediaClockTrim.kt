@@ -3,221 +3,200 @@ package com.shilapi.xcertplay.media
 import kotlin.math.abs
 import kotlin.math.exp
 import kotlin.math.roundToInt
+import kotlin.math.roundToLong
 
 /**
  * Keeps the head unit's audio clock in step with the iPhone's during music (#610).
  *
  * The iPhone sends music at its own 48 kHz and the head unit plays it at its own. A Humax BHCN-T3103C played
  * 0.76 % fast, so the 300 ms start buffer ran dry about every 70 s and music paused while it refilled. After
- * each write the renderer reports how many frames are queued; a slow average of that level drives a PI
- * controller that trims the track's playback rate so the average level stays near the start threshold.
+ * each write the renderer reports how many frames are queued; a slow average of that level over time, as the
+ * track drains it between writes, drives a PI controller that, once a second, trims the track's playback rate
+ * so the level stays at its target.
  * The trim is bounded by [MAX_TRIM] (26 cents at most) and settles at the head unit's own drift, which is a
  * hardware constant, so the next music stream starts from the trim this one learned.
- *
- * The controller deliberately ignores short excursions. Wireless CarPlay delivers audio in bursts, and a
- * 400-700 ms gap swings a 1 s buffer by tens of percent; treating that as clock drift made the rate hunt
- * between 47293 Hz and 48203 Hz and was audible as rushing and pitch wobble (field 2026-10-22). Only a
- * sustained level outside [DEADBAND] moves the rate, and the learned offset is dropped only when the track
- * has actually been pinned at its capacity (or empty) for [RESET_HOLD_NS] - never on a normal burst.
+ * The level music holds once it plays is not the start threshold. Buffered music (#1031) is fed a second ahead of
+ * real time, and realtime music over Wi-Fi comes in bursts, so playback starts partway through one and the rest
+ * lands on top (#1068).
  */
 internal class MediaClockTrim(
     private val sampleRate: Int,
-    private val targetFrames: Long,
-    /**
-     * Start no faster than the nominal rate. A positive value learned on a previous route made
-     * the next stream drain its 500 ms buffer and rebuffer before the level loop could react;
-     * starting neutral or slow fills the buffer instead, and blocking writes make that harmless.
-     * The trim still learns a positive drift during the stream.
-     */
-    private var integral: Double = learnedTrim.coerceAtMost(0.0),
-    /** AudioTrack capacity in frames; 0 (tests, unknown) disables the overflow/underflow guard. */
+    private var targetFrames: Long,
+    private var integral: Double = learnedTrim,
+    private val measuresTarget: Boolean = false,
     private val capacityFrames: Long = 0L,
 ) {
-    private var level: Double? = null
-    private var lastSampleNs = 0L
-    private var lastUpdateNs: Long? = null
-    private var compressedBacklog = false
     private var stressedSinceNs = 0L
     private var lastResetNs = 0L
-    private var forceUntilNs = 0L
     private var lastOverflowAtNs = 0L
-
-    /** How many times a stale learned offset was dropped, for the diagnostic report. */
+    private var forceUntilNs = 0L
     var resetCount = 0
         private set
 
-    /** The playback rate last asked of the track, in Hz; starts from the drift last stream learned. */
-    var rate = (sampleRate * (1.0 + integral.coerceIn(-MAX_TRIM, MAX_TRIM))).roundToInt()
+    private class Measuring(val halfStartNs: Long? = null, val earlierHalfMean: Double? = null) {
+        var levelFrameNs = 0.0
+    }
+
+    private var level: Double? = null
+    /** When the level was last sampled. */
+    var lastSampleNs = 0L
+        private set
+    private var lastBuffered = 0L
+    private var lastUpdateNs: Long? = null
+    private var compressedBacklog = false
+    private var measuring: Measuring? = if (measuresTarget) Measuring() else null
+
+    fun measureAgain() {
+        if (measuresTarget) measuring = Measuring()
+    }
+
+    /** The playback rate last asked of the track, in Hz. */
+    var rate = sampleRate
         private set
 
-    /** Include compressed packets waiting for decode: those frames are already queued audio. */
-    fun sample(queuedFrames: Long, nowNs: Long, compressedFrames: Long = 0L) {
+    /**
+     * Include compressed packets waiting for decode: those frames are already queued audio. [arrivedFrameNs] sums,
+     * over each frame that arrived since [lastSampleNs], how long it has been queued.
+     */
+    fun sample(queuedFrames: Long, nowNs: Long, compressedFrames: Long = 0L, headMoving: Boolean = true,
+        arrivedFrameNs: Double = 0.0) {
         if (targetFrames <= 0L) return
         // Decoder backpressure is not evidence that the head unit's clock runs at a different
         // rate; do not teach the *next* music stream an artificial clock correction.
         compressedBacklog = compressedFrames > targetFrames
         val buffered = queuedFrames.coerceAtLeast(0L) +
             compressedFrames.coerceIn(0L, sampleRate.toLong() * 16L)
-        val error = (buffered - targetFrames).toDouble() / targetFrames
-        val previous = level
-        // After a pause, a rebuffer or the first write the average restarts from what is queued now.
-        val nextLevel = if (previous == null || nowNs - lastSampleNs > STALE_NS) error
-        else previous + (error - previous) * (1.0 - exp(-(nowNs - lastSampleNs).toDouble() / AVERAGE_NS))
-        level = nextLevel
+        val elapsedNs = nowNs - lastSampleNs
+        // Samples come only after writes, and over Wi-Fi the writes come in bursts 0.4 s apart: the level
+        // just after one is its peak. Average what was queued over the time since the last write, while
+        // the track drained it, or a 300 ms target reads as overfull and the trim plays fast (#807).
+        // A write that finds the track full blocks while more audio arrives; that audio counts from its
+        // arrival, or a full track reads up to 300 ms low and the trim wanders for minutes (#1074).
+        val meanSinceLastWrite = drainedMean(lastBuffered.toDouble(), rate * elapsedNs / 1e9) +
+            if (elapsedNs > 0) arrivedFrameNs / elapsedNs else 0.0
+        val measure = measuring
+        if (measure != null) {
+            if (!headMoving) return
+            addToMeasurement(measure, nowNs, elapsedNs, meanSinceLastWrite)
+        } else {
+            val previous = level
+            level = if (previous == null || elapsedNs > STALE_NS) error(buffered.toDouble())
+            else previous + (error(meanSinceLastWrite) - previous) * (1.0 - exp(-elapsedNs.toDouble() / AVERAGE_NS))
+        }
+        lastBuffered = buffered
         lastSampleNs = nowNs
+        guardCapacity(queuedFrames.coerceAtLeast(0L), nowNs)
+    }
 
-        // A stale learned offset is only proven by a *real* overflow or underrun, not by the normal
-        // level ripple of a Wi-Fi burst. The earlier 2 % test fired 76 times in one drive, reset
-        // the learn every few seconds and made the rate hunt. Require the track itself to be
-        // pinned at its capacity (or empty) for several seconds first.
-        val overflow = capacityFrames > 0L && buffered >= capacityFrames * OVERFLOW_FRACTION
-        val underflow = capacityFrames > 0L && buffered <= capacityFrames * UNDERFLOW_FRACTION
-        val stressed = (overflow && integral < 0.0) || (underflow && integral > 0.0)
-        if (!stressed) {
+    /** Preserve the car's bounded end-stop protection; an ordinary Wi-Fi burst is not an overflow. */
+    private fun guardCapacity(buffered: Long, nowNs: Long) {
+        if (capacityFrames <= 0L) return
+        val overflow = buffered >= capacityFrames * 0.97
+        val underflow = buffered <= capacityFrames * 0.03
+        // A measured target can legitimately keep a preloaded track full. Require the mean
+        // to corroborate an end-stop fault; decoder backlog and target measurement are not drift.
+        if (measuresTarget && (measuring != null || compressedBacklog || level == null ||
+                (overflow && level!! <= 0.05) || (underflow && level!! >= -0.05))) {
+            stressedSinceNs = 0L
+            return
+        }
+        if (!((overflow && integral < 0.0) || (underflow && integral > 0.0))) {
             stressedSinceNs = 0L
             return
         }
         if (stressedSinceNs == 0L) stressedSinceNs = nowNs
-        if (nowNs - stressedSinceNs < RESET_HOLD_NS) return
-        if (lastResetNs != 0L && nowNs - lastResetNs < RESET_COOLDOWN_NS) return
-        // The offset cannot be right while the track is pinned at an end stop: drop it and lean
-        // the rate the right way AT ONCE. Forgetting it alone started the proportional term from
-        // zero while the queue stayed full, the write thread blocked for 600 ms and the music
-        // stuttered (field 2026-10-25: queue 55 k of 57.6 k frames, rate 47 376 Hz).
+        if (nowNs - stressedSinceNs < 8_000_000_000L ||
+            (lastResetNs != 0L && nowNs - lastResetNs < 20_000_000_000L)) return
         integral = if (overflow) MAX_TRIM * 0.5 else -MAX_TRIM * 0.5
         learnedTrim = integral
-        rate = (sampleRate * (1.0 + integral)).roundToInt()
         lastResetNs = nowNs
         stressedSinceNs = 0L
-        forceUntilNs = nowNs + FORCE_NS
+        forceUntilNs = nowNs + 30_000_000_000L
         lastUpdateNs = null
         resetCount++
     }
 
-    /**
-     * The write path had to drop a decoded frame because the track was full.
-     *
-     * That is direct proof the current rate is too slow; waiting for the averaged level to cross a
-     * threshold was too late - the track stayed full and dropped ~1.5 % of the music for minutes
-     * (field 2026-10-23). Drop the learned offset and force a correction for the next [FORCE_NS].
-     */
+    /** Actual lost PCM is stronger evidence than a slow blocking write. */
     fun noteOverflow(nowNs: Long) {
-        if (lastOverflowAtNs != 0L && nowNs - lastOverflowAtNs < OVERFLOW_NOTICE_COOLDOWN_NS) return
+        if (lastOverflowAtNs != 0L && nowNs - lastOverflowAtNs < 5_000_000_000L) return
         lastOverflowAtNs = nowNs
-        // The track is full, so the music is playing slower than it arrives. Lean the rate
-        // positive immediately: waiting for the averaged level to cross the deadband took
-        // seconds while the write thread was already blocking (field 2026-10-25).
         integral = MAX_TRIM * 0.5
         learnedTrim = integral
-        rate = (sampleRate * (1.0 + integral)).roundToInt()
         stressedSinceNs = 0L
-        forceUntilNs = nowNs + FORCE_NS
+        forceUntilNs = nowNs + 30_000_000_000L
         lastUpdateNs = null
         resetCount++
+    }
+
+    private fun addToMeasurement(measure: Measuring, nowNs: Long, elapsedNs: Long, meanSinceLastWrite: Double) {
+        val halfStartNs = measure.halfStartNs
+        if (halfStartNs == null) {
+            measuring = Measuring(nowNs)
+            return
+        }
+        measure.levelFrameNs += meanSinceLastWrite * elapsedNs
+        if (nowNs - halfStartNs < MEASURE_HALF_NS) return
+        val halfMean = measure.levelFrameNs / (nowNs - halfStartNs)
+        val earlierHalfMean = measure.earlierHalfMean
+        if (earlierHalfMean == null || abs(halfMean - earlierHalfMean) > sampleRate * HALVES_AGREE_SECONDS) {
+            measuring = Measuring(nowNs, halfMean)
+            return
+        }
+        targetFrames = earlierHalfMean.roundToLong()
+        level = 0.0
+        measuring = null
+    }
+
+    private fun error(frames: Double): Double = (frames - targetFrames) / targetFrames
+
+    /** The mean of a level that starts at [start] and drains [drained] frames at a steady pace, stopping at 0. */
+    private fun drainedMean(start: Double, drained: Double): Double = when {
+        drained <= 0.0 -> start
+        drained <= start -> start - drained / 2
+        else -> start * start / (2 * drained)
     }
 
     /** The playback rate to set now, or null to keep the current one. */
-    fun rateDue(nowNs: Long): Int? {        val error = level ?: return null
+    fun rateDue(nowNs: Long): Int? {
+        if (measuring != null) {
+            val learned = (sampleRate * (1.0 + integral)).roundToInt()
+            if (learned == rate) return null
+            rate = learned
+            return learned
+        }
+        val error = level ?: return null
         // Without new audio the level says nothing about the clocks: keep the trim as it is.
         if (nowNs - lastSampleNs > STALE_NS) return null
-        // A level this close to the target is normal burst ripple. Holding the rate here is what
-        // stops a slow drift from being corrected with a stream of audible resampler changes.
-        // The held rate is the best estimate of the drift, so keep the learn in sync with it.
-        if (nowNs >= forceUntilNs && abs(error) < DEADBAND) {
-            if (!compressedBacklog) {
-                integral = (rate.toDouble() / sampleRate - 1.0).coerceIn(-MAX_TRIM, MAX_TRIM)
-                learnedTrim = integral
-            }
-            return null
-        }
+        // The fixed-target fallback retains the existing small-error hold; measured targets use the upstream PI loop.
+        if (!measuresTarget && capacityFrames > 0L && nowNs >= forceUntilNs && abs(error) < 0.05) return null
         val previousUpdate = lastUpdateNs
         if (previousUpdate != null && nowNs - previousUpdate < UPDATE_NS) return null
         // A pause between updates is not drift: integrate at most one normal step over it.
         val seconds = if (previousUpdate == null) 0.0 else ((nowNs - previousUpdate) / 1e9).coerceAtMost(MAX_STEP_SECONDS)
         lastUpdateNs = nowNs
         if (!compressedBacklog) {
-            // Conditional integration: do not wind the integral further into a saturated limit.
-            // A long Wi-Fi gap used to park it at -1.5 % for minutes; this stops that at the limit.
-            val p = KP * error
-            val saturatedLow = p + integral <= -MAX_TRIM && error < 0.0
-            val saturatedHigh = p + integral >= MAX_TRIM && error > 0.0
-            if (!saturatedLow && !saturatedHigh) {
-                integral = (integral + KI * error * seconds).coerceIn(-MAX_TRIM, MAX_TRIM)
-            }
+            integral = (integral + KI * error * seconds).coerceIn(-MAX_TRIM, MAX_TRIM)
+            learnedTrim = integral
         }
         val next = (sampleRate * (1.0 + (KP * error + integral).coerceIn(-MAX_TRIM, MAX_TRIM))).roundToInt()
-        // Slew-limit instead of jumping to the target. setPlaybackRate changes the resampling
-        // ratio, so it changes pitch as well as speed: a 1.5 % correction at once is heard as a
-        // slide. On the first stream of a process the integral has not learned the head unit's
-        // drift yet, so the target can swing the whole range within a couple of updates (field
-        // 2026-10-21: "the first track slides in pitch, later ones are fine"). Moving at most
-        // MAX_RATE_STEP per update turns that into a slow, inaudible drift.
-        val maxDelta = (sampleRate * MAX_RATE_STEP).roundToInt().coerceAtLeast(1)
-        val limited = rate + (next - rate).coerceIn(-maxDelta, maxDelta)
-        if (limited == rate) return null
-        // Every setPlaybackRate rebuilds the resampler, and rebuilding it mid-stream is audible as a
-        // click. Never ask for a change too small to matter: the field log for 2026-10-22 shows the
-        // rate moving once a second by a few hundredths of a percent, which is nothing but a stream
-        // of clicks ("隐约的炸炸声").
-        val minChange = (sampleRate * MIN_RATE_CHANGE).roundToInt().coerceAtLeast(1)
-        if (abs(limited - rate) < minChange) return null
-        rate = limited
-        return limited
+        if (next == rate) return null
+        rate = next
+        return next
     }
 
     internal companion object {
         /** At most 1.5 % slower or faster: 26 cents, above the 0.76 % seen on #610. */
         const val MAX_TRIM = 0.015
-        /**
-         * Largest playback-rate change per update (0.2 %). The trim still reaches its target, just
-         * over several seconds, so a large correction is heard as drift rather than as a slide.
-         */
-        const val MAX_RATE_STEP = 0.002
-        /**
-         * Smallest change worth a setPlaybackRate call (0.1 %).
-         *
-         * The resampler is rebuilt on every call, which is audible. Bigger steps mean fewer
-         * rebuilds while still converging in a few updates.
-         */
-        const val MIN_RATE_CHANGE = 0.001
-        const val KP = 0.05
+        const val KP = 0.03
         /** Per second, per unit of level error. */
         const val KI = 0.001
-        /**
-         * Time constant of the level average.
-         *
-         * Long enough to average a 400-700 ms Wi-Fi gap (a 0.7 s gap is under 5 % of a 15 s window),
-         * short enough to see a real clock drift within a few tens of seconds.
-         */
-        const val AVERAGE_NS = 15_000_000_000.0
-        /**
-         * How often the rate may change at all.
-         *
-         * Six seconds, with 0.2 % steps, keeps a correction gradual and bounds resampler rebuilds
-         * to a few per minute at most.
-         */
-        const val UPDATE_NS = 6_000_000_000L
-        const val STALE_NS = 250_000_000L
+        const val AVERAGE_NS = 5_000_000_000.0
+        const val UPDATE_NS = 1_000_000_000L
+        /** Longer than the 0.4 s between the iPhone's bursts over Wi-Fi: a longer silence is a pause or a stall. */
+        const val STALE_NS = 1_000_000_000L
         const val MAX_STEP_SECONDS = 2.0
-        /**
-         * Level error ignored by the controller, as a fraction of the target.
-         *
-         * 5 % of a 1 s buffer is 50 ms, comfortably above the smoothed effect of one Wi-Fi gap and
-         * below the point where a real clock drift needs attention.
-         */
-        const val DEADBAND = 0.05
-        /** A track at this fraction of capacity (or above) has started dropping audio. */
-        const val OVERFLOW_FRACTION = 0.97
-        /** A track at this fraction of capacity (or below) is effectively empty. */
-        const val UNDERFLOW_FRACTION = 0.03
-        /** How long the track must remain pinned at an end stop before the learn is dropped. */
-        const val RESET_HOLD_NS = 8_000_000_000L
-        /** Do not reset again immediately: one correction is enough to start draining/refilling. */
-        const val RESET_COOLDOWN_NS = 20_000_000_000L
-        /** Keep correcting for this long after a reset even if the averaged level looks normal. */
-        const val FORCE_NS = 30_000_000_000L
-        /** One dropped frame per this window may raise the rate; do not restart the ramp each frame. */
-        const val OVERFLOW_NOTICE_COOLDOWN_NS = 5_000_000_000L
+        const val MEASURE_HALF_NS = 1_500_000_000L
+        const val HALVES_AGREE_SECONDS = 0.2
 
         /** The drift the last music stream settled on. Each process plays to one head unit. */
         @Volatile var learnedTrim = 0.0

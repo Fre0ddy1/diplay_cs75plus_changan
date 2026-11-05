@@ -34,6 +34,7 @@ internal class OpusEncoder(bitrate: Int, private val sampleRate: Int = SAMPLE_RA
     private val softwarePacket = ByteArray(SOFTWARE_MAX_PACKET_BYTES)
     private var softwareFrames = 0
     private var softwareTotalMicros = 0L
+    private var softwareFailures = 0
 
     private val bufferInfo = MediaCodec.BufferInfo()
     private var presentationTimeUs = 0L
@@ -70,7 +71,11 @@ internal class OpusEncoder(bitrate: Int, private val sampleRate: Int = SAMPLE_RA
         val size = try {
             encoder.encode(softwarePcm, 0, samples, softwarePacket, 0, softwarePacket.size)
         } catch (error: Exception) {
-            Log.w(TAG, "Opus software encode failed samples=$samples", error)
+            recoverSoftware(encoder, error)
+            return emptyList()
+        } catch (error: AssertionError) {
+            // Concentus uses debug assertions in release builds too. Lose this frame, not the mic thread.
+            recoverSoftware(encoder, error)
             return emptyList()
         }
         softwareTotalMicros += (System.nanoTime() - startedAt) / 1000
@@ -86,6 +91,11 @@ internal class OpusEncoder(bitrate: Int, private val sampleRate: Int = SAMPLE_RA
         }
         outputPackets++
         return listOf(packet)
+    }
+
+    private fun recoverSoftware(encoder: org.concentus.OpusEncoder, error: Throwable) {
+        if (softwareFailures++ < FIRST_PACKET_LOG_COUNT) Log.w(TAG, "Opus software encode failed; resetting", error)
+        runCatching { encoder.resetState() }
     }
 
     private fun encodePlatform(pcm: ByteArray): List<ByteArray> {

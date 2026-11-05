@@ -350,12 +350,20 @@ class CarPlayController(
         }
     }
 
+    private val laneGuidance = com.shilapi.xcertplay.iap2.message.LaneGuidanceUpdates(config.identification.laneGuidanceEnabled) { lanes ->
+        debugLog("Lane guidance changed count=${lanes.size} lanes=" + lanes.joinToString(";") {
+            "${it.index}:${it.status}:${it.angle}:${it.highlightAngle ?: "none"}"
+        })
+    }
     private val sessionListener = object : AirPlaySessionListener {
         override fun onPhoneManagedAudioState(session: AirPlaySession, active: Boolean) = audioOnMain {
             if (!closed && activeSession === session && audioResourceSession === session) {
                 audioResourceCoordinator?.phoneManagedAudio(active)
             }
         }
+        override val wantsTrace: Boolean
+            get() = uiListener?.wantsTrace == true || Log.isLoggable("DiPlayTrace", Log.VERBOSE)
+
         override fun onSessionActive(session: AirPlaySession) {
             if (activeSession !== session) {
                 VehicleCustomizations.onSessionStarted(appContext)
@@ -386,6 +394,7 @@ class CarPlayController(
 
         override fun onSessionEnded(session: AirPlaySession) {
             if (activeSession === session) {
+                laneGuidance.clear()
                 endAudioResources(session)
                 endBluetoothMediaPolicy()
                 wirelessAudioHandoff.close(session)
@@ -541,11 +550,49 @@ class CarPlayController(
         }
     }
 
+    /** A live session can outlast its Activity, without another session-active callback. */
+    fun activeAirPlaySession(): AirPlaySession? = activeSession?.takeIf { !closed && !it.isClosed }
+
+    /** A queued move that a newer move of the same fingers may still overwrite. */
+    private class PendingMove(val session: AirPlaySession, var contacts: List<AirPlayContact>)
+
+    private val touchLock = Any()
+    private var lastTouch: List<AirPlayContact>? = null
+    private var pendingMove: PendingMove? = null
+
+    /**
+     * A move keeps the same fingers down. Behind a slow write it replaces the move still waiting in
+     * the queue, so only the newest position is sent. Presses and releases are never merged.
+     */
     fun sendTouch(contacts: List<AirPlayContact>): Boolean {
         if (closed) return false
         val session = activeSession ?: return false
         return try {
-            touchExecutor.execute { session.sendTouch(contacts) }
+            synchronized(touchLock) {
+                val isMove = contacts.isNotEmpty() && contacts.all { it.down } &&
+                    lastTouch?.filter { it.down }?.map { it.id }?.toSet() == contacts.map { it.id }.toSet()
+                lastTouch = contacts
+                val pending = pendingMove
+                if (isMove && pending != null && pending.session === session) {
+                    pending.contacts = contacts
+                    return true
+                }
+                if (!isMove) {
+                    pendingMove = null
+                    touchExecutor.execute { session.sendTouch(contacts) }
+                } else {
+                    val move = PendingMove(session, contacts)
+                    touchExecutor.execute {
+                        val latest = synchronized(touchLock) {
+                            if (pendingMove === move) pendingMove = null
+                            move.contacts
+                        }
+                        session.sendTouch(latest)
+                    }
+                    // Set only after execute() accepted the task, and still under touchLock, which the task needs to start.
+                    pendingMove = move
+                }
+            }
             true
         } catch (_: Exception) {
             false
@@ -735,6 +782,7 @@ class CarPlayController(
 
     // HUD (SOME/IP) and cluster (AMap broadcast) keep separate state so one failing cannot stall the other.
     private fun onRouteFrame(frame: com.shilapi.xcertplay.iap2.wire.Iap2Frame) {
+        laneGuidance.accept(frame.messageId, frame.payload)
         VehicleCustomizations.onNavigationFrame(frame.messageId, frame.payload)
         BydNavigationOutputs.onFrame(frame)
         com.shilapi.xcertplay.glance.CarPlayGlance.onFrame(frame)

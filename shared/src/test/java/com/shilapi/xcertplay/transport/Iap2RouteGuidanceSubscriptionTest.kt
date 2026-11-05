@@ -7,6 +7,14 @@ import org.junit.Assert.assertEquals
 import org.junit.Test
 
 class Iap2RouteGuidanceSubscriptionTest {
+    @Test fun laneCapabilityIsExplicitlyOptIn() {
+        val config = Iap2IdentificationConfig("test", "test", "test", "test", "1", "1", 3)
+        fun fields(c: Iap2IdentificationConfig) = Iap2ParameterList.parse(
+            Iap2ParameterList.parse(Iap2IdentificationClient.identificationInformation(c).payload)
+                .asList().single { it.id == 30 }.payload).asList()
+        assertEquals(0, fields(config).count { it.id == 8 })
+        assertArrayEquals(byteArrayOf(0, 8), fields(config.copy(laneGuidanceEnabled = true)).single { it.id == 8 }.payload)
+    }
     @Test
     fun identificationDeclaresRouteGuidanceDisplayComponent() {
         val config = Iap2IdentificationConfig(

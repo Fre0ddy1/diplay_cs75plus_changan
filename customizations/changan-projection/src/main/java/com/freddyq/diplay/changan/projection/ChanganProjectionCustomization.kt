@@ -21,6 +21,16 @@ class ChanganProjectionCustomization : VehicleCustomization {
     }
     private val environment = ProjectionEnvironmentBridge { contentRecovery.invalidate() }
     override val id = "changan-projection"
+    override fun automaticProjectionEnabled(context: Context) = ChanganProjectionSettings.stockAmapEnabled(context)
+    override fun setAutomaticProjectionEnabled(context: Context, enabled: Boolean): Boolean {
+        ChanganProjectionSettings.setStockAmapEnabled(context, enabled)
+        if (!enabled) {
+            environment.clear()
+            contentRecovery.cancel()
+            ChanganProjectionBridge.clear("automatic-projection-disabled")
+        }
+        return true
+    }
     override fun initialProjectionLayout(context: Context): ProjectionLayout? =
         if (ChanganProjectionSettings.enabled(context)) ProjectionLayout.FULLSCREEN else null
     // Controller preparation and AirPlay activation may both announce the same session.
@@ -66,6 +76,11 @@ class ChanganProjectionCustomization : VehicleCustomization {
     override fun shouldActivateProjectionChannel() = ChanganProjectionBridge.shouldActivateProjectionChannel()
     override fun settings(context: Context) = listOf(
         CustomizationSettingsGroup(R.string.settings_changan_projection_title, listOf(
+            CustomizationToggle(
+                R.string.settings_changan_projection_stock_amap,
+                R.string.settings_changan_projection_stock_amap_description,
+                ChanganProjectionSettings.stockAmapEnabled(context),
+            ) { setAutomaticProjectionEnabled(context, it) },
             CustomizationToggle(
                 R.string.settings_changan_projection_fullscreen,
                 R.string.settings_changan_projection_description,

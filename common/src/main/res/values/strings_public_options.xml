@@ -1,0 +1,8 @@
+<resources>
+    <string name="public_speech_rate">Higher-rate navigation audio · experimental</string>
+    <string name="public_speech_rate_description">Off by default. Excludes 8/16 kHz PCM from navigation/prompt offers, as in upstream. Reconnect to apply. Does not raise volume or change the audio route.</string>
+    <string name="public_call_rate">Calls at their own sample rate · experimental</string>
+    <string name="public_call_rate_description">Off by default. Offers call playback and microphone as 8/16/24/32 kHz mono PCM. The iPhone chooses the rate. Reconnect to apply.</string>
+    <string name="public_lane_guidance">Receive lane guidance data · experimental</string>
+    <string name="public_lane_guidance_description">Off by default. Reconnect to advertise and parse iAP2 lane data. Records changes only; does not add drawn lane arrows. Availability depends on the phone map app.</string>
+</resources>

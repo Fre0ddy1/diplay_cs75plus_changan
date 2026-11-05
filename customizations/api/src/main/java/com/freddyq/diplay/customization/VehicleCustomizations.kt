@@ -19,6 +19,9 @@ interface VehicleCustomization {
     fun platformHotspotStarter(context: Context): PlatformHotspotStarter? = null
     fun platformHotspotCredentials(context: Context): PlatformHotspotCredentials? = null
     fun initialProjectionLayout(context: Context): ProjectionLayout? = null
+    /** Optional shared opt-in for automatic projection and its vehicle prerequisite. */
+    fun automaticProjectionEnabled(context: Context): Boolean? = null
+    fun setAutomaticProjectionEnabled(context: Context, enabled: Boolean): Boolean = false
     /** True claims startup hotspot handling; work must be asynchronous. */
     fun onApplicationForeground(context: Context, control: ApplicationForegroundControl): Boolean = false
     fun mediaKeyRoute(context: Context): MediaKeyRoute? = null
@@ -101,6 +104,12 @@ open class VehicleCustomizationRegistry {
     }
     fun initialProjectionLayout(context: Context): ProjectionLayout? = extensions.firstNotNullOfOrNull {
         runCatching { it.initialProjectionLayout(context.applicationContext) }.getOrNull()
+    }
+    fun automaticProjectionEnabled(context: Context): Boolean? = extensions.firstNotNullOfOrNull {
+        runCatching { it.automaticProjectionEnabled(context.applicationContext) }.getOrNull()
+    }
+    fun setAutomaticProjectionEnabled(context: Context, enabled: Boolean): Boolean = extensions.any {
+        runCatching { it.setAutomaticProjectionEnabled(context.applicationContext, enabled) }.getOrDefault(false)
     }
     fun onApplicationForeground(context: Context, control: ApplicationForegroundControl): Boolean {
         if (!allowAutomaticStartup(context)) return true

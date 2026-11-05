@@ -110,6 +110,9 @@ checks['customizations/changan-projection/src/main/java/com/freddyq/diplay/chang
 checks['customizations/hotspot-startup/src/main/java/com/freddyq/diplay/hotspot/HotspotStartupCustomization.kt'] += ['override fun platformHotspotCredentials(']
 for host in ['DiPlayActivity.kt','CarPlayHostActivity.kt']:
     checks['common/src/main/java/com/shilapi/xcertplay/'+host] += ['CarHotspotSetup.readSavedHotspot(this)']
+checks['common/src/main/java/com/shilapi/xcertplay/AirPlayPersistence.kt'] = ['VehicleCustomizations.automaticProjectionEnabled(context)', 'VehicleCustomizations.setAutomaticProjectionEnabled(context, enabled)']
+checks['customizations/changan-projection/src/main/java/com/freddyq/diplay/changan/projection/StockAmapBootstrap.kt'] = ['ChanganProjectionSettings.stockAmapEnabled(context)']
+checks['customizations/changan-projection/src/main/java/com/freddyq/diplay/changan/projection/ChanganProjectionSettings.kt'] = ['stock_amap_with_auto_projection', '.getBoolean(STOCK_AMAP, false)']
 for name,needles in checks.items():
     path=ROOT/name
     text=path.read_text(encoding='utf-8') if path.exists() else ''

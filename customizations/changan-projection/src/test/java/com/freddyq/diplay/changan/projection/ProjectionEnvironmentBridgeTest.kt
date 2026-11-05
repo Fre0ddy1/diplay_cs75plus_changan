@@ -8,6 +8,7 @@ import com.freddyq.diplay.customization.ProjectionActivationControl
 import com.freddyq.diplay.customization.ProjectionEnvironment
 import org.junit.Assert.*
 import org.junit.Test
+import org.junit.Before
 import org.junit.runner.RunWith
 import org.robolectric.RobolectricTestRunner
 import org.robolectric.RuntimeEnvironment
@@ -20,6 +21,7 @@ import java.util.concurrent.TimeUnit
 @Config(manifest = Config.NONE, sdk = [28])
 @LooperMode(LooperMode.Mode.PAUSED)
 class ProjectionEnvironmentBridgeTest {
+    @Before fun enablePrerequisite() { ChanganProjectionSettings.setStockAmapEnabled(app, true) }
     private val app get() = RuntimeEnvironment.getApplication()
     private val state = ProjectionEnvironment(2, true, true, 1, true, false, true, true, false, 0)
     private val bridge = ProjectionEnvironmentBridge()

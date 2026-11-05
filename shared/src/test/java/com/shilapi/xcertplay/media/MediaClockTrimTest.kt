@@ -7,6 +7,24 @@ import org.junit.Assert.assertTrue
 import org.junit.Test
 
 class MediaClockTrimTest {
+    @Test fun `a measured preload near capacity does not force an artificial speedup`() {
+        val trim = MediaClockTrim(48_000, 48_000, integral = -0.005, measuresTarget = true, capacityFrames = 57_600)
+        for (step in 1..1000) {
+            val now = step * 20_000_000L
+            trim.sample(57_000, now)
+            trim.rateDue(now)
+        }
+        assertEquals(0, trim.resetCount)
+        assertTrue(trim.rate < 48_000)
+    }
+
+    @Test fun `compressed backlog is not a hardware capacity overflow`() {
+        val trim = MediaClockTrim(48_000, 48_000, integral = -0.005, capacityFrames = 57_600)
+        trim.sample(4_800, 1_000_000_000L, compressedFrames = 96_000)
+        trim.sample(4_800, 10_000_000_000L, compressedFrames = 96_000)
+        assertEquals(0, trim.resetCount)
+    }
+
     @Test
     fun `a track pinned at capacity drops a stale slow trim`() {
         // 57 600 frames is the 1.2 s track used with the 1000 ms music buffer.

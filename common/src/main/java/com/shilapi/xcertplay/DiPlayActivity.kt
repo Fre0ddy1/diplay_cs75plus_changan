@@ -720,6 +720,10 @@ class DiPlayActivity : ComponentActivity() {
             }
             mediaChannelControl(card)
             navigationChannelControl(card)
+            toggle(card, getString(R.string.public_speech_rate), getString(R.string.public_speech_rate_description),
+                AirPlayPersistence.loadSpeechWithout8And16Khz(this)) { AirPlayPersistence.saveSpeechWithout8And16Khz(this, it) }
+            toggle(card, getString(R.string.public_call_rate), getString(R.string.public_call_rate_description),
+                AirPlayPersistence.loadCallAtCallRate(this)) { AirPlayPersistence.saveCallAtCallRate(this, it) }
             // Audio always stays on CarPlay; the switch only decides who answers the wheel's
             // media keys. With it on, this app swallows them so the car's Bluetooth (AVRCP)
             // controls the phone once instead of the press being handled twice.
@@ -753,6 +757,8 @@ class DiPlayActivity : ComponentActivity() {
         runCatching {
             val clusterDisplayPresent = ClusterMapPresentation.findDisplay(this) != null
             section(content, getString(R.string.instrument_cluster_section), R.drawable.ic_dp_navigation) { card ->
+                toggle(card, getString(R.string.public_lane_guidance), getString(R.string.public_lane_guidance_description),
+                    AirPlayPersistence.loadLaneGuidance(this)) { AirPlayPersistence.saveLaneGuidance(this, it) }
                 if (!clusterDisplayPresent) {
                     card.addView(label(getString(R.string.cluster_no_display_hint), 14, MUTED).apply {
                         setPadding(0, 0, 0, dp(12))
@@ -861,6 +867,7 @@ class DiPlayActivity : ComponentActivity() {
                     getString(R.string.auto_fly_screen_desc),
                     AirPlayPersistence.loadAutoFlyScreen(this)) {
                     AirPlayPersistence.saveAutoFlyScreen(this, it)
+                    render()
                 }
                 // 冷启动偶发失败的兜底：投屏重试阶梯。
                 toggle(card, getString(R.string.auto_project_retry),
@@ -1236,7 +1243,10 @@ class DiPlayActivity : ComponentActivity() {
             }
             section(content, getString(group.title), R.drawable.ic_dp_navigation) { card ->
                 group.toggles.forEach { setting ->
-                    toggle(card, getString(setting.title), getString(setting.description), setting.enabled, save = setting.onChanged)
+                    toggle(card, getString(setting.title), getString(setting.description), setting.enabled) { value ->
+                        setting.onChanged(value)
+                        render()
+                    }
                 }
                 group.actions.forEach { action ->
                     card.addView(button(getString(action.title), false, action.onClick), matchButton(12, 56))

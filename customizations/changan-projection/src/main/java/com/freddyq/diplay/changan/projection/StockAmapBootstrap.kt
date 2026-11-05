@@ -22,6 +22,7 @@ internal class StockAmapBootstrap(private val onReturned: () -> Unit) {
 
     /** False holds activation/content handoff while the prerequisite owns the foreground. */
     @Synchronized fun ready(context: Context, state: ProjectionEnvironment, control: ProjectionActivationControl): Boolean {
+        if (!ChanganProjectionSettings.stockAmapEnabled(context)) { cancel(); return true }
         val eligible = state.phoneConnected && state.displayOn && state.sizeReady && state.serviceConnected &&
             !state.userClosed && (state.automaticEnabled || state.manualRequest != 0L)
         if (!eligible) { cancel(); return false }

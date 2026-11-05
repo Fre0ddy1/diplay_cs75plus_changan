@@ -20,6 +20,12 @@ import java.io.File
 
 /** SharedPreferences persistence for the accessory identity and paired controllers. */
 object AirPlayPersistence {
+    fun loadLaneGuidance(context: Context): Boolean = context.getSharedPreferences(PREFS, 0).getBoolean("lane_guidance_opt_in", false)
+    fun saveLaneGuidance(context: Context, enabled: Boolean) { context.getSharedPreferences(PREFS, 0).edit().putBoolean("lane_guidance_opt_in", enabled).apply() }
+    fun loadSpeechWithout8And16Khz(context: Context): Boolean = context.getSharedPreferences(PREFS, 0).getBoolean("speech_without_8_and_16_khz", false)
+    fun saveSpeechWithout8And16Khz(context: Context, enabled: Boolean) { context.getSharedPreferences(PREFS, 0).edit().putBoolean("speech_without_8_and_16_khz", enabled).apply() }
+    fun loadCallAtCallRate(context: Context): Boolean = context.getSharedPreferences(PREFS, 0).getBoolean("call_at_call_rate", false)
+    fun saveCallAtCallRate(context: Context, enabled: Boolean) { context.getSharedPreferences(PREFS, 0).edit().putBoolean("call_at_call_rate", enabled).apply() }
     /** 0 uses usage-based routing; 1–20 select stream types supported by the head unit. */
     val AUDIO_CHANNELS = 0..20
     private const val PREFS = "xcertplay_airplay"
@@ -652,9 +658,11 @@ object AirPlayPersistence {
     private const val KEY_AUTO_FLY_SCREEN = "auto_fly_screen"
 
     fun loadAutoFlyScreen(context: Context): Boolean =
-        context.getSharedPreferences(PREFS, Context.MODE_PRIVATE).getBoolean(KEY_AUTO_FLY_SCREEN, true)
+        com.freddyq.diplay.customization.VehicleCustomizations.automaticProjectionEnabled(context)
+            ?: context.getSharedPreferences(PREFS, Context.MODE_PRIVATE).getBoolean(KEY_AUTO_FLY_SCREEN, true)
 
     fun saveAutoFlyScreen(context: Context, enabled: Boolean) {
+        com.freddyq.diplay.customization.VehicleCustomizations.setAutomaticProjectionEnabled(context, enabled)
         context.getSharedPreferences(PREFS, Context.MODE_PRIVATE).edit().putBoolean(KEY_AUTO_FLY_SCREEN, enabled).apply()
         overlaySettingsListener?.invoke()
     }

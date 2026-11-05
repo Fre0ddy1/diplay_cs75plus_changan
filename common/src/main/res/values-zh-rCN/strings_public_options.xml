@@ -1,0 +1,8 @@
+<resources>
+    <string name="public_speech_rate">导航语音高采样率 · 实验性</string>
+    <string name="public_speech_rate_description">默认关闭。按公版方案，在导航与提示音协商中排除8/16kHz PCM，下次连接生效。不增加音量，不改变音道路由。</string>
+    <string name="public_call_rate">通话使用原生采样率 · 实验性</string>
+    <string name="public_call_rate_description">默认关闭。通话播放与麦克风协商为8/16/24/32kHz单声道PCM，由手机选择，下次连接生效。</string>
+    <string name="public_lane_guidance">接收车道引导数据 · 实验性</string>
+    <string name="public_lane_guidance_description">默认关闭。下次连接时声明并解析iAP2车道数据，仅记录变化，不新增车道箭头绘制；是否发送取决于手机地图。</string>
+</resources>
