@@ -13,7 +13,8 @@ internal class MicrophoneCaptureStats(
     private val report: (String) -> Unit,
     private val nowNs: () -> Long = System::nanoTime,
 ) {
-    private val metadata = metadata(config)
+    private var metadata = metadata(config)
+    private var peakSample = 0
     private var windowStart = nowNs()
     private var readStart = windowStart
     private var capturedBytes = 0L
@@ -33,6 +34,20 @@ internal class MicrophoneCaptureStats(
     fun started(routeType: Int?) {
         routedDeviceType = routeType
         emit("Microphone: start $metadata routedDeviceType=${routeType ?: "unknown"}")
+    }
+
+    fun useSource(source: Int) {
+        metadata = metadata.replace(Regex("source=[^ ]+"), "source=${sourceName(source)}")
+    }
+
+    fun samples(bytes: ByteArray, count: Int) {
+        var offset = 0
+        val end = minOf(count, bytes.size)
+        while (offset + 1 < end) {
+            val sample = ((bytes[offset].toInt() and 255) or (bytes[offset + 1].toInt() shl 8)).toShort().toInt()
+            peakSample = maxOf(peakSample, kotlin.math.abs(sample))
+            offset += 2
+        }
     }
 
     fun reading() { readStart = nowNs() }
@@ -72,17 +87,19 @@ internal class MicrophoneCaptureStats(
         emit(failureMessage(metadata, stage, error, code))
     }
 
-    fun flush(ended: Boolean = false, routeType: (() -> Int?)? = null) {
+    fun flush(ended: Boolean = false, routeType: (() -> Int?)? = null, silence: (() -> String)? = null) {
         val now = nowNs()
         if (!ended && now - windowStart < REPORT_INTERVAL_NS) return
         if (routeType != null) routedDeviceType = runCatching { routeType() }.getOrNull()
+        val detail = if (peakSample == 0 && silence != null) runCatching { " " + silence() }.getOrDefault("") else ""
         emit("Microphone: stats $metadata routedDeviceType=${routedDeviceType ?: "unknown"} " +
             "captureBytes=$capturedBytes reads=$reads zeroReads=$zeroReads readErrors=$readErrors " +
             "readMaxMs=${readMaxNs / 1_000_000} encodedFrames=$encodedFrames " +
             "emptyEncodedFrames=$emptyEncodedFrames udpSent=$udpSent sendErrors=$sendErrors " +
-            "sendGapMaxMs=${sendGapMaxNs / 1_000_000} pacedDrops=$pacedDrops ended=$ended")
+            "sendGapMaxMs=${sendGapMaxNs / 1_000_000} pacedDrops=$pacedDrops peakSample=$peakSample$detail ended=$ended")
         windowStart = now
         capturedBytes = 0
+        peakSample = 0
         reads = 0
         zeroReads = 0
         readErrors = 0
@@ -99,6 +116,11 @@ internal class MicrophoneCaptureStats(
 
     companion object {
         private const val REPORT_INTERVAL_NS = 5_000_000_000L
+        internal fun sourceName(source: Int): String = when (source) {
+            0 -> "DEFAULT"; 1 -> "MIC"; 5 -> "CAMCORDER"; 6 -> "VOICE_RECOGNITION"
+            7 -> "VOICE_COMMUNICATION"; 8 -> "REMOTE_SUBMIX"; 9 -> "UNPROCESSED"; 1999 -> "HOTWORD"
+            else -> source.toString()
+        }
 
         private fun metadata(config: MicrophoneConfig): String {
             // Must mirror the source chosen in MicrophoneUplink.start(); reporting the type's old

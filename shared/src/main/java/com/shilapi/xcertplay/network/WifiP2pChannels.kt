@@ -18,4 +18,6 @@ object WifiP2pChannels {
 }
 
 internal class P2pChannelUnavailableException(channel: Int, details: String, cause: Throwable? = null) :
-    java.io.IOException("Wi-Fi Direct could not use channel $channel. Choose Auto or another channel. $details", cause)
+    com.shilapi.xcertplay.orchestration.ConnectionFailureException(
+        com.shilapi.xcertplay.orchestration.ConnectionFailureCause.WIFI_DIRECT_CHANNEL_UNAVAILABLE,
+        "Wi-Fi Direct could not use channel $channel. Choose Auto or another channel. $details", cause)

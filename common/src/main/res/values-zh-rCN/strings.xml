@@ -646,4 +646,20 @@
     <string name="settings_developer_options_hint">USB 诊断、VPN root 授权、屏幕诊断信息、清除日志。</string>
     <string name="iphone_accepted_but_did_not_start_carplay">iPhone 已接受连接，但没有发起 CarPlay。请在 iPhone 上打开“设置 → 通用 → CarPlay”，忽略这辆车后重新配对。</string>
     <string name="resolution_percent_value">%1$d%%（更省带宽）</string>
+    <string name="chosen_iphone_not_paired">所选iPhone已不在配对列表，请重新选择手机。</string>
+    <string name="no_paired_iphone">尚未配对iPhone，请先在原车蓝牙设置中配对。</string>
+    <string name="iphone_not_chosen">无法确定要连接的iPhone，请选择手机。</string>
+    <string name="wifi_direct_channel_unavailable">无法使用所选Wi-Fi Direct频道，请选择自动或其他频道。</string>
+    <string name="car_hotspot_details_differ">保存的热点配置与原车热点不一致，请检查连接设置。</string>
+    <string name="car_hotspot_start_timed_out">等待原车热点开启超时，请检查原车热点设置。</string>
+    <string name="car_hotspot_start_failed">未能开启原车热点，请检查原车热点设置。</string>
+    <string name="hotspot_not_ready_diagnostic">热点网络尚未就绪，请检查热点后重试。</string>
+    <string name="hotspot_not_configured">尚未配置原车热点，请检查连接设置。</string>
+    <string name="bluetooth_is_off_diagnostic">原车蓝牙未开启，开启后将继续连接。</string>
+    <string name="bluetooth_unavailable_diagnostic">原车蓝牙接口不可用，请检查系统蓝牙。</string>
+    <string name="car_sees_no_usb_device">未发现iPhone或其他USB数据设备，请检查数据线和接口。</string>
+    <string name="car_sees_usb_device_not_iphone">发现了USB设备，但未发现iPhone，请检查连接接口和手机授权。</string>
+    <string name="last_connection_attempt">上次连接问题（%1$s）：%2$s</string>
+    <string name="connection_failed_diagnostic">连接未完成，可保存诊断报告排查。</string>
+    <string name="iphone_sent_no_picture">主屏视频通道已建立，但尚未收到画面。请检查手机，必要时重启iPhone后重连。</string>
 </resources>

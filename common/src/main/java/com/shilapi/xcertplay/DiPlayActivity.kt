@@ -325,7 +325,7 @@ class DiPlayActivity : ComponentActivity() {
     private fun render() {
         // A restore still waiting for layout keeps its target: the old page was never laid out.
         val previousScrollY = (pendingScrollY ?: rootScroll?.scrollY)?.takeIf { renderedPage == page }
-        status = null; connectButton = null; disconnectButton = null; lastRunning = null
+        status = null; homeLastProblem = null; connectButton = null; disconnectButton = null; lastRunning = null
         bydAdbControls = null
         adbSwitches.clear()
         adbStatus = null
@@ -402,6 +402,8 @@ class DiPlayActivity : ComponentActivity() {
         }
     }
 
+    private var homeLastProblem: TextView? = null
+
     private fun home(content: LinearLayout) {
         val wide = resources.configuration.screenWidthDp >= 850
         val body = column()
@@ -413,6 +415,7 @@ class DiPlayActivity : ComponentActivity() {
         card.addView(label(getString(R.string.wireless_carplay), 12, ACCENT, true).apply { letterSpacing = .12f })
         status = label(getString(R.string.ready_when_you_are), 24, TEXT, true).apply { setPadding(0, dp(10), 0, dp(16)) }
         card.addView(status)
+        homeLastProblem = label("", 15, WARNING).apply { visibility = View.GONE }.also(card::addView)
         connectButton = button(getString(R.string.connect_phone), true) {
             if (CarPlayBackgroundSession.hasSession()) launchCarPlayScreen()
             else connect(true)
@@ -640,7 +643,7 @@ class DiPlayActivity : ComponentActivity() {
                 bufferPresets.indexOf(AirPlayPersistence.loadMediaBufferMillis(this)).coerceAtLeast(0)) {
                 AirPlayPersistence.saveMediaBufferMillis(this, bufferPresets[it])
             }
-            choice(card, getString(R.string.frame_rate), listOf(getString(R.string.s_30_fps_lighter_load), getString(R.string.s_60_fps_smoother_motion)), if (AirPlayPersistence.loadFps(this) == 60) 1 else 0) { AirPlayPersistence.saveFps(this, if (it == 1) 60 else 30) }
+            frameRateControl(card)
             toggle(card, getString(R.string.efficient_video), getString(R.string.use_hevc_leave_off_for_the_widest_head_unit_compatibility), AirPlayPersistence.loadHevcEnabled(this)) { AirPlayPersistence.saveHevcEnabled(this, it) }
             toggle(card, getString(R.string.right_hand_drive), getString(R.string.place_carplay_s_controls_closer_to_the_driver), AirPlayPersistence.loadRightHandDrive(this)) { AirPlayPersistence.saveRightHandDrive(this, it) }
             toggle(card, getString(R.string.full_screen), getString(R.string.hide_the_car_s_system_bars_while_carplay_is_open), AirPlayPersistence.loadHideTopBar(this) && AirPlayPersistence.loadHideBottomBar(this)) {
@@ -2975,8 +2978,28 @@ class DiPlayActivity : ComponentActivity() {
         }
     }
 
+    private fun frameRateControl(parent: LinearLayout) {
+        val current = AirPlayPersistence.loadFps(this)
+        val rates = FrameRateChoices.rates(current)
+        val labels = rates.map {
+            when (it) {
+                30 -> getString(R.string.s_30_fps_lighter_load)
+                60 -> getString(R.string.s_60_fps_smoother_motion)
+                else -> "$it fps"
+            }
+        }
+        choice(parent, getString(R.string.frame_rate), labels, rates.indexOf(current)) {
+            AirPlayPersistence.saveFps(this, rates[it])
+        }
+    }
+
     private fun refreshStatus() {
         val running = CarPlayBackgroundSession.hasSession()
+        homeLastProblem?.apply {
+            val line = if (CarPlayBackgroundSession.active) null else LastConnectionProblem.homeLine(this@DiPlayActivity)
+            visibility = if (line == null) View.GONE else View.VISIBLE
+            if (line != null && text.toString() != line) text = line
+        }
         status?.text = when {
             setupError != null -> getString(R.string.setup_needs_attention)
             CarPlayBackgroundSession.active -> getString(R.string.carplay_connected)
@@ -3059,7 +3082,7 @@ class DiPlayActivity : ComponentActivity() {
     private fun clearDiagnosticLogs() {
         runCatching {
             val dir = File(filesDir, "logs")
-            dir.listFiles()?.filter { it.name.endsWith(".log") }?.forEach { it.delete() }
+            dir.listFiles()?.filter { it.name.endsWith(".log") || it.name == "last-crash.txt" }?.forEach { it.delete() }
         }
         Toast.makeText(this, getString(R.string.logs_cleared), Toast.LENGTH_SHORT).show()
     }
@@ -3078,7 +3101,7 @@ class DiPlayActivity : ComponentActivity() {
                 if (isFinishing || isDestroyed) return@runOnUiThread
                 exportButton?.apply { isEnabled = true; text = getString(R.string.save_diagnostic_report) }
                 val body = TextView(this).apply {
-                    text = report
+                    text = DiagnosticPreview.text(report)
                     textSize = 11f
                     typeface = Typeface.MONOSPACE
                     setTextIsSelectable(true)
@@ -3095,6 +3118,7 @@ class DiPlayActivity : ComponentActivity() {
 
     private fun buildDiagnosticReport(appContext: Context): String = buildString {
         appendLine("DiPlay ${version()} · private beta diagnostic report")
+        appendLine(LastConnectionProblem.report(appContext))
         appendLine("Android ${Build.VERSION.RELEASE} / API ${Build.VERSION.SDK_INT}")
         appendLine("Head unit: ${Build.MANUFACTURER} ${Build.MODEL}")
         appendLine("Connection: ${if (AirPlayPersistence.loadWirelessEnabled(appContext)) "wireless" else "USB"}")
@@ -3156,6 +3180,9 @@ class DiPlayActivity : ComponentActivity() {
         appendLine()
         appendLine("--- Recent own-app process exits (Android 11+) ---")
         appendLine(ProcessExitDiagnostics.report(appContext))
+        appendLine()
+        appendLine("--- Last crash recorded by DiPlay ---")
+        appendLine(CrashRecord.report(appContext))
         appendLine()
         for (name in SessionLogFile.REPORT_NAMES) {
             val file = File(appContext.filesDir, "logs/$name")

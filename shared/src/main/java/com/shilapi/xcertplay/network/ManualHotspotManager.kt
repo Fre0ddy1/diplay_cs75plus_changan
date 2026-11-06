@@ -13,6 +13,8 @@ import com.shilapi.xcertplay.orchestration.ManualHotspotBand
 import com.shilapi.xcertplay.orchestration.ManualHotspotSecurity
 import com.shilapi.xcertplay.transport.Iap2WirelessSecurity
 import java.io.IOException
+import com.shilapi.xcertplay.orchestration.ConnectionFailureCause
+import com.shilapi.xcertplay.orchestration.ConnectionFailureException
 import java.net.Inet4Address
 import java.net.Inet6Address
 import java.net.InetAddress
@@ -79,10 +81,8 @@ class ManualHotspotManager(
         val companion = readConfiguration != null &&
             isFiveGhzCompanion(apSsid = readConfiguration.ssid, expectedSsid = expectedSsid)
         if (readConfiguration != null && readConfiguration.ssid != expectedSsid && !companion) {
-            throw IOException(
-                "Manual hotspot SSID does not match the active local AP configuration: " +
-                    "'${readConfiguration.ssid}'",
-            )
+            throw ConnectionFailureException(ConnectionFailureCause.CAR_HOTSPOT_DETAILS_DIFFER,
+                "Saved hotspot details do not match the active local AP configuration")
         }
         // The Android configuration describes the 2.4 GHz network, so its channel, band and
         // frequency say nothing about the companion; only its security carries over.
@@ -148,7 +148,7 @@ class ManualHotspotManager(
 
             val remainingNanos = remainingNanos(deadlineNanos)
             if (remainingNanos <= 0) {
-                throw IOException(
+                throw ConnectionFailureException(ConnectionFailureCause.HOTSPOT_NOT_READY,
                     "Timed out after ${timeoutMillis}ms waiting for the manual hotspot: " +
                         lastReason,
                 )
@@ -166,7 +166,7 @@ class ManualHotspotManager(
         if (expectedChannel > 0 && configuration.channel > 0 &&
             configuration.channel != expectedChannel
         ) {
-            throw IOException(
+            throw ConnectionFailureException(ConnectionFailureCause.CAR_HOTSPOT_DETAILS_DIFFER,
                 "Manual hotspot channel ${configuration.channel} does not match configured " +
                 "channel $expectedChannel",
             )
@@ -179,7 +179,7 @@ class ManualHotspotManager(
         if (actualBand != null && expectedBand != ManualHotspotBand.AUTO &&
             actualBand != expectedBand
         ) {
-            throw IOException(
+            throw ConnectionFailureException(ConnectionFailureCause.CAR_HOTSPOT_DETAILS_DIFFER,
                 "Manual hotspot band ${wifiBandLabel(configuration.band)} does not match " +
                     "configured band ${wifiBandLabel(if (expectedBand == ManualHotspotBand.GHZ_2_4) 1 else 2)}",
             )
@@ -187,7 +187,7 @@ class ManualHotspotManager(
         // WPA2 vs WPA3 variants are fine: the live security is what the iPhone is told (see start()).
         // Only an open/secured mismatch means the saved password cannot be right.
         if ((configuration.security == Iap2WirelessSecurity.NONE) != (expectedSecurity == Iap2WirelessSecurity.NONE)) {
-            throw IOException(
+            throw ConnectionFailureException(ConnectionFailureCause.CAR_HOTSPOT_DETAILS_DIFFER,
                 "Manual hotspot security ${configuration.security} does not match configured " +
                     "security $expectedSecurity",
             )
@@ -195,10 +195,10 @@ class ManualHotspotManager(
         val frequency = configuration.frequencyMHz ?: return
         when (expectedBand) {
             ManualHotspotBand.GHZ_2_4 -> if (frequency !in 2_400..2_500) {
-                throw IOException("Manual hotspot is not running on 2.4 GHz")
+                throw ConnectionFailureException(ConnectionFailureCause.CAR_HOTSPOT_DETAILS_DIFFER,"Manual hotspot is not running on 2.4 GHz")
             }
             ManualHotspotBand.GHZ_5 -> if (frequency !in 5_150..5_895) {
-                throw IOException("Manual hotspot is not running on 5 GHz")
+                throw ConnectionFailureException(ConnectionFailureCause.CAR_HOTSPOT_DETAILS_DIFFER,"Manual hotspot is not running on 5 GHz")
             }
             ManualHotspotBand.AUTO -> Unit
         }

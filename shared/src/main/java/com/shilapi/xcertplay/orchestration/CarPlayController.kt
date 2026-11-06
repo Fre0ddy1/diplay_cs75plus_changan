@@ -1,5 +1,7 @@
 package com.shilapi.xcertplay.orchestration
 
+import android.os.SystemClock
+
 import android.Manifest
 import android.bluetooth.BluetoothAdapter
 import android.bluetooth.BluetoothA2dp
@@ -122,6 +124,7 @@ sealed class CarPlayStatus {
     data object WirelessActive : CarPlayStatus()
     data object DiscoveringIphone : CarPlayStatus()
     data object WaitingForIphone : CarPlayStatus()
+    data class IphoneNotListed(val nonHubDeviceListed: Boolean) : CarPlayStatus()
     data object RequestingIphonePermission : CarPlayStatus()
     data object WaitingForReenumeration : CarPlayStatus()
     data object SelectingConfiguration : CarPlayStatus()
@@ -131,7 +134,8 @@ sealed class CarPlayStatus {
     data object AttachingNetwork : CarPlayStatus()
     data object RunningControl : CarPlayStatus()
     data object ControlEnded : CarPlayStatus()
-    data class Failed(val message: String, val wifiResetRequired: Boolean = false) : CarPlayStatus()
+    data class Failed(val message: String, val wifiResetRequired: Boolean = false,
+        val knownCause: ConnectionFailureCause? = null) : CarPlayStatus()
 }
 
 internal fun isWirelessHandoffInProgress(
@@ -335,6 +339,8 @@ class CarPlayController(
     private var attachCloseable: Closeable? = null
     private var ch341PermissionCloseable: Closeable? = null
     private var lastCh341Listing: String? = null
+    private var lastIphoneListing: String? = null
+    private var iphoneWaitStartedAt: Long? = null
     private var vpnLatch = CountDownLatch(1)
     private val teardownComplete = CountDownLatch(1)
 
@@ -1242,7 +1248,11 @@ class CarPlayController(
                 adapterPresent = bluetoothAdapter != null,
                 enabled = bluetoothAdapter?.isEnabled == true,
                 pausedByDiPlay = BydBluetoothSuspend.isSuspendedByUs(appContext),
-            )?.let { throw IOException(it) }
+            )?.let {
+                throw ConnectionFailureException(
+                    if (it == BluetoothRadioCheck.RADIO_OFF) ConnectionFailureCause.BLUETOOTH_OFF
+                    else ConnectionFailureCause.BLUETOOTH_UNAVAILABLE, it)
+            }
             val hotspotInfo = startWirelessHotspot(generation)
             if (isStaleWirelessRun(generation)) {
                 closeWirelessStack()
@@ -1303,8 +1313,8 @@ class CarPlayController(
             onStatus(CarPlayStatus.WaitingForPairedIphone)
 
             val adapter = bluetoothAdapter
-                ?: throw IOException(BluetoothRadioCheck.NO_ADAPTER)
-            if (!adapter.isEnabled) throw IOException(BluetoothRadioCheck.RADIO_OFF)
+                ?: throw ConnectionFailureException(ConnectionFailureCause.BLUETOOTH_UNAVAILABLE, BluetoothRadioCheck.NO_ADAPTER)
+            if (!adapter.isEnabled) throw ConnectionFailureException(ConnectionFailureCause.BLUETOOTH_OFF, BluetoothRadioCheck.RADIO_OFF)
             val device = selectWirelessBluetoothDevice(adapter)
             wirelessBluetoothTargetAddress = device.address
             beginBluetoothMediaPolicy(device.address)
@@ -1738,6 +1748,7 @@ class CarPlayController(
         pendingUsbAdbGrants.clear()
         phase = Phase.IPHONE
         reenumerationAttempts = 0
+        iphoneWaitStartedAt = null
         onStatus(CarPlayStatus.DiscoveringIphone)
         checkIphoneAvailability()
     }
@@ -1746,9 +1757,20 @@ class CarPlayController(
         if (closed || phase != Phase.IPHONE) return
         val device = iphoneHost.discover().firstOrNull()
         if (device == null) {
-            onStatus(CarPlayStatus.WaitingForIphone)
+            val listing = runCatching { iphoneHost.listedDevices().joinToString(", ") }.getOrDefault("unavailable")
+            if (listing != lastIphoneListing) {
+                lastIphoneListing = listing
+                debugLog("wired iPhone not listed by Android; USB devices=[$listing]")
+            }
+            val now = SystemClock.elapsedRealtime()
+            val began = iphoneWaitStartedAt ?: now.also { iphoneWaitStartedAt = it }
+            onStatus(if (now - began < 20_000L) CarPlayStatus.WaitingForIphone else {
+                val otherDevice = runCatching { iphoneHost.listsNonHubDevice() }.getOrNull()
+                otherDevice?.let { CarPlayStatus.IphoneNotListed(it) } ?: CarPlayStatus.WaitingForIphone
+            })
             scheduleAvailabilityPoll(Phase.IPHONE, ::checkIphoneAvailability)
         } else {
+            lastIphoneListing = null
             debugLog(
                 "wired iPhone discovered vid=0x${device.vendorId.toString(16)} " +
                     "pid=0x${device.productId.toString(16)}",
@@ -2233,7 +2255,10 @@ class CarPlayController(
             val manualFallback = result == com.shilapi.xcertplay.network.CarHotspotTethering.Result.UNSUPPORTED &&
                 com.shilapi.xcertplay.network.CarHotspotStatus.isEnabled(appContext) == null
             if (result != com.shilapi.xcertplay.network.CarHotspotTethering.Result.READY && !manualFallback) {
-                throw IOException("${result.diagnostic}. Open the car hotspot settings and connect again.")
+                throw ConnectionFailureException(
+                    if (result == com.shilapi.xcertplay.network.CarHotspotTethering.Result.TIMED_OUT)
+                        ConnectionFailureCause.CAR_HOTSPOT_START_TIMED_OUT else ConnectionFailureCause.CAR_HOTSPOT_START_FAILED,
+                    "${result.diagnostic}. Open the car hotspot settings and connect again.")
             }
         }
         if (hotspotMode == WirelessHotspotMode.MANUAL) {
@@ -2241,7 +2266,7 @@ class CarPlayController(
             // Some firmware reports the car hotspot off while it is on (#604). The driver can connect
             // anyway from the reminder dialog, which sets offReportIgnored; honour that here too.
             if (com.shilapi.xcertplay.network.CarHotspotSettings.reportedOff(appContext, state)) {
-                throw IOException("The car hotspot is off. Turn it on in the car settings and connect again.")
+                throw ConnectionFailureException(ConnectionFailureCause.CAR_HOTSPOT_OFF, "The car hotspot is off. Turn it on in the car settings and connect again.")
             }
             if (state == false) {
                 debugLog("car hotspot: Android reports it off; connecting anyway, as the driver chose")
@@ -2262,7 +2287,7 @@ class CarPlayController(
             WirelessHotspotMode.MANUAL -> ManualHotspotManager(
                 context = appContext,
                 ssid = config.manualHotspotSsid
-                    ?: throw IOException("Manual hotspot SSID is not configured"),
+                    ?: throw ConnectionFailureException(ConnectionFailureCause.HOTSPOT_NOT_CONFIGURED, "Manual hotspot details are not configured"),
                 passphrase = config.manualHotspotPassphrase.orEmpty(),
                 band = config.manualHotspotBand,
                 channel = config.manualHotspotChannel,
@@ -2297,7 +2322,7 @@ class CarPlayController(
         val bonded = adapter.bondedDevices.orEmpty()
         config.wirelessBluetoothDeviceAddress?.let { selected ->
             return bonded.firstOrNull { it.address.equals(selected, ignoreCase = true) }
-                ?: throw IOException("The selected iPhone is no longer paired. Choose it again in DiPlay.")
+                ?: throw ConnectionFailureException(ConnectionFailureCause.CHOSEN_IPHONE_NOT_PAIRED, "The selected iPhone is no longer paired. Choose it again in DiPlay.")
         }
         val iPhones = bonded.filter { device ->
             device.name?.contains("iPhone", ignoreCase = true) == true
@@ -2318,20 +2343,21 @@ class CarPlayController(
         }
         if (connectedIPhones.size == 1) return connectedIPhones.single()
         if (connectedIPhones.size > 1) {
-            throw IOException(
+            throw ConnectionFailureException(ConnectionFailureCause.IPHONE_NOT_CHOSEN,
                 "Multiple connected iPhones found: " +
-                    connectedIPhones.joinToString { "${it.name ?: "iPhone"} (${it.address})" },
+                    "count=${connectedIPhones.size}",
             )
         }
         if (iPhones.size == 1) return iPhones.single()
         if (iPhones.size > 1) {
-            throw IOException(
+            throw ConnectionFailureException(ConnectionFailureCause.IPHONE_NOT_CHOSEN,
                 "Multiple bonded iPhones found and none is currently connected; " +
                     "connect one iPhone and retry",
             )
         }
         if (bonded.size == 1) return bonded.single()
-        throw IOException(
+        throw ConnectionFailureException(
+            if (bonded.isEmpty()) ConnectionFailureCause.NO_PAIRED_IPHONE else ConnectionFailureCause.IPHONE_NOT_CHOSEN,
             "No unambiguous bonded iPhone found; pair one iPhone and retry",
         )
     }
@@ -2641,7 +2667,8 @@ class CarPlayController(
     private fun fail(error: Throwable) {
         if (closed) return
         onStatus(CarPlayStatus.Failed(error.message ?: error.javaClass.simpleName,
-            generateSequence(error) { it.cause }.any { it is com.shilapi.xcertplay.network.P2pResetRequiredException }))
+            generateSequence(error) { it.cause }.take(32).any { it is com.shilapi.xcertplay.network.P2pResetRequiredException },
+            connectionFailureCause(error)))
     }
 
     private fun debugLog(message: String) {
@@ -2704,8 +2731,7 @@ class CarPlayController(
         CarPlayStatus.StartingHotspot ->
             "STEP wifi/ap: starting the wireless CarPlay access point"
         is CarPlayStatus.HotspotReady ->
-            "STEP wifi/ap-ready: backend=$backend ssid=$ssid band=$band " +
-                "channel=$channel bssid=$bssid address=$address"
+            "STEP wifi/ap-ready: backend=$backend band=$band channel=$channel"
         CarPlayStatus.WaitingForPairedIphone ->
             "STEP bt/select: waiting for a paired or connected iPhone"
         CarPlayStatus.ConnectingBluetooth ->
@@ -2718,6 +2744,8 @@ class CarPlayController(
             "STEP usb/discover: searching for an iPhone USB device"
         CarPlayStatus.WaitingForIphone ->
             "STEP usb/wait: iPhone USB device not present; polling"
+        is CarPlayStatus.IphoneNotListed ->
+            "STEP usb/wait: wired iPhone not listed after 20 s; other USB devices=$nonHubDeviceListed"
         CarPlayStatus.RequestingIphonePermission ->
             "STEP usb/permission: requesting USB access to the iPhone"
         CarPlayStatus.WaitingForReenumeration ->

@@ -648,4 +648,20 @@
     <string name="settings_developer_options_hint">USB diagnostics, VPN root grant, on-screen diagnostics and log clearing.</string>
     <string name="iphone_accepted_but_did_not_start_carplay">The iPhone accepted the connection but never started CarPlay. On the iPhone open Settings → General → CarPlay, forget this vehicle, then pair again.</string>
     <string name="resolution_percent_value">%1$d%% (lighter still)</string>
+    <string name="chosen_iphone_not_paired">The selected iPhone is no longer paired. Choose your phone again.</string>
+    <string name="no_paired_iphone">No paired iPhone. Pair it in the car Bluetooth settings.</string>
+    <string name="iphone_not_chosen">Choose the iPhone to connect.</string>
+    <string name="wifi_direct_channel_unavailable">The selected Wi-Fi Direct channel is unavailable. Choose Auto or another channel.</string>
+    <string name="car_hotspot_details_differ">Saved hotspot details differ from the active car hotspot. Check Connection setup.</string>
+    <string name="car_hotspot_start_timed_out">Starting the car hotspot timed out. Check the car hotspot settings.</string>
+    <string name="car_hotspot_start_failed">Could not start the car hotspot. Check the car hotspot settings.</string>
+    <string name="hotspot_not_ready_diagnostic">The hotspot network is not ready. Check the hotspot and retry.</string>
+    <string name="hotspot_not_configured">Car hotspot details are not configured. Check Connection setup.</string>
+    <string name="bluetooth_is_off_diagnostic">Car Bluetooth is off. Turn it on to continue connecting.</string>
+    <string name="bluetooth_unavailable_diagnostic">The Bluetooth adapter is unavailable. Check the car Bluetooth settings.</string>
+    <string name="car_sees_no_usb_device">No iPhone or other USB data device is listed. Check the cable and port.</string>
+    <string name="car_sees_usb_device_not_iphone">A USB device is listed, but not an iPhone. Check the port and phone authorization.</string>
+    <string name="last_connection_attempt">Last connection problem (%1$s): %2$s</string>
+    <string name="connection_failed_diagnostic">Connection did not complete. Save a diagnostic report for investigation.</string>
+    <string name="iphone_sent_no_picture">The main video stream opened but no picture arrived. Check the iPhone; if needed restart it and reconnect.</string>
 </resources>

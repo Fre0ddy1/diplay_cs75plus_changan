@@ -101,6 +101,16 @@ class IphoneUsbHost(
     fun discover(): List<UsbDevice> =
         usbManager.deviceList.values.filter { matcher.matches(it.vendorId, it.productId) }
 
+    /** Stable USB product/class summary only: no node, serial number or device name. */
+    fun listedDevices(): List<String> = usbManager.deviceList.values.map {
+        "vid=0x${it.vendorId.toString(16)} pid=0x${it.productId.toString(16)} class=${it.deviceClass}"
+    }.sorted()
+
+    fun listsNonHubDevice(): Boolean = usbManager.deviceList.values.any { device ->
+        device.deviceClass != 9 && !(device.deviceClass == 0 && device.interfaceCount > 0 &&
+            (0 until device.interfaceCount).all { device.getInterface(it).interfaceClass == 9 })
+    }
+
     @Throws(IphoneUsbException::class)
     fun requestPermission(device: UsbDevice, allowAdbFallback: Boolean = true): PermissionRequest {
         requireConfiguredDevice(device)

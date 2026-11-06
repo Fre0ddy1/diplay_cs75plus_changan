@@ -28,6 +28,7 @@ internal class MicrophoneUplink(
     private val config: MicrophoneConfig,
     private val onDiagnostic: (String) -> Unit = {},
     private val noAudioRestartMillis: Long = 1_000L,
+    private val audioManager: android.media.AudioManager? = null,
 ) : Closeable {
     private val running = AtomicBoolean(false)
     private val stats = MicrophoneCaptureStats(config, report = { message ->
@@ -79,6 +80,7 @@ internal class MicrophoneUplink(
             "speechrecognition" -> MediaRecorder.AudioSource.VOICE_COMMUNICATION
             else -> MediaRecorder.AudioSource.MIC
         }
+        stats.useSource(source)
         val nextEncoder = if (config.codec == AudioCodecKind.OPUS) {
             OpusEncoder(config.bitrate ?: 48_000, config.sampleRate).takeIf { it.available }
         } else {
@@ -206,6 +208,12 @@ internal class MicrophoneUplink(
         val readBuffer = ByteArray(maxOf(frame.size, MIN_READ_BYTES))
         val counters = MicrophoneCounters()
         val routeInfo = { routeType(recorder) }
+        val silence = audioManager?.let { manager -> {
+            val others = manager.activeRecordingConfigurations
+                .filter { it.clientAudioSessionId != recorder.audioSessionId }
+                .take(4).map { MicrophoneCaptureStats.sourceName(it.clientAudioSource) }
+            "audioMode=${manager.mode} otherRecordings=${others.joinToString(",").ifEmpty { "none" }}"
+        } }
         // Wall-clock pacing. A capture device that returns faster than the negotiated rate would
         // otherwise make the phone play the microphone at that speed - the "it is all noise"
         // voice clip. Frames that arrive ahead of their slot are dropped instead of sent, so the
@@ -236,7 +244,7 @@ internal class MicrophoneUplink(
                     return
                 }
                 if (count == 0) {
-                    stats.flush(routeType = routeInfo)
+                    stats.flush(routeType = routeInfo, silence = silence)
                     val now = System.nanoTime()
                     if (running.get() && noAudioRestarts < 3 && now - lastAudioNs >= noAudioRestartMillis * 1_000_000L) {
                         noAudioRestarts++
@@ -246,6 +254,7 @@ internal class MicrophoneUplink(
                     } else Thread.sleep(5)
                     continue
                 }
+                stats.samples(readBuffer, count)
                 lastAudioNs = System.nanoTime()
                 var offset = 0
                 while (offset < count && running.get()) {
@@ -264,7 +273,7 @@ internal class MicrophoneUplink(
                         filled = 0
                     }
                 }
-                stats.flush(routeType = routeInfo)
+                stats.flush(routeType = routeInfo, silence = silence)
             }
         } catch (error: Exception) {
             if (running.get()) {
@@ -272,7 +281,7 @@ internal class MicrophoneUplink(
                 stats.failure(MicrophoneFailureStage.CAPTURE, error)
             }
         } finally {
-            stats.flush(ended = true, routeType = routeInfo)
+            stats.flush(ended = true, routeType = routeInfo, silence = silence)
             running.set(false)
             release()
         }

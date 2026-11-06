@@ -559,12 +559,19 @@ class AndroidMediaSink(
         mirrorDecoders(type).forEach { it.configure(codec, codecData) }
     }
 
+    @Volatile var mainVideoReceived = false
+        private set
+
     override fun onVideoFrame(type: Int, naluBytes: ByteArray) {
+        if (type == 110 && naluBytes.isNotEmpty()) mainVideoReceived = true
         videoDecoder(type).submit(naluBytes)
         mirrorDecoders(type).forEach { it.submit(naluBytes) }
     }
 
     override fun onScreenStreamActive(type: Int, active: Boolean) {
+        synchronized(screenStateLock) {
+            if (type == 110 && (!active || type !in activeScreenTypes)) mainVideoReceived = false
+        }
         if (!active) {
             videoRecoveryHandlers.remove(type)
             videoDiagnosticHandlers.remove(type)
@@ -722,7 +729,7 @@ class AndroidMediaSink(
             // onto the iPhone's own volume, which is why the driver saw "手机音量被调到 50%".
             snapshotMusicVolume("microphone started")
             if (config.audioType == "telephony") enterCommunicationMode(id)
-            val uplink = microphoneUplinks.computeIfAbsent(id) { MicrophoneUplink(config, audioDiagnostic) }
+            val uplink = microphoneUplinks.computeIfAbsent(id) { MicrophoneUplink(config, audioDiagnostic, audioManager = audioManager) }
             if (!uplink.start()) {
                 microphoneUplinks.remove(id, uplink)
                 restoreAudioMode(id)

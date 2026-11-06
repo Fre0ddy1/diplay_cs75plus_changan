@@ -462,7 +462,10 @@ internal object CarPlayMediaKeys {
         com.freddyq.diplay.customization.VehicleCustomizations.diagnostic("CarPlayAudio", message)
     }
 
-    private val callback = CarPlayMediaCallback(::send)
+    private val callback = CarPlayMediaCallback(
+        notUsed = { source -> report("media key $source not used by CarPlay") },
+        send = ::send,
+    )
 
     /** Whether [next] changes what the media session's metadata shows; position and play state do not. */
     internal fun metadataChanged(previous: CarPlayNowPlaying, next: CarPlayNowPlaying): Boolean =
@@ -523,6 +526,7 @@ internal object CarPlayMediaKeys {
  * media controllers (not hardware keys) call [onPlay] and [onPause] with an explicit intent.
  */
 internal class CarPlayMediaCallback(
+    private val notUsed: (String) -> Unit = {},
     private val send: (index: Int, source: String, fromWheel: Boolean) -> Unit,
 ) : MediaSession.Callback() {
     // Some head-unit ROMs deliver the same hardware press twice: once through the media-button
@@ -531,11 +535,19 @@ internal class CarPlayMediaCallback(
     // intact.
     private val lastSentAt = LongArray(6) { -1L } // indices 1..5 (PLAY..PREVIOUS); -1 = never sent
     private val debounceMillis = 250L
+    private val unknownKeys = mutableSetOf<Int>()
 
     override fun onMediaButtonEvent(mediaButtonIntent: Intent): Boolean {
         @Suppress("DEPRECATION")
         val event = mediaButtonIntent.getParcelableExtra<KeyEvent>(Intent.EXTRA_KEY_EVENT) ?: return false
-        val index = CarPlayMediaButton.forKeyCode(event.keyCode) ?: return super.onMediaButtonEvent(mediaButtonIntent)
+        val index = CarPlayMediaButton.forKeyCode(event.keyCode)
+        if (index == null) {
+            if (event.action == KeyEvent.ACTION_DOWN && event.repeatCount == 0 &&
+                unknownKeys.size < 16 && unknownKeys.add(event.keyCode)) {
+                notUsed("keyCode=${event.keyCode} ${KeyEvent.keyCodeToString(event.keyCode)}")
+            }
+            return super.onMediaButtonEvent(mediaButtonIntent)
+        }
         if (event.action == KeyEvent.ACTION_DOWN && event.repeatCount == 0) {
             deliver(index, KeyEvent.keyCodeToString(event.keyCode), fromWheel = true)
         }
