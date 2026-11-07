@@ -1,6 +1,7 @@
 package com.shilapi.xcertplay.media
 
 import com.shilapi.xcertplay.airplay.MicrophoneConfig
+import com.shilapi.xcertplay.airplay.AudioCodecKind
 
 internal enum class MicrophoneFailureStage {
     MIN_BUFFER, ENCODER, RECORDER_CREATION, RECORDER_INITIALIZATION, SOCKET_CREATION,
@@ -131,7 +132,9 @@ internal class MicrophoneCaptureStats(
                 else -> "other" to "MIC"
             }
             return "type=$type source=$source codec=${config.codec.name} " +
-                "rate=${config.sampleRate} channels=${config.channels} frameMs=${config.frameMillis}"
+                "rate=${config.sampleRate} channels=${config.channels} frameMs=${config.frameMillis} " +
+                "rtpClockRate=${if (config.codec == AudioCodecKind.OPUS) config.opusClockRate else config.sampleRate} " +
+                "rtpStep=${config.rtpSamplesPerPacket}"
         }
 
         private fun failureMessage(

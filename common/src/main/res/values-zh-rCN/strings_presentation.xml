@@ -1,0 +1,21 @@
+<resources>
+    <string name="connection_network_ready">连接网络已就绪，正在等待 iPhone</string>
+    <string name="home_usb_carplay">USB 有线 CarPlay</string>
+    <string name="unnamed_iphone">iPhone</string>
+    <string name="hotspot_connect_without_name">DiPlay 通过车机热点连接，请先在车机设置中开启热点。</string>
+    <string name="adb_unreachable_usb_on">USB 调试已开启，但本地网络 ADB 未响应。请核对车机的网络 ADB 设置；USB 调试开关开启不代表网络 ADB 可用。</string>
+    <string name="adb_unreachable_usb_off">USB 调试开关关闭，且本地网络 ADB 未响应。请核对车机调试设置。</string>
+    <string name="adb_unreachable_unknown">本地网络 ADB 未响应，无法读取调试开关状态。请核对车机设置。</string>
+    <string name="saved_physical_reference">已保存的物理参考：%1$s = %2$d mm。这是用于布局的参考值，不是实测屏幕尺寸。</string>
+    <string name="size_nearest_preset">CarPlay 大小 · 最接近的预设</string>
+    <string name="saved_resolution_percent">已保存分辨率：%1$d%%。仍按原连接流程应用，可能与下方最近一次请求不同。</string>
+    <string name="resolution_saved_value">%1$d%%（已保存值）</string>
+    <string name="last_display_request">最近一次连接请求（%1$s）：%2$s × %3$s px。这是历史请求记录，不代表当前画面实测值。</string>
+    <string name="last_display_request_unavailable">尚无请求尺寸记录，连接 CarPlay 后可查看。</string>
+    <string name="vpn_manual_authorization_help">USB CarPlay 无法打开系统 VPN 授权页且连接失败时，可由已授权的电脑手动执行：\n%1$s\n这里只显示指令，DiPlay 不会自动执行。</string>
+    <string name="preview_transport_hevc">HEVC（H.265，%1$s）</string>
+    <string name="preview_decoder_hardware">硬件解码</string>
+    <string name="preview_decoder_software">软件解码</string>
+    <string name="preview_list_separator">，</string>
+    <string name="carplay_audio_controls_note">媒体按键、音频焦点和蓝牙媒体设置相互独立。媒体按键处理播放、暂停和切歌，切换按键处理方式不会切换音频通道。通话与 Siri 按键是否支持取决于车型。</string>
+</resources>

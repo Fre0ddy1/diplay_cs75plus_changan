@@ -7,6 +7,22 @@ import org.junit.Assert.*
 import org.junit.Test
 
 class MicrophoneCaptureStatsTest {
+    @Test fun diagnosticsLabelNegotiatedRtpClockSeparatelyFromCaptureRateWithoutChangingPackets() {
+        for (codec in listOf(AudioCodecKind.LPCM, AudioCodecKind.OPUS)) {
+            val stream = MicrophoneConfig("speechrecognition", 48_000, 1, 100, 10,
+                InetAddress.getByName("198.51.100.20"), 54321, ByteArray(32), codec, opusClockRate = 24_000)
+            val reports = mutableListOf<String>()
+            val before = stream.rtpSamplesPerPacket
+            val stats = MicrophoneCaptureStats(stream, reports::add) { 0L }
+            stats.started(null)
+            stats.flush(ended = true)
+            val clock = if (codec == AudioCodecKind.OPUS) 24_000 else 48_000
+            assertEquals(2, reports.size)
+            assertTrue(reports.all { it.contains("rate=48000") && it.contains("rtpClockRate=$clock") && it.contains("rtpStep=$before") })
+            assertEquals(before, stream.rtpSamplesPerPacket)
+        }
+    }
+
     private val config = MicrophoneConfig("telephony", 48_000, 1, 100, 20,
         InetAddress.getByName("198.51.100.20"), 54321, ByteArray(32) { 0x7f }, AudioCodecKind.OPUS)
 

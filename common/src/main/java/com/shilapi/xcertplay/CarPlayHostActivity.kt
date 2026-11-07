@@ -463,6 +463,7 @@ class CarPlayHostActivity : ComponentActivity() {
     private var hotspotStatus = HotspotStatus(state = "off")
     private var menuOpen = false
     private var latestStage = "Preparing CarPlay"
+    private var latestStageText: String? = null
     private var darkMode = false
     private var paintWaitingScreen: () -> Unit = {}
     private var carPlayNightMode = CarPlayNightMode.SYSTEM
@@ -1109,6 +1110,7 @@ class CarPlayHostActivity : ComponentActivity() {
             // attempt the wired path directly: a slimmed ROM that drops the dialog usually
             // does not enforce consent either. Any rejection surfaces as AttachResult.Failed.
             appendLog("Startup: VPN consent dialog unavailable on this ROM, attempting wired path directly")
+            setStatus(getString(R.string.vpn_consent_launch_failed))
             vpnReady = true
             maybeStartCarPlay()
         } else {
@@ -4124,11 +4126,12 @@ class CarPlayHostActivity : ComponentActivity() {
         val transport = if (!sessionHevc) {
             "H.264"
         } else {
-            "HEVC (H.265, ${if (hevcSoftwareDecoderEnabled) "software" else "hardware"})"
+            getString(R.string.preview_transport_hevc, getString(
+                if (hevcSoftwareDecoderEnabled) R.string.preview_decoder_software else R.string.preview_decoder_hardware))
         }
         val fullscreen = buildString {
             append(if (hideTopBar) getString(R.string.fullscreen_top_hidden) else getString(R.string.fullscreen_top_shown))
-            append(", ")
+            append(getString(R.string.preview_list_separator))
             append(if (hideBottomBar) getString(R.string.fullscreen_bottom_hidden) else getString(R.string.fullscreen_bottom_shown))
         }
         resolutionPreviewView?.text = buildString {
@@ -4940,7 +4943,7 @@ class CarPlayHostActivity : ComponentActivity() {
             updateHotspotStatus(status)
             val description = status.describe()
             LastConnectionProblem.follow(this, status)
-            setConnectionStage(description)
+            setConnectionStage(description, getString(ConnectionStageText.resource(status, wirelessEnabled, wirelessHotspotMode)))
             when (status) {
                 is CarPlayStatus.Failed -> {
                     val now = SystemClock.elapsedRealtime()
@@ -6713,20 +6716,22 @@ class CarPlayHostActivity : ComponentActivity() {
         }
     }
 
-    private fun setConnectionStage(message: String) {
+    private fun setConnectionStage(message: String, displayText: String? = null) {
         latestStage = message
-        stageStatusView?.text = friendlyStage(message)
+        latestStageText = displayText ?: friendlyStage(message)
+        stageStatusView?.text = latestStageText
         updateDebugOverlays()
     }
 
     private fun updateDebugOverlays() {
         statusScrollView?.visibility = View.GONE
         val noPicture = noPictureShown && SCREEN_TYPE_MAIN in activeScreenStreamTypes
-        stageStatusView?.text = if (noPicture) getString(R.string.iphone_sent_no_picture) else friendlyStage(latestStage)
+        stageStatusView?.text = if (noPicture) getString(R.string.iphone_sent_no_picture) else latestStageText ?: friendlyStage(latestStage)
         connectionPanel?.visibility = if (activeScreenStreamTypes.isEmpty() || noPicture) View.VISIBLE else View.GONE
     }
 
     private fun friendlyStage(message: String): String = when {
+        message == getString(R.string.vpn_consent_launch_failed) -> message
         com.shilapi.xcertplay.orchestration.ConnectionFailureCause.entries.any {
             message == getString(ConnectionFailureGuidance.stage(it)) } -> message
         message == getString(R.string.car_sees_no_usb_device) || message == getString(R.string.car_sees_usb_device_not_iphone) -> message

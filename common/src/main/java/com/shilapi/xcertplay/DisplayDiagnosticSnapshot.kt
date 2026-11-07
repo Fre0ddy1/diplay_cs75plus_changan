@@ -35,6 +35,11 @@ internal object DisplayDiagnosticSnapshot {
     fun currentAttempt(context: Context): String? =
         context.getSharedPreferences(PREFS, Context.MODE_PRIVATE).getString("attempt", null)
 
+    /** Last request, with its original timestamp; never presented as the current saved preference. */
+    @Synchronized
+    fun lastRequest(context: Context): String? = context.getSharedPreferences(PREFS, Context.MODE_PRIVATE)
+        .getString("request", null)?.let(DiagnosticRedactor::redact)
+
     @Synchronized
     fun record(context: Context, attempt: String?, message: String) {
         val prefs = context.getSharedPreferences(PREFS, Context.MODE_PRIVATE)

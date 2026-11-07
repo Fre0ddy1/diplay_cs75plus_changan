@@ -51,7 +51,8 @@ internal object DiPlayBootstrap {
 internal object DiPlayPreferences {
     private fun prefs(context: Context) = context.getSharedPreferences("diplay", Context.MODE_PRIVATE)
     fun phoneAddress(context: Context): String? = prefs(context).getString("phone_address", null)
-    fun phoneName(context: Context): String = prefs(context).getString("phone_name", null) ?: "Your iPhone"
+    fun phoneName(context: Context): String = prefs(context).getString("phone_name", null)
+        ?.takeIf { it.isNotBlank() } ?: context.getString(com.shilapi.xcertplay.host.R.string.unnamed_iphone)
     fun savePhone(context: Context, address: String, name: String) {
         prefs(context).edit().putString("phone_address", address).putString("phone_name", name).apply()
     }

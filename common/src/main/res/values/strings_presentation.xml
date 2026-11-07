@@ -1,0 +1,21 @@
+<resources>
+    <string name="connection_network_ready">Connection network ready; waiting for iPhone</string>
+    <string name="home_usb_carplay">CARPLAY OVER USB</string>
+    <string name="unnamed_iphone">iPhone</string>
+    <string name="hotspot_connect_without_name">DiPlay connects through the car hotspot. Turn it on in car settings before connecting.</string>
+    <string name="adb_unreachable_usb_on">USB debugging is enabled, but local network ADB did not respond. Check network ADB in the car settings; the USB switch alone does not confirm it is available.</string>
+    <string name="adb_unreachable_usb_off">USB debugging is off and local network ADB did not respond. Check the car debugging settings.</string>
+    <string name="adb_unreachable_unknown">Local network ADB did not respond. The debugging switch state could not be read; check the car settings.</string>
+    <string name="saved_physical_reference">Saved physical reference: %1$s = %2$d mm. This is the reference sent for layout sizing, not a measured panel dimension.</string>
+    <string name="size_nearest_preset">CarPlay size · nearest preset</string>
+    <string name="saved_resolution_percent">Saved resolution: %1$d%%. Applies through the existing connection flow; it may differ from the last request below.</string>
+    <string name="resolution_saved_value">%1$d%% (saved value)</string>
+    <string name="last_display_request">Last connection request (%1$s): %2$s × %3$s px. This is a recorded request, not a measurement of the current picture.</string>
+    <string name="last_display_request_unavailable">No recorded request dimensions yet. Connect CarPlay to record them.</string>
+    <string name="vpn_manual_authorization_help">If USB CarPlay cannot open the system VPN consent page and connection fails, an authorized computer can manually run:\n%1$s\nThis page only displays the command; DiPlay does not run it automatically.</string>
+    <string name="preview_transport_hevc">HEVC (H.265, %1$s)</string>
+    <string name="preview_decoder_hardware">hardware</string>
+    <string name="preview_decoder_software">software</string>
+    <string name="preview_list_separator">,\u0020</string>
+    <string name="carplay_audio_controls_note">Media-key controls, audio focus and the Bluetooth media setting are separate. Media keys control playback, pause and track changes; changing their handler does not select an audio channel. Call and Siri key support depends on the vehicle.</string>
+</resources>

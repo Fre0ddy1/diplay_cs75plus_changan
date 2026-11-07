@@ -403,6 +403,8 @@ class DiPlayActivity : ComponentActivity() {
     }
 
     private var homeLastProblem: TextView? = null
+    private var homeCardTitle: TextView? = null
+    private var homeConnectionHint: TextView? = null
 
     private fun home(content: LinearLayout) {
         val wide = resources.configuration.screenWidthDp >= 850
@@ -412,7 +414,8 @@ class DiPlayActivity : ComponentActivity() {
         left.addView(label(getString(GlassR.string.glass_home_title), if (wide) 36 else 30, TEXT, true).apply { setPadding(0, dp(10), 0, dp(8)) })
         left.addView(label(getString(GlassR.string.glass_home_description), 17, MUTED))
         val card = card()
-        card.addView(label(getString(R.string.wireless_carplay), 12, ACCENT, true).apply { letterSpacing = .12f })
+        homeCardTitle = label(getString(R.string.wireless_carplay), 12, ACCENT, true).apply { letterSpacing = .12f }
+        card.addView(homeCardTitle)
         status = label(getString(R.string.ready_when_you_are), 24, TEXT, true).apply { setPadding(0, dp(10), 0, dp(16)) }
         card.addView(status)
         homeLastProblem = label("", 15, WARNING).apply { visibility = View.GONE }.also(card::addView)
@@ -427,7 +430,8 @@ class DiPlayActivity : ComponentActivity() {
             WirelessHotspotMode.LOCAL_ONLY_HOTSPOT -> getString(R.string.hotspot_hint_local)
             else -> getString(R.string.hotspot_hint_p2p)
         }
-        card.addView(label(connectionHint, 15, MUTED).apply { setPadding(0, dp(14), 0, 0) })
+        homeConnectionHint = label(connectionHint, 15, MUTED).apply { setPadding(0, dp(14), 0, 0) }
+        card.addView(homeConnectionHint)
         val startupProblem = hotspotStartupResult?.takeIf {
             it != CarHotspotTethering.Result.READY && it != CarHotspotTethering.Result.CANCELLED &&
                 CarHotspotSettings.shouldEnable(this, true, AirPlayPersistence.loadWirelessHotspotMode(this)) &&
@@ -437,7 +441,7 @@ class DiPlayActivity : ComponentActivity() {
             card.addView(label(hotspotResultText(startupProblem), 15, WARNING))
             card.addView(button(getString(R.string.open_car_hotspot_settings), false) { openCarWifiSettings() }, matchButton(10, 56))
         } else if (carHotspotOff()) {
-            card.addView(label(getString(R.string.msg_car_hotspot_off, AirPlayPersistence.loadManualHotspotSsid(this)), 15, WARNING).apply { setPadding(0, dp(14), 0, 0) })
+            card.addView(label(SettingsPresentation.hotspotOff(this), 15, WARNING).apply { setPadding(0, dp(14), 0, 0) })
             card.addView(button(getString(R.string.open_car_hotspot_settings), false) { openCarWifiSettings() }, matchButton(10, 56))
         }
         card.addView(button(getString(R.string.choose_iphone), false) { choosePhone() }, matchButton(16, 56))
@@ -602,7 +606,7 @@ class DiPlayActivity : ComponentActivity() {
                 permissions = { listOf(CarHotspotSetup.Permission.BOOT_LAUNCH) }) {
                 AirPlayPersistence.saveAutoStartOnBoot(this, it)
             }
-            card.addView(button("${getString(R.string.choose_iphone_prefix)}${DiPlayPreferences.phoneName(this)}", false) { choosePhone() }, matchButton(12, 60))
+            card.addView(button(SettingsPresentation.choosePhone(this), false) { choosePhone() }, matchButton(12, 60))
         }
         activeSectionGroups = GROUP_SYSTEM
         bydAdbSettings(content)
@@ -612,18 +616,21 @@ class DiPlayActivity : ComponentActivity() {
             // 50 % and 40 % exist for a small-canvas A/B: a 2560x1600 panel at 50 % is 1280x800,
             // which is where other receivers usually run and where iOS renders an app's first
             // frame fastest.
-            val scaleSteps = listOf(10, 8, 6, 5, 4)
-            val scaleLabels = listOf(
-                getString(R.string.resolution_native),
-                getString(R.string.s_80_lighter_load),
-                getString(R.string.s_60_lightest_load),
-                getString(R.string.resolution_percent_value, 50),
-                getString(R.string.resolution_percent_value, 40),
-            )
+            val savedScale = AirPlayPersistence.loadDisplayScaleTenths(this)
+            val scaleSteps = SettingsPresentation.scales(savedScale)
+            val scaleLabels = scaleSteps.map { scale -> when (scale) {
+                10 -> getString(R.string.resolution_native)
+                8 -> getString(R.string.s_80_lighter_load)
+                6 -> getString(R.string.s_60_lightest_load)
+                5, 4 -> getString(R.string.resolution_percent_value, scale * 10)
+                else -> getString(R.string.resolution_saved_value, scale * 10)
+            } }
             choice(card, getString(R.string.resolution), scaleLabels,
                 scaleSteps.indexOf(AirPlayPersistence.loadDisplayScaleTenths(this)).coerceAtLeast(0)) {
                 AirPlayPersistence.saveDisplayScaleTenths(this, scaleSteps[it])
             }
+            card.addView(label(getString(R.string.saved_resolution_percent, savedScale * 10), 14, MUTED))
+            card.addView(label(SettingsPresentation.lastDisplayRequest(this), 14, MUTED))
             val bufferPresets = com.shilapi.xcertplay.media.MediaAudioBuffer.presets
             // Labels are derived from the presets, never written out by hand: the old hard-coded
             // three labels had already drifted from the values once (a row named "500 ms" whose
@@ -713,6 +720,7 @@ class DiPlayActivity : ComponentActivity() {
         }
         activeSectionGroups = GROUP_FREQUENT or GROUP_SOUND
         section(content, getString(R.string.audio_routing)) { card ->
+            card.addView(label(getString(R.string.carplay_audio_controls_note), 14, MUTED))
             toggle(card, getString(R.string.contrib_audio_home_toggle_audio_focus), getString(R.string.contrib_audio_home_toggle_audio_focus_desc), AirPlayPersistence.loadAudioFocusEnabled(this)) { AirPlayPersistence.saveAudioFocusEnabled(this, it) }
             if (resources.getBoolean(R.bool.config_advanced_audio_channel_mapping)) {
                 toggle(card, getString(R.string.advanced_audio_channel_mapping),
@@ -1318,6 +1326,9 @@ class DiPlayActivity : ComponentActivity() {
         activeSectionGroups = GROUP_SYSTEM
         section(content, getString(R.string.permissions_and_connection_help), R.drawable.ic_dp_permissions) { card ->
             card.addView(label(getString(R.string.nearby_devices_connects_your_iphone_microphone_enables_sir), 16, MUTED))
+            if (!AirPlayPersistence.loadWirelessEnabled(this)) {
+                card.addView(label(SettingsPresentation.vpnHelp(this), 14, MUTED).apply { setTextIsSelectable(true) })
+            }
             card.addView(button(getString(R.string.app_permissions), false) { openSystem(Intent(Settings.ACTION_APPLICATION_DETAILS_SETTINGS, Uri.parse("package:$packageName"))) }, matchButton(16, 60))
             card.addView(button(getString(R.string.bluetooth_settings), false) { openSystem(Intent(Settings.ACTION_BLUETOOTH_SETTINGS)) }, matchButton(10, 60))
             card.addView(button(getString(R.string.wireless_connection_help), false) { wirelessHelp() }, matchButton(10, 60))
@@ -1455,7 +1466,7 @@ class DiPlayActivity : ComponentActivity() {
                     if (permissions.isEmpty()) R.string.adb_access_ready else R.string.hotspot_permission_granted
                 } else when (access) {
                     LocalAdb.Access.NOT_APPROVED -> R.string.adb_not_approved
-                    LocalAdb.Access.UNREACHABLE -> R.string.adb_off
+                    LocalAdb.Access.UNREACHABLE -> SettingsPresentation.adbUnreachable(this)
                     LocalAdb.Access.UNSUPPORTED -> R.string.adb_pairing_only
                     else -> R.string.hotspot_permission_failed
                 }
@@ -1511,7 +1522,7 @@ class DiPlayActivity : ComponentActivity() {
 
     private fun carHotspotOffDialog() {
         AlertDialog.Builder(this).setTitle(getString(R.string.car_hotspot_is_off))
-            .setMessage(getString(R.string.msg_car_hotspot_connect, AirPlayPersistence.loadManualHotspotSsid(this)))
+            .setMessage(SettingsPresentation.hotspotOff(this, connection = true))
             .setPositiveButton(getString(R.string.open_car_settings)) { _, _ -> openCarWifiSettings() }
             .setNeutralButton(getString(R.string.connect)) { _, _ ->
                 // The driver sees the hotspot on: trust that over Android's report, or this dialog
@@ -1553,7 +1564,7 @@ class DiPlayActivity : ComponentActivity() {
         section(content, getString(R.string.s_1_choose_your_connection)) { card -> wirelessLinkControls(card) }
         section(content, getString(R.string.s_2_pair_your_iphone)) { card ->
             card.addView(label(getString(R.string.keep_bluetooth_and_wi_fi_on_your_iphone_pair_with_the_car), 16, MUTED))
-            card.addView(button("${getString(R.string.choose_iphone_prefix)}${DiPlayPreferences.phoneName(this)}", false) { choosePhone() }, matchButton(12, 60))
+            card.addView(button(SettingsPresentation.choosePhone(this), false) { choosePhone() }, matchButton(12, 60))
             card.addView(button(getString(R.string.review_app_permissions), false) {
                 openSystem(Intent(Settings.ACTION_APPLICATION_DETAILS_SETTINGS, Uri.parse("package:$packageName")))
             }, matchButton(12, 60))
@@ -2754,7 +2765,7 @@ class DiPlayActivity : ComponentActivity() {
     private fun adbLinkStatusText(state: BydAdbAccess.State): String = when (state) {
         BydAdbAccess.State.READY -> getString(R.string.adb_access_ready)
         BydAdbAccess.State.NOT_APPROVED -> getString(R.string.adb_enabled_not_approved)
-        BydAdbAccess.State.ADB_OFF -> getString(R.string.adb_off)
+        BydAdbAccess.State.ADB_OFF -> getString(SettingsPresentation.adbUnreachable(this))
         BydAdbAccess.State.PAIRING_ONLY -> getString(R.string.adb_pairing_only)
     }
 
@@ -2832,8 +2843,11 @@ class DiPlayActivity : ComponentActivity() {
 
     private fun carPlaySizeControl(parent: LinearLayout) {
         val sizes = com.shilapi.xcertplay.airplay.CarPlaySize.entries
-        val current = com.shilapi.xcertplay.airplay.CarPlaySize.fromWidthMillimeters(AirPlayPersistence.loadWidthPhysicalMm(this))
-        choice(parent, getString(R.string.carplay_size), sizes.map { it.localizedLabel(this) }, sizes.indexOf(current)) {
+        val saved = AirPlayPersistence.loadWidthPhysicalMm(this)
+        val current = com.shilapi.xcertplay.airplay.CarPlaySize.fromWidthMillimeters(saved)
+        val title = getString(if (current.widthMillimeters == saved) R.string.carplay_size else R.string.size_nearest_preset)
+        parent.addView(label(SettingsPresentation.physicalReference(this), 14, MUTED))
+        choice(parent, title, sizes.map { it.localizedLabel(this) }, sizes.indexOf(current)) {
             AirPlayPersistence.saveWidthPhysicalMm(this, sizes[it].widthMillimeters)
         }
         parent.addView(label(getString(R.string.changes_the_size_of_carplay_icons_and_text_applying_a_size), 14, MUTED).apply {
@@ -2995,6 +3009,10 @@ class DiPlayActivity : ComponentActivity() {
 
     private fun refreshStatus() {
         val running = CarPlayBackgroundSession.hasSession()
+        val wired = HomeCardTransport.wired(running, AirPlayPersistence.loadWirelessEnabled(this))
+        val title = getString(if (wired) R.string.home_usb_carplay else R.string.wireless_carplay)
+        homeCardTitle?.let { if (it.text.toString() != title) it.text = title }
+        homeConnectionHint?.visibility = if (wired) View.GONE else View.VISIBLE
         homeLastProblem?.apply {
             val line = if (CarPlayBackgroundSession.active) null else LastConnectionProblem.homeLine(this@DiPlayActivity)
             visibility = if (line == null) View.GONE else View.VISIBLE
@@ -3125,7 +3143,7 @@ class DiPlayActivity : ComponentActivity() {
         appendLine("Authentication: local experimental beta identity; no remote fallback")
         appendLine("CarPlay setup: ${if (setupError == null) "ready" else "authentication unavailable"}")
         appendLine("Saved video preference (may differ from active session): ${if (AirPlayPersistence.loadHevcEnabled(appContext)) "HEVC" else "H.264"}; ${AirPlayPersistence.loadFps(appContext)} fps")
-        appendLine("CarPlay size: ${com.shilapi.xcertplay.airplay.CarPlaySize.fromWidthMillimeters(AirPlayPersistence.loadWidthPhysicalMm(appContext)).label}")
+        appendLine("Saved physical reference (may differ from last connection): basis=${AirPlayPersistence.loadPhysicalSizeBasis(appContext).name} millimeters=${AirPlayPersistence.loadWidthPhysicalMm(appContext)}")
         appendLine("Saved resolution preference (may differ from active session): ${AirPlayPersistence.loadDisplayScaleTenths(appContext) * 10}%")
         appendLine(
             "Saved audio routing: mediaViaCarBluetooth=${AirPlayPersistence.loadMediaViaCarBluetooth(appContext)} " +
