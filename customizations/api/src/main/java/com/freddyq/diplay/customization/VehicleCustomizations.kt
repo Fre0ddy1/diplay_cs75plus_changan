@@ -49,7 +49,11 @@ interface VehicleCustomization {
     fun onProjectionLayoutConfirmed(layout: ProjectionLayout) = onProjectionLayoutRequested(layout)
     fun onProjectionContentReady(context: Context, window: Any, control: ProjectionContentControl) {}
     fun onProjectionContentLost(window: Any) {}
+    /** Current-window source dispatch did not obtain bounded confirmation; keep its retry budget. */
+    fun onProjectionContentUnconfirmed(window: Any) {}
     fun onProjectionManualControl() {}
+    /** Explicit manual open needs content recovery, unlike a confirmed hot switch or manual close. */
+    fun onProjectionManualOpen() {}
     fun onProjectionReleased() {}
     /** Return true when this module owns the channel watcher policy for this observation. */
     fun onProjectionEnvironment(context: Context, state: ProjectionEnvironment, control: ProjectionActivationControl): Boolean = false
@@ -213,7 +217,9 @@ open class VehicleCustomizationRegistry {
     fun onProjectionContentReady(context: Context, window: Any, control: ProjectionContentControl) =
         dispatch { it.onProjectionContentReady(context.applicationContext, window, control) }
     fun onProjectionContentLost(window: Any) = dispatch { it.onProjectionContentLost(window) }
+    fun onProjectionContentUnconfirmed(window: Any) = dispatch { it.onProjectionContentUnconfirmed(window) }
     fun onProjectionManualControl() = dispatch { it.onProjectionManualControl() }
+    fun onProjectionManualOpen() = dispatch { it.onProjectionManualOpen() }
     fun onProjectionReleased() = dispatch { it.onProjectionReleased() }
     fun onProjectionEnvironment(context: Context, state: ProjectionEnvironment, control: ProjectionActivationControl): Boolean {
         for (extension in extensions) {

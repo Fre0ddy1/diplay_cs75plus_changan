@@ -24,9 +24,11 @@ checks={
 }
 checks['common/src/main/java/com/shilapi/xcertplay/InCallClusterBridge.kt'] += [
     'fun requestContentHandoff', 'contentHandoffWindow', 'fun contentEndpointReady',
+    'VehicleCustomizations::onProjectionContentUnconfirmed', 'fun contentSourceConfirmed',
 ]
 checks['common/src/main/java/com/shilapi/xcertplay/CarPlayHostActivity.kt'] += [
     'VehicleCustomizations.onProjectionContentReady(', 'window?.hasContentFrame',
+    'VehicleCustomizations.onProjectionManualOpen()', 'manualClusterOverride && !userClosedProjection',
     'CarPlayMediaKeys::fromWindow', 'CarPlayMediaKeys.onPhoneSessionEnded()',
 ]
 checks['common/src/main/java/com/shilapi/xcertplay/CarPlayMediaKeys.kt'] = [

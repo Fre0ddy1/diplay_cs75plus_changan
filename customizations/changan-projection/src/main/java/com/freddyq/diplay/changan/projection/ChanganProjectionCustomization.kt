@@ -16,6 +16,7 @@ import com.freddyq.diplay.customization.VehicleCustomization
 import com.freddyq.diplay.customization.VehicleCustomizations
 
 class ChanganProjectionCustomization : VehicleCustomization {
+    private var manualContentRecovery = false
     private val contentRecovery = ContentHandoffRecovery {
         VehicleCustomizations.diagnostic("ChanganProjection", it)
     }
@@ -37,6 +38,7 @@ class ChanganProjectionCustomization : VehicleCustomization {
     // Projection has its own start generation; a duplicate phone-start must not reset recovery.
     override fun onSessionStarted(context: Context) = contentRecovery.resume()
     override fun onSessionEnded() {
+        manualContentRecovery = false
         environment.clear()
         contentRecovery.cancel()
         ChanganProjectionBridge.clear("session-end")
@@ -52,16 +54,23 @@ class ChanganProjectionCustomization : VehicleCustomization {
     override fun onProjectionLayoutConfirmed(layout: ProjectionLayout) = ChanganProjectionBridge.layoutConfirmed(layout)
     override fun onProjectionContentReady(context: Context, window: Any, control: ProjectionContentControl) {
         if (environment.prerequisiteWaiting) return
-        if (ChanganProjectionSettings.enabled(context)) contentRecovery.frameReady(window,
+        if (ChanganProjectionSettings.enabled(context) || manualContentRecovery) contentRecovery.frameReady(window,
             ProjectionContentControl { result ->
-                if (ChanganProjectionSettings.enabled(context)) control.requestHandoff(result) else result(false)
+                if (ChanganProjectionSettings.enabled(context) || manualContentRecovery) control.requestHandoff(result) else result(false)
             }) else contentRecovery.cancel()
     }
     override fun onProjectionContentLost(window: Any) = contentRecovery.windowLost(window)
+    override fun onProjectionContentUnconfirmed(window: Any) = contentRecovery.confirmationLost(window)
     override fun onProjectionManualControl() {
+        manualContentRecovery = false
         environment.cancelPrerequisite()
         contentRecovery.suspend()
         ChanganProjectionBridge.clear("manual-control")
+    }
+    override fun onProjectionManualOpen() {
+        manualContentRecovery = true
+        contentRecovery.invalidate()
+        contentRecovery.resume()
     }
     override fun onProjectionReleased() {
         environment.cancelPrerequisite()

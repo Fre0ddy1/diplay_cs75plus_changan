@@ -392,4 +392,86 @@ class InCallContentHandoffTest {
         assertTrue(calls.any { it.first==8 && it.second==listOf(1,0) })
         assertTrue(calls.any { it.first==8 && it.second==listOf(3,0) })
     }
+
+    @Test fun dispatchedButUnconfirmedWindowRetriesWithinItsOriginalContentBudget() {
+        val window=Any()
+        InCallClusterBridge.observeCallback(app,window)
+        frameReady(window); idle(1600)
+        assertEquals(1,sourceAcknowledgements())
+        idle(9000) // All three layout attempts expired despite a successful source write.
+        frameReady(window); idle(1600)
+        assertEquals("dispatch success must not suppress recovery after confirmation expires",2,sourceAcknowledgements())
+        repeat(120) { frameReady(window); idle(500) }
+        assertEquals("the host's readiness polling must never replenish the content budget",2,sourceAcknowledgements())
+        assertFalse(InCallClusterBridge.reportsProjecting())
+    }
+
+    @Test fun recoveredContentConfirmationStopsFurtherSourceRequests() {
+        val window=Any()
+        InCallClusterBridge.observeCallback(app,window)
+        frameReady(window); idle(10600)
+        frameReady(window); idle(1600)
+        assertEquals(2,sourceAcknowledgements())
+        reply(1,3); reply(2,3)
+        repeat(120) { frameReady(window); idle(500) }
+        assertEquals(2,sourceAcknowledgements())
+        assertTrue(InCallClusterBridge.reportsProjecting())
+    }
+
+    @Test fun manualOpenRearmsContentWhileManualCloseStillPreventsAutomaticTakeover() {
+        val window=Any()
+        InCallClusterBridge.observeCallback(app,window)
+        frameReady(window); idle(1600)
+        VehicleCustomizations.onProjectionManualControl()
+        frameReady(window); idle(10000)
+        assertEquals(1,sourceAcknowledgements())
+        VehicleCustomizations.onProjectionManualOpen()
+        frameReady(window); idle(1600)
+        assertEquals(2,sourceAcknowledgements())
+        VehicleCustomizations.onProjectionManualControl()
+        repeat(120) { frameReady(window); idle(500) }
+        assertEquals(2,sourceAcknowledgements())
+    }
+
+    @Test fun contentIsConfirmedOnlyForTheCurrentWindowAfterFreshSourceReplies() {
+        callbacks[1]=3; callbacks[2]=3
+        val window=Any()
+        InCallClusterBridge.observeCallback(app,window)
+        assertFalse(InCallClusterBridge.contentSourceConfirmed(window))
+        frameReady(window); idle(1600)
+        assertFalse(InCallClusterBridge.contentSourceConfirmed(window))
+        reply(1,3); reply(2,3)
+        assertTrue(InCallClusterBridge.contentSourceConfirmed(window))
+        assertFalse(InCallClusterBridge.contentSourceConfirmed(Any()))
+        InCallClusterBridge.forgetContentWindow(window)
+        assertFalse(InCallClusterBridge.contentSourceConfirmed(window))
+    }
+
+    @Test fun automaticOptionOffAllowsOnlyExplicitManualContentRecovery() {
+        app.getSharedPreferences("diplay_changan_projection",0).edit().putBoolean("automatic_fullscreen",false).commit()
+        val window=Any()
+        InCallClusterBridge.observeCallback(app,window)
+        frameReady(window); idle(10000)
+        assertEquals(0,sourceAcknowledgements())
+        VehicleCustomizations.onProjectionManualControl()
+        VehicleCustomizations.onProjectionManualOpen()
+        frameReady(window); idle(1600)
+        assertEquals(1,sourceAcknowledgements())
+        assertFalse(module.settings(app).single().toggles.last().enabled)
+        VehicleCustomizations.onProjectionManualControl()
+        frameReady(window); idle(10000)
+        assertEquals(1,sourceAcknowledgements())
+    }
+
+    @Test fun remoteRegistrationExceptionCannotBeReportedAsAReadyCallbackChannel() {
+        field("callbackRegistered",false)
+        field("binder",object: Binder() {
+            override fun onTransact(code:Int,data:Parcel,reply:Parcel?,flags:Int):Boolean {
+                reply?.writeException(SecurityException("registration rejected"))
+                return true
+            }
+        })
+        InCallClusterBridge.observeCallback(app,Any())
+        assertFalse(InCallClusterBridge.serviceConnected())
+    }
 }

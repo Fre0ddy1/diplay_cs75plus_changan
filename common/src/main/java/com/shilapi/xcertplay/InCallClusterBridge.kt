@@ -452,6 +452,8 @@ object InCallClusterBridge {
                 lastCallbackValue.remove(CALLBACK_CODE_STATE)
                 persistProjecting(false)
                 generation++ // Reject queued replies and controls from the expired owner.
+                contentHandoffWindow = null
+                contentReadyWindow?.get()?.let(VehicleCustomizations::onProjectionContentUnconfirmed)
                 logSeq(generation, "retained confirmation expired; bounded channel watcher may recover")
             }
         }
@@ -702,6 +704,11 @@ object InCallClusterBridge {
     /** Called only after the current window has a local CarPlay frame. */
     fun contentEndpointReady(window: Any): Boolean =
         binder?.isBinderAlive == true && observationOwner?.get() === window && !releasedByUs()
+
+    /** Protocol confirmation for this window, not a claim about pixels on the physical panel. */
+    fun contentSourceConfirmed(window: Any): Boolean =
+        reportsProjecting() && observationOwner?.get() === window && contentHandoffWindow?.get() === window &&
+            synchronized(confirmationLock) { resumeGeneration == null }
 
     fun requestContentHandoff(context: Context, window: Any, onDispatched: (Boolean) -> Unit) {
         if (!VehicleCustomizations.allowAutomaticStartup(context)) { onDispatched(false); return }
@@ -1334,7 +1341,8 @@ object InCallClusterBridge {
             data.writeInterfaceToken(BINDER_TOKEN)
             data.writeStrongBinder(callback)
             val ok = b.transact(code, data, reply, 0)
-            runCatching { reply.readException() }
+            if (!ok) return false
+            reply.readException()
             return ok
         } catch (e: Exception) {
             Log.w(TAG, "tx$code binder failed", e)

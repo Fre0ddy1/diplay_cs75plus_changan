@@ -6031,8 +6031,11 @@ class CarPlayHostActivity : ComponentActivity() {
             projectionClosedEpoch = InCallClusterBridge.serviceEpoch()
         }
         if (direction != "auto") {
+            val recoverContent = nextPos >= 0 &&
+                clusterPresentation?.let(InCallClusterBridge::contentSourceConfirmed) != true
             InCallClusterBridge.detachAutomaticProjection(autoProjectToken)
             com.freddyq.diplay.customization.VehicleCustomizations.onProjectionManualControl()
+            if (recoverContent) com.freddyq.diplay.customization.VehicleCustomizations.onProjectionManualOpen()
             // The driver took over: the position machine now belongs to them, and auto-switch
             // waits for the next navigation transition instead of undoing the choice.
             clusterPositionFromAuto = false
@@ -6252,14 +6255,14 @@ class CarPlayHostActivity : ComponentActivity() {
                 mainHandler.post {
                     val window = clusterPresentation
                     if (activeAirPlaySession != null && window?.hasContentFrame == true && clusterDisplaySizeReady() &&
-                        AirPlayPersistence.loadAutoFlyScreen(this) && !clusterProjectionAbandoned &&
+                        (AirPlayPersistence.loadAutoFlyScreen(this) || (manualClusterOverride && !userClosedProjection)) && !clusterProjectionAbandoned &&
                         InCallClusterBridge.contentEndpointReady(window) &&
                         !shuttingDown.get() && !isFinishing && !isDestroyed) {
                         com.freddyq.diplay.customization.VehicleCustomizations.onProjectionContentReady(
                             this, window,
                             com.freddyq.diplay.customization.ProjectionContentControl { result ->
                                 if (activeAirPlaySession != null && clusterPresentation === window && window.hasContentFrame && clusterDisplaySizeReady() &&
-                                    AirPlayPersistence.loadAutoFlyScreen(this) && !clusterProjectionAbandoned) {
+                                    (AirPlayPersistence.loadAutoFlyScreen(this) || (manualClusterOverride && !userClosedProjection)) && !clusterProjectionAbandoned) {
                                     InCallClusterBridge.requestContentHandoff(this, window, result)
                                 } else result(false)
                             },

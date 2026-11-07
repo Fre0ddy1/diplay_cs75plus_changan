@@ -54,4 +54,34 @@ class ContentHandoffRecoveryTest {
         policy.frameReady(Any(), endpoint); stale!!(true); idle(1500)
         assertEquals(1, sent)
     }
+
+    @Test fun confirmationLossUsesRemainingBudgetAcrossRepeatedFrameNotifications() {
+        policy.frameReady(window, endpoint); idle(1500)
+        policy.confirmationLost(window)
+        policy.frameReady(window, endpoint); idle(1500)
+        assertEquals(2, sent)
+        policy.confirmationLost(window)
+        repeat(120) { policy.frameReady(window, endpoint); idle(500) }
+        assertEquals(2, sent)
+    }
+
+    @Test fun staleWindowFailureCannotCancelAReplacementRequest() {
+        policy.frameReady(window, endpoint); idle(1500)
+        val replacement=Any()
+        policy.frameReady(replacement, endpoint)
+        policy.confirmationLost(window)
+        idle(1500)
+        assertEquals(2, sent)
+        policy.frameReady(replacement, endpoint); idle(10000)
+        assertEquals(2, sent)
+    }
+
+    @Test fun delayedOldDispatchReplyCannotConsumeTheRetriedRequest() {
+        var stale: ((Boolean) -> Unit)? = null
+        policy.frameReady(window, ProjectionContentControl { sent++; stale=it }); idle(1500)
+        policy.confirmationLost(window)
+        policy.frameReady(window, endpoint)
+        stale!!(true); idle(1500)
+        assertEquals(2, sent)
+    }
 }
